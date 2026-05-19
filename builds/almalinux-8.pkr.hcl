@@ -118,10 +118,7 @@ source "proxmox-iso" "almalinux-8" {
 
   boot_wait = "10s"
   boot_command = [
-    "e<wait>",
-    "<down><down><leftCtrlOn>e<leftCtrlOff><wait>",
-    " inst.text inst.ks=http://{{ .HTTPIP }}:{{ .HTTPPort }}/ks.cfg ip=${var.build_ip}::${var.build_gw}:255.255.255.0:${local.recipe_name}:ens18:none nameserver=${var.build_dns} inst.waitfornet=10<wait>",
-    "<leftCtrlOn>x<leftCtrlOff><wait>",
+    "<tab> inst.text inst.ks=http://{{ .HTTPIP }}:{{ .HTTPPort }}/ks.cfg ip=${var.build_ip}::${var.build_gw}:255.255.255.0:${local.recipe_name}:ens18:none nameserver=${var.build_dns} inst.waitfornet=10<enter><wait>",
   ]
 
   communicator           = "ssh"

@@ -95,7 +95,7 @@ source "proxmox-iso" "almalinux-9" {
 
   disks {
     disk_size    = "10G"
-    format       = "qcow2"
+    format       = "raw"
     storage_pool = var.proxmox_storage_pool
     type         = "virtio"
   }
@@ -107,21 +107,27 @@ source "proxmox-iso" "almalinux-9" {
 
   boot_iso {
     type             = "ide"
-    iso_url          = "https://repo.almalinux.org/almalinux/9/isos/x86_64/AlmaLinux-9.7-x86_64-minimal.iso"
+    iso_file         = "local:iso/AlmaLinux-9.7-x86_64-minimal.iso"
     iso_checksum     = "sha256:d51ed22cf272a0f30fcf55579d2748ff6ee1fddd6e36ba728cb386b933ceb7fc"
-    iso_storage_pool = var.proxmox_iso_storage_pool
-    iso_target_path  = "${var.iso_cache_dir}/AlmaLinux-9.7-x86_64-minimal.iso"
     unmount          = true
+  }
+
+  additional_iso_files {
+    type             = "sata"
+    iso_storage_pool = var.proxmox_iso_storage_pool
+    cd_files = [
+      "${path.root}/almalinux-9/http/ks.cfg",
+    ]
+    cd_label = "OEMDRV"
+    unmount  = true
   }
 
   http_directory = "${path.root}/${local.recipe_name}/http"
 
   boot_wait = "10s"
   boot_command = [
-    "e<wait>",
-    "<down><down><leftCtrlOn>e<leftCtrlOff><wait>",
-    " inst.text inst.ks=http://{{ .HTTPIP }}:{{ .HTTPPort }}/ks.cfg ip=${var.build_ip}::${var.build_gw}:255.255.255.0:${local.recipe_name}:ens18:none nameserver=${var.build_dns} inst.waitfornet=10<wait>",
-    "<leftCtrlOn>x<leftCtrlOff><wait>",
+    "<tab><wait>",
+    " inst.text inst.ks=hd:LABEL=OEMDRV:/ks.cfg ip=${var.build_ip}::${var.build_gw}:255.255.255.0:${local.recipe_name}:ens18:none nameserver=${var.build_dns} inst.waitfornet=10<enter><wait>",
   ]
 
   communicator           = "ssh"
@@ -161,9 +167,14 @@ build {
   provisioner "shell" {
     inline = [
       "sudo install -m 0644 /tmp/99-pve.cfg /etc/cloud/cloud.cfg.d/99-pve.cfg",
-      "sudo userdel --remove --force packer || true",
       "sudo sync",
     ]
+  }
+
+  provisioner "shell" {
+    expect_disconnect = true
+    skip_clean        = true
+    inline            = ["sudo userdel --remove --force packer || true"]
   }
 
   post-processor "shell-local" {
