@@ -64,9 +64,11 @@ jobs:
       - name: Extract release notes
         run: |
           TAG="${GITHUB_REF_NAME#v}"
+          # Headings follow Keep a Changelog: "## [1.2.3] - 2026-06-28".
+          # Stop at the next version heading or the link-reference footer.
           awk -v tag="$TAG" '
-            $0 ~ "^##[[:space:]]+v?" tag "([[:space:]]|$)" { found = 1; next }
-            found && /^##[[:space:]]+/ { exit }
+            $0 ~ "^##[[:space:]]+\\[v?" tag "\\]" { found = 1; next }
+            found && (/^##[[:space:]]/ || /^\[[^]]+\]:[[:space:]]/) { exit }
             found { print }
             END { if (!found) exit 1 }
           ' CHANGELOG.md > release-notes.md

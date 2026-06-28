@@ -1,6 +1,13 @@
 # Changelog
 
-## v1.3.0
+All notable changes to the `coport` installer are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
+
+## [Unreleased]
+
+## [1.3.0] - 2026-06-28
 
 ### Added
 
@@ -30,7 +37,7 @@
   with `Illegal instruction` on those nodes. coport is I/O-bound, so the baseline
   ISA has no measurable cost.
 
-## v1.2.0
+## [1.2.0] - 2026-06-04
 
 ### Added
 
@@ -45,7 +52,7 @@
 - Bring back the per-template progress bar and align the name / phase / VMID columns to a fixed width so 16 parallel rows scan cleanly instead of jittering between widths.
 - Throttle per-chunk progress callbacks to ~120 ms and slow the renderer redraw tick to match, cutting the periodic event-loop stalls users saw when many large downloads were active at once.
 
-## v1.1.0
+## [1.1.0] - 2026-06-03
 
 ### Added
 
@@ -62,7 +69,7 @@
 - Handle Ctrl-C by aborting active downloads, terminating active `qmrestore` processes, and removing temporary archives.
 - Store downloads in a per-run directory under `/var/lib/vz/dump/coport-tmp` and remove it after completion to avoid accumulated large archives.
 
-## v1.0.0
+## [1.0.0] - 2026-06-02
 
 Initial coport release.
 
@@ -80,3 +87,9 @@ Initial coport release.
 - Use Proxmox-compatible `vzdump-qemu-...vma.zst` temporary filenames so `qmrestore` can detect archive metadata.
 - Reduce progress log spam in non-TTY sessions.
 - Clarify VMID reassignment prompts so free fallback VMIDs are not presented as conflicts.
+
+[unreleased]: https://github.com/ConvoyPanel/cofoundry/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/ConvoyPanel/cofoundry/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/ConvoyPanel/cofoundry/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/ConvoyPanel/cofoundry/releases/tag/v1.1.0
+[1.0.0]: https://github.com/ConvoyPanel/cofoundry/releases/tag/v1.0.0
