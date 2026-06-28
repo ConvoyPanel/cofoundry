@@ -218,8 +218,8 @@ program
         'Reinstall only cached templates whose version changed'
     )
     .option(
-        '-v, --versions',
-        'List installed templates from the local cache and exit'
+        '-l, --list',
+        'List installed templates (name, VMID, storage, version) and exit'
     )
     .option('--vmid-start <n>', 'Auto-VMID range start for conflicts', '9000')
     .option('--dry-run', 'Show what would be installed; skip downloads')
@@ -252,9 +252,9 @@ program
             process.exit(130)
         })
 
-        // `-v/--versions`: print the cache and exit; no registry needed.
-        if (opts.versions) {
-            printVersions(await readCache())
+        // `-l/--list`: print installed templates and exit; no registry needed.
+        if (opts.list) {
+            printInstalled(await readCache())
             return
         }
 
@@ -520,7 +520,7 @@ const runInstalls = async (
     }
 }
 
-const printVersions = (cache: Cache): void => {
+const printInstalled = (cache: Cache): void => {
     const records = [...cache.values()].sort((a, b) =>
         a.name.localeCompare(b.name)
     )
