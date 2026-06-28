@@ -1,5 +1,5 @@
 import { access } from 'node:fs/promises'
-import type { Template } from '../../src/registry/schema.ts'
+import type { Template } from '@/registry/schema.ts'
 
 export const vmidTaken = async (vmid: number): Promise<boolean> => {
     const paths = [
@@ -47,7 +47,7 @@ export const resolveVmids = async (
 
     for (const t of templates) {
         // A cached VMID the user previously installed into wins over the
-        // registry's suggestion, so `-u/--update` lands in the same slot.
+        // registry's suggestion, so `--upgrade` lands in the same slot.
         const desired = preferred?.get(t.name) ?? t.suggested_vmid
         const desiredTaken = desired ? await vmidTaken(desired) : false
         if (

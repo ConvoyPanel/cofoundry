@@ -2,9 +2,9 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
-import type { Template } from '../../src/registry/schema.ts'
+import type { Template } from '@/registry/schema.ts'
 
-// Persistent record of what coport has installed on this node, so `-u/--update`
+// Persistent record of what coport has installed on this node, so `--upgrade`
 // can reinstall only changed templates and reuse the VMID the user picked last
 // time instead of re-prompting. Stored next to ~/.coport/config.json.
 const CACHE_PATH = join(homedir(), '.coport', 'cache.json')

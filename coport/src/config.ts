@@ -18,13 +18,22 @@ const readConfigFile = async (): Promise<CoportConfig> => {
     }
 }
 
-// Where the registry document comes from. `inline` carries a JSON document passed
-// directly on the command line; `stdin` is read from fd 0 (piped in).
+// Where the registry document comes from. The two no-file modes are distinct:
+// `Inline` carries a JSON document passed *as an argument* on the command line
+// (`coport '{…}'`); `Stdin` reads the document *piped* into fd 0
+// (`curl … | coport -`). Same payload, different transport.
+export enum RegistryKind {
+    Url = 'url',
+    File = 'file',
+    Inline = 'inline',
+    Stdin = 'stdin',
+}
+
 export type RegistrySource =
-    | { kind: 'url'; url: string }
-    | { kind: 'file'; path: string }
-    | { kind: 'inline'; json: string }
-    | { kind: 'stdin' }
+    | { kind: RegistryKind.Url; url: string }
+    | { kind: RegistryKind.File; path: string }
+    | { kind: RegistryKind.Inline; json: string }
+    | { kind: RegistryKind.Stdin }
 
 // A URL has a scheme like `https://`; anything else (absolute, ./relative,
 // ../relative, or a bare filename) is treated as a local file path.
@@ -32,21 +41,21 @@ const hasUrlScheme = (s: string): boolean => /^[a-z][a-z0-9+.-]*:\/\//i.test(s)
 
 export const classifySource = (raw: string): RegistrySource => {
     const trimmed = raw.trim()
-    if (trimmed === '-') return { kind: 'stdin' }
-    if (trimmed.startsWith('{')) return { kind: 'inline', json: raw }
-    if (hasUrlScheme(trimmed)) return { kind: 'url', url: trimmed }
-    return { kind: 'file', path: trimmed }
+    if (trimmed === '-') return { kind: RegistryKind.Stdin }
+    if (trimmed.startsWith('{')) return { kind: RegistryKind.Inline, json: raw }
+    if (hasUrlScheme(trimmed)) return { kind: RegistryKind.Url, url: trimmed }
+    return { kind: RegistryKind.File, path: trimmed }
 }
 
 export const describeSource = (source: RegistrySource): string => {
     switch (source.kind) {
-        case 'url':
+        case RegistryKind.Url:
             return source.url
-        case 'file':
+        case RegistryKind.File:
             return source.path
-        case 'inline':
+        case RegistryKind.Inline:
             return '<inline JSON>'
-        case 'stdin':
+        case RegistryKind.Stdin:
             return '<stdin>'
     }
 }
@@ -67,7 +76,7 @@ export const resolveConfig = async (
     }
     // No explicit registry: a non-TTY stdin means the document is being piped in.
     if (!process.stdin.isTTY) {
-        return { source: { kind: 'stdin' } }
+        return { source: { kind: RegistryKind.Stdin } }
     }
     const fileConfig = await readConfigFile()
     return {
@@ -75,6 +84,3 @@ export const resolveConfig = async (
         defaultStorage: fileConfig.storage,
     }
 }
-
-export const isFilePath = (source: string): boolean =>
-    source.startsWith('/') || source.startsWith('./')

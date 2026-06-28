@@ -1,6 +1,6 @@
 import * as clack from '@clack/prompts'
 import pc from 'picocolors'
-import type { Registry, Template } from '../../src/registry/schema.ts'
+import type { Registry, Template } from '@/registry/schema.ts'
 import type { VmidAssignment } from './vmid.ts'
 import { vmidTaken } from './vmid.ts'
 import { collectGroups } from './select.ts'

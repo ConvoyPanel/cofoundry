@@ -1,18 +1,22 @@
 import { readFile } from 'node:fs/promises'
-import { RegistrySchema, type Registry } from '../../src/registry/schema.ts'
-import type { RegistrySource } from './config.ts'
+import { RegistrySchema, type Registry } from '@/registry/schema.ts'
+import { RegistryKind, type RegistrySource } from './config.ts'
 import { readStdinSync } from './tty.ts'
 import { log } from '@cofoundry/ui'
 
+// Read the raw registry text from wherever it lives. Note `Inline` vs `Stdin`:
+// `Inline` already holds the JSON (it came in as a CLI argument), so we just hand
+// it back; `Stdin` still has to be drained from fd 0. They are *not* the same —
+// one is a string we already have, the other is a stream we must read.
 const readSource = async (source: RegistrySource): Promise<string> => {
     switch (source.kind) {
-        case 'inline':
+        case RegistryKind.Inline:
             return source.json
-        case 'stdin':
+        case RegistryKind.Stdin:
             return readStdinSync()
-        case 'file':
+        case RegistryKind.File:
             return readFile(source.path, 'utf8')
-        case 'url': {
+        case RegistryKind.Url: {
             const res = await fetch(source.url)
             if (!res.ok) {
                 throw new Error(

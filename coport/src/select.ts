@@ -1,4 +1,4 @@
-import type { Group, Registry, Template } from '../../src/registry/schema.ts'
+import type { Group, Registry, Template } from '@/registry/schema.ts'
 
 export interface GroupedTemplates {
     group: Group
