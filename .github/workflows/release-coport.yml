@@ -50,7 +50,10 @@ jobs:
       - name: Build Linux binaries
         run: |
           mkdir -p ../release
-          bun build --compile --target=bun-linux-x64 --outfile ../release/coport-linux-x64 src/main.ts
+          # Use the baseline x64 target (no AVX2) so the binary runs on pre-Haswell
+          # Proxmox nodes (e.g. Ivy Bridge Xeon E5 v2) instead of crashing with
+          # "Illegal instruction". coport is I/O-bound, so the baseline ISA costs nothing.
+          bun build --compile --target=bun-linux-x64-baseline --outfile ../release/coport-linux-x64 src/main.ts
           bun build --compile --target=bun-linux-arm64 --outfile ../release/coport-linux-arm64 src/main.ts
         working-directory: coport
 

@@ -1,43 +1,32 @@
-import { readFileSync } from 'node:fs'
-import { createInterface } from 'node:readline'
+import * as clack from '@clack/prompts'
 import pc from 'picocolors'
-import type { Registry, Group, Template } from '../../src/registry/schema.ts'
+import type { Registry, Template } from '../../src/registry/schema.ts'
 import type { VmidAssignment } from './vmid.ts'
+import { vmidTaken } from './vmid.ts'
+import { collectGroups } from './select.ts'
 
-let iface: ReturnType<typeof createInterface> | undefined
-let pipedAnswers: string[] | undefined
+// main.ts imports this module dynamically, so clack is only loaded for runs that
+// actually prompt (interactive selection / VMID review), not for --all/--select.
 
-const rl = (): ReturnType<typeof createInterface> => {
-    iface ??= createInterface({ input: process.stdin, output: process.stdout })
-    return iface
+/** Unwrap a clack result, exiting cleanly if the user cancelled (Esc/Ctrl-C). */
+const orCancel = <T>(value: T | symbol): T => {
+    if (clack.isCancel(value)) {
+        clack.cancel('Aborted.')
+        process.exit(130)
+    }
+    return value
 }
 
-export const closePrompts = (): void => {
-    iface?.close()
-    iface = undefined
-}
-
-const question = (prompt: string): Promise<string> =>
-    new Promise(resolve => {
-        if (!process.stdin.isTTY) {
-            pipedAnswers ??= readFileSync(0, 'utf8').split(/\r?\n/)
-            process.stdout.write(prompt)
-            resolve((pipedAnswers.shift() ?? '').trim())
-            return
-        }
-
-        rl().question(prompt, answer => {
-            resolve(answer.trim())
+export const promptStorage = async (): Promise<string> => {
+    const answer = orCancel(
+        await clack.text({
+            message: 'Proxmox storage volume',
+            placeholder: 'local-zfs',
+            validate: value =>
+                value.trim() ? undefined : 'Storage volume is required.',
         })
-    })
-
-export const promptStorage = async (
-    defaultStorage?: string
-): Promise<string> => {
-    if (defaultStorage) return defaultStorage
-    const answer = await question(pc.bold('Proxmox storage volume: '))
-    if (!answer) throw new Error('Storage volume is required.')
-    return answer
+    )
+    return answer.trim()
 }
 
 export const promptTemplateSelection = async (
@@ -45,100 +34,164 @@ export const promptTemplateSelection = async (
     groupFilter?: string,
     tagFilter?: string
 ): Promise<Template[]> => {
-    const groups = groupFilter
-        ? registry.groups.filter(g => g.id === groupFilter)
-        : registry.groups
-
-    const entries: { group: Group; template: Template; index: number }[] = []
-    let i = 0
-    for (const group of groups) {
-        for (const t of group.templates) {
-            if (tagFilter && !t.tags?.includes(tagFilter)) continue
-            entries.push({ group, template: t, index: ++i })
-        }
-    }
-
-    if (entries.length === 0) {
+    const grouped = collectGroups(registry, groupFilter, tagFilter)
+    if (grouped.length === 0) {
         throw new Error('No templates match the given filters.')
     }
 
-    console.log()
-    let currentGroupId = ''
-    for (const { group, template, index } of entries) {
-        if (group.id !== currentGroupId) {
-            currentGroupId = group.id
-            console.log(pc.bold(pc.cyan(`\n  ${group.display_name}`)))
-            if (group.description) console.log(`  ${pc.dim(group.description)}`)
-        }
-        console.log(
-            `  ${pc.dim(`[${index}]`)} ${template.display}  ${pc.dim(template.arch)}`
-        )
+    const options: Record<
+        string,
+        { value: Template; label: string; hint?: string }[]
+    > = {}
+    for (const { group, templates } of grouped) {
+        options[group.display_name] = templates.map(t => ({
+            value: t,
+            label: t.display,
+            hint: t.arch,
+        }))
     }
-    console.log()
 
-    while (true) {
-        const answer = await question(
-            pc.bold('Select templates (e.g. 1,3-5 or "all"): ')
+    // Loop so an empty selection re-prompts instead of silently installing nothing.
+    for (;;) {
+        const selected = orCancel(
+            await clack.groupMultiselect<Template>({
+                message: 'Select templates to install',
+                options,
+                required: false,
+                selectableGroups: true,
+            })
         )
-        try {
-            const selected = parseSelection(answer, entries.length)
-            return selected.map(idx => entries[idx - 1]!.template)
-        } catch (err) {
-            console.log(
-                pc.red(err instanceof Error ? err.message : String(err))
-            )
-        }
+        if (selected.length > 0) return selected
+        clack.log.warn(
+            'Select at least one template (space toggles, a group header toggles its family).'
+        )
     }
 }
 
-const parseSelection = (input: string, max: number): number[] => {
-    if (!input.trim()) throw new Error('Selection is required.')
-    if (input.toLowerCase() === 'all') {
-        return Array.from({ length: max }, (_, i) => i + 1)
+const assignmentHint = (a: VmidAssignment): string => {
+    if (a.overwrite) return pc.red('overwrite existing')
+    if (a.conflict) {
+        const suggested = a.template.suggested_vmid
+        return pc.yellow(
+            suggested
+                ? `reassigned · suggested ${suggested} taken`
+                : 'auto-assigned'
+        )
     }
-    const indices = new Set<number>()
-    for (const part of input.split(',')) {
-        const range = part.trim().match(/^(\d+)(?:-(\d+))?$/)
-        if (!range) throw new Error(`Invalid selection: "${part.trim()}"`)
-        const start = Number(range[1])
-        const end = range[2] ? Number(range[2]) : start
-        for (let n = start; n <= end; n++) {
-            if (n < 1 || n > max) throw new Error(`Index out of range: ${n}`)
-            indices.add(n)
-        }
-    }
-    return [...indices].sort((a, b) => a - b)
+    return pc.dim('suggested')
 }
 
-export const confirmVmidConflicts = async (
+const renderTable = (assignments: VmidAssignment[]): string => {
+    const nameWidth = Math.max(
+        ...assignments.map(a => a.template.display.length)
+    )
+    return assignments
+        .map(
+            a =>
+                `${a.template.display.padEnd(nameWidth)}  ${pc.dim('→')} VMID ${pc.bold(
+                    String(a.vmid)
+                )}  ${assignmentHint(a)}`
+        )
+        .join('\n')
+}
+
+/** Re-validate a user-entered VMID: positive integer, free, not already used. */
+const validateVmid = async (
+    raw: string,
+    used: Set<number>
+): Promise<{ vmid: number } | { error: string }> => {
+    if (!/^\d+$/.test(raw.trim())) return { error: 'Enter a positive integer.' }
+    const vmid = Number(raw.trim())
+    if (vmid < 100) return { error: 'VMID must be ≥ 100.' }
+    if (used.has(vmid))
+        return { error: `VMID ${vmid} is already in this batch.` }
+    if (await vmidTaken(vmid))
+        return { error: `VMID ${vmid} is already in use.` }
+    return { vmid }
+}
+
+const pickAssignment = async (
+    assignments: VmidAssignment[],
+    message: string
+): Promise<number | undefined> => {
+    const choice = await clack.select<number>({
+        message,
+        options: assignments.map((a, i) => ({
+            value: i,
+            label: a.template.display,
+            hint: `VMID ${a.vmid}`,
+        })),
+    })
+    if (clack.isCancel(choice)) return undefined
+    return choice
+}
+
+/**
+ * Review the VMID plan before install. Returns the (possibly edited/trimmed) list,
+ * or null if the user cancels. Offers Proceed / Edit a VMID / Skip a template.
+ */
+export const reviewAssignments = async (
     assignments: VmidAssignment[]
-): Promise<boolean> => {
-    const conflicts = assignments.filter(a => a.conflict)
-    const overwrites = assignments.filter(a => a.overwrite)
-    if (conflicts.length === 0 && overwrites.length === 0) return true
+): Promise<VmidAssignment[] | null> => {
+    let current = [...assignments]
 
-    console.log()
-    if (overwrites.length > 0) {
-        console.log(pc.red(pc.bold('Existing VMIDs will be overwritten:')))
-        for (const a of overwrites) {
-            console.log(
-                `  ${a.template.name.padEnd(32)} VMID ${pc.bold(String(a.vmid))}`
+    for (;;) {
+        clack.note(renderTable(current), 'VMID assignments')
+
+        const action = await clack.select<
+            'proceed' | 'edit' | 'skip' | 'cancel'
+        >({
+            message: 'Proceed with these VMIDs?',
+            options: [
+                { value: 'proceed', label: 'Proceed', hint: 'install now' },
+                { value: 'edit', label: 'Edit a VMID' },
+                { value: 'skip', label: 'Skip a template' },
+                { value: 'cancel', label: 'Cancel' },
+            ],
+        })
+        if (clack.isCancel(action) || action === 'cancel') return null
+        if (action === 'proceed') return current
+
+        if (action === 'edit') {
+            const idx = await pickAssignment(current, 'Edit which template?')
+            if (idx === undefined) continue
+            const used = new Set(
+                current.filter((_, i) => i !== idx).map(a => a.vmid)
             )
-        }
-        console.log()
-    }
-
-    if (conflicts.length > 0) {
-        console.log(pc.yellow(pc.bold('Suggested VMIDs unavailable:')))
-        for (const a of conflicts) {
-            const suggested = a.template.suggested_vmid
-            console.log(
-                `  ${a.template.name.padEnd(32)} suggested ${suggested ?? 'none'} unavailable; using free VMID ${pc.bold(String(a.vmid))}`
+            const raw = await clack.text({
+                message: `New VMID for ${current[idx]!.template.display}`,
+                placeholder: String(current[idx]!.vmid),
+                validate: value =>
+                    /^\d+$/.test(value.trim())
+                        ? undefined
+                        : 'Enter a positive integer.',
+            })
+            if (clack.isCancel(raw)) continue
+            const result = await validateVmid(raw, used)
+            if ('error' in result) {
+                clack.log.error(result.error)
+                continue
+            }
+            current = current.map((a, i) =>
+                i === idx
+                    ? {
+                          ...a,
+                          vmid: result.vmid,
+                          conflict: false,
+                          overwrite: false,
+                      }
+                    : a
             )
+            continue
         }
-        console.log()
-    }
 
-    const answer = await question('Proceed? [Y/n] ')
-    return answer === '' || answer.toLowerCase() === 'y'
+        // action === 'skip'
+        const idx = await pickAssignment(current, 'Skip which template?')
+        if (idx === undefined) continue
+        current = current.filter((_, i) => i !== idx)
+        if (current.length === 0) {
+            clack.log.warn('All templates skipped.')
+            return []
+        }
+    }
 }

@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.3.0
+
+### Added
+
+- Replace the type-the-numbers template picker with an inline `@clack/prompts`
+  grouped multiselect: arrow-key navigation, space to toggle, group headers that
+  toggle a whole OS family, and `a` to select all.
+- Add a VMID review step before install. When a suggested VMID is taken you can now
+  **Proceed**, **Edit** the VMID inline (validated as free), or **Skip** the
+  template — instead of a silent auto-reassign behind a `[Y/n]`.
+- Add a local version cache at `~/.coport/cache.json` recording each installed
+  template's VMID, storage, and version (sha256/built_at). `-v, --versions` prints
+  it; `-u, --update` reinstalls only templates whose registry version changed,
+  reusing the cached VMID so you never re-enter it.
+- Add `-a, --all` to install every template (respecting `--group`/`--filter`) with
+  suggested/cached VMIDs and no prompts, and `--select <spec>` for explicit
+  non-interactive selection (`all`, `1,3-5`, or template names).
+- Accept the registry inline or piped: `coport '{…}'` takes a JSON document
+  directly, and `coport -` (or any non-TTY stdin) reads it from stdin
+  (`cat registry.json | coport -a -`). Interactive prompts reopen `/dev/tty` so the
+  TUI still works when stdin carries the registry.
+
+### Fixed
+
+- Build the `coport-linux-x64` release binary with Bun's `bun-linux-x64-baseline`
+  target so it runs on pre-Haswell CPUs without AVX2 (e.g. Ivy Bridge Xeon E5 v2).
+  Previously the default target emitted AVX2 instructions and crashed immediately
+  with `Illegal instruction` on those nodes. coport is I/O-bound, so the baseline
+  ISA has no measurable cost.
+
 ## v1.2.0
 
 ### Added
