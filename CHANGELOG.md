@@ -11,9 +11,9 @@
   **Proceed**, **Edit** the VMID inline (validated as free), or **Skip** the
   template — instead of a silent auto-reassign behind a `[Y/n]`.
 - Add a local version cache at `~/.coport/cache.json` recording each installed
-  template's VMID, storage, and version (sha256/built_at). `-v, --versions` prints
-  it; `-u, --update` reinstalls only templates whose registry version changed,
-  reusing the cached VMID so you never re-enter it.
+  template's VMID, storage, and version (sha256/built_at). `-l, --list` prints it;
+  `--refresh` re-pulls only templates whose registry version changed, reusing the
+  cached VMID so you never re-enter it.
 - Add `-a, --all` to install every template (respecting `--group`/`--filter`) with
   suggested/cached VMIDs and no prompts, and `--select <spec>` for explicit
   non-interactive selection (`all`, `1,3-5`, or template names).
