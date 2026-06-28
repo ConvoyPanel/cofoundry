@@ -12,7 +12,7 @@
   template — instead of a silent auto-reassign behind a `[Y/n]`.
 - Add a local version cache at `~/.coport/cache.json` recording each installed
   template's VMID, storage, and version (sha256/built_at). `-l, --list` prints it;
-  `--refresh` re-pulls only templates whose registry version changed, reusing the
+  `--upgrade` re-pulls only templates whose registry version changed, reusing the
   cached VMID so you never re-enter it.
 - Add `-a, --all` to install every template (respecting `--group`/`--filter`) with
   suggested/cached VMIDs and no prompts, and `--select <spec>` for explicit

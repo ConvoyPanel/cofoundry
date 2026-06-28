@@ -214,8 +214,8 @@ program
         'Non-interactive selection: "all", index ranges (1,3-5), or template names'
     )
     .option(
-        '--refresh',
-        'Re-pull installed templates whose registry version changed (reuses their VMIDs)'
+        '--upgrade',
+        'Upgrade installed templates whose registry version changed (reuses their VMIDs)'
     )
     .option(
         '-l, --list',
@@ -260,7 +260,7 @@ program
 
         const { source, defaultStorage } = await resolveConfig(registryArg)
         const nonInteractive = Boolean(
-            opts.all || opts.refresh || opts.select != null
+            opts.all || opts.upgrade || opts.select != null
         )
 
         // A piped registry can't coexist with the interactive menu (both want
@@ -284,10 +284,10 @@ program
 
         // Build the list of things to install for whichever mode we're in.
         let items: InstallItem[]
-        if (opts.refresh) {
+        if (opts.upgrade) {
             items = staleItems(registry, cache, opts.group, opts.filter)
             if (items.length === 0) {
-                log.ok('Everything up to date — nothing to refresh.')
+                log.ok('Everything up to date — nothing to upgrade.')
                 return
             }
         } else {
@@ -409,7 +409,7 @@ const resolveStorage = async (
     return (await loadPrompts()).promptStorage()
 }
 
-// `--refresh` flow: reinstall only the cached templates whose registry version
+// `--upgrade` flow: reinstall only the cached templates whose registry version
 // changed, into their cached VMID/storage, overwriting in place.
 const staleItems = (
     registry: Registry,
