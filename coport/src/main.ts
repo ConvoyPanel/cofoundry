@@ -37,7 +37,7 @@ program
     )
     .option(
         '--select <spec>',
-        'Non-interactive selection: "all", index ranges (1,3-5), or template names'
+        'Non-interactive selection: "all", index ranges (1,3-5), template names, or group ids'
     )
     .option(
         '--upgrade',

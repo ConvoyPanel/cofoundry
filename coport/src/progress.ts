@@ -2,12 +2,16 @@ import { dim, fmtBytes, fmtRate, fmtPercent } from '@cofoundry/ui'
 
 // Formatting helpers for the per-template progress rows rendered by runner.ts.
 
-export type Phase = 'download' | 'verify' | 'install'
+export enum Phase {
+    Download = 'download',
+    Verify = 'verify',
+    Install = 'install',
+}
 
 const PHASE_VERBS: Record<Phase, string> = {
-    download: 'downloading',
-    verify: 'verifying  ',
-    install: 'installing ',
+    [Phase.Download]: 'downloading',
+    [Phase.Verify]: 'verifying  ',
+    [Phase.Install]: 'installing ',
 }
 
 export const formatPhase = (phase: Phase, vmid: number): string =>

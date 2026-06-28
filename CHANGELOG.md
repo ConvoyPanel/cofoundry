@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cached VMID so you never re-enter it.
 - Add `-a, --all` to install every template (respecting `--group`/`--filter`) with
   suggested/cached VMIDs and no prompts, and `--select <spec>` for explicit
-  non-interactive selection (`all`, `1,3-5`, or template names).
+  non-interactive selection (`all`, `1,3-5`, template names, or group ids — a
+  group id expands to its whole family).
 - Accept the registry inline or piped: `coport '{…}'` takes a JSON document
   directly, and `coport -` (or any non-TTY stdin) reads it from stdin
   (`cat registry.json | coport -a -`). Interactive prompts reopen `/dev/tty` so the

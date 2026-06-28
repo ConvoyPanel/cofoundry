@@ -20,9 +20,9 @@ export interface CacheRecord {
     storage: string
     /** Version identity — changes when the template is rebuilt. */
     sha256: string
-    built_at: string
+    builtAt: string
     /** ISO timestamp of the last successful install. */
-    installed_at: string
+    installedAt: string
 }
 
 const CacheRecordSchema = z.object({
@@ -31,8 +31,8 @@ const CacheRecordSchema = z.object({
     vmid: z.number(),
     storage: z.string(),
     sha256: z.string(),
-    built_at: z.string(),
-    installed_at: z.string(),
+    builtAt: z.string(),
+    installedAt: z.string(),
 })
 
 const CacheSchema = z.object({
@@ -67,7 +67,7 @@ export const writeCache = async (cache: Cache): Promise<void> => {
 
 /** True when the registry template differs from what the cache last installed. */
 export const isStale = (record: CacheRecord, template: Template): boolean =>
-    record.sha256 !== template.sha256 || record.built_at !== template.built_at
+    record.sha256 !== template.sha256 || record.builtAt !== template.built_at
 
 export const recordFor = (
     template: Template,
@@ -79,6 +79,6 @@ export const recordFor = (
     vmid,
     storage,
     sha256: template.sha256,
-    built_at: template.built_at,
-    installed_at: new Date().toISOString(),
+    builtAt: template.built_at,
+    installedAt: new Date().toISOString(),
 })

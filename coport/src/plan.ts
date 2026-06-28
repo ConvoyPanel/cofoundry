@@ -31,6 +31,22 @@ export interface PlanOpts {
     overwrite?: boolean
 }
 
+// Which templates to install, by mode: --all takes everything (within any
+// --group/--filter), --select resolves a spec, and otherwise we prompt.
+const selectTemplates = async (
+    registry: Registry,
+    opts: PlanOpts
+): Promise<Template[]> => {
+    if (opts.all) {
+        return flatten(collectGroups(registry, opts.group, opts.filter))
+    }
+    if (opts.select != null) {
+        return selectBySpec(opts.select, registry, opts.group, opts.filter)
+    }
+    const prompts = await loadPrompts()
+    return prompts.promptTemplateSelection(registry, opts.group, opts.filter)
+}
+
 // Default flow: pick templates (interactive or via -a/--select), resolve + review
 // VMIDs, and resolve the storage volume.
 export const planInstall = async (
@@ -40,14 +56,7 @@ export const planInstall = async (
     defaultStorage: string | undefined,
     nonInteractive: boolean
 ): Promise<InstallItem[]> => {
-    const selected: Template[] = opts.all
-        ? flatten(collectGroups(registry, opts.group, opts.filter))
-        : opts.select != null
-          ? selectBySpec(opts.select, registry, opts.group, opts.filter)
-          : await (
-                await loadPrompts()
-            ).promptTemplateSelection(registry, opts.group, opts.filter)
-
+    const selected = await selectTemplates(registry, opts)
     if (selected.length === 0) return []
 
     const vmidStart = Number(opts.vmidStart)
@@ -143,7 +152,7 @@ export const printInstalled = (cache: Cache): void => {
     log.section('Installed templates')
     const nameWidth = Math.max(...records.map(r => r.display.length))
     for (const r of records) {
-        const when = r.installed_at.slice(0, 10)
+        const when = r.installedAt.slice(0, 10)
         log.raw(
             `  ${r.display.padEnd(nameWidth)} ${dim('→')} VMID ${accent(String(r.vmid))} ${dim(`(${r.storage}, ${when})`)}`
         )

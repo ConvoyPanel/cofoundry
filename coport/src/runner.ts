@@ -20,6 +20,7 @@ import { qmrestore } from './install.ts'
 import { writeCache, recordFor, type Cache } from './cache.ts'
 import { Semaphore } from './semaphore.ts'
 import {
+    Phase,
     formatPhase,
     formatDownload,
     formatRestoreProgress,
@@ -44,7 +45,7 @@ const installTemplate = async (
     task.setPhase(QUEUED_DOWNLOAD)
     await downloadSem.run(async () => {
         const downloadStartedAt = Date.now()
-        task.setPhase(formatPhase('download', vmid))
+        task.setPhase(formatPhase(Phase.Download, vmid))
         task.setProgress(formatDownload(0, 0, downloadStartedAt))
         let lastUpdate = 0
         await downloadWithRetry(
@@ -66,12 +67,12 @@ const installTemplate = async (
     task.setPhase(QUEUED_RESTORE)
     await restoreSem.run(async () => {
         if (verify) {
-            task.setPhase(formatPhase('verify', vmid))
+            task.setPhase(formatPhase(Phase.Verify, vmid))
             task.setProgress(`${renderBar(0)} SHA-256`)
             await verifySha256(dest, template.sha256)
         }
 
-        task.setPhase(formatPhase('install', vmid))
+        task.setPhase(formatPhase(Phase.Install, vmid))
         task.setProgress(formatRestoreProgress(0))
         let lastUpdate = 0
         await qmrestore(

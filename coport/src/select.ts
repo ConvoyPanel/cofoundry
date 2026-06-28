@@ -46,7 +46,8 @@ export const parseRanges = (input: string, max: number): number[] => {
 
 /**
  * Non-interactive selection for `--select <spec>`. Accepts `all`, index ranges
- * like `1,3-5`, or a comma-separated list of template names.
+ * like `1,3-5`, or a comma-separated list of template names and/or group ids
+ * (a group id expands to every template in that family).
  */
 export const selectBySpec = (
     spec: string,
@@ -54,7 +55,8 @@ export const selectBySpec = (
     groupFilter?: string,
     tagFilter?: string
 ): Template[] => {
-    const flat = flatten(collectGroups(registry, groupFilter, tagFilter))
+    const grouped = collectGroups(registry, groupFilter, tagFilter)
+    const flat = flatten(grouped)
     if (flat.length === 0) {
         throw new Error('No templates match the given filters.')
     }
@@ -68,13 +70,33 @@ export const selectBySpec = (
     }
 
     const byName = new Map(flat.map(t => [t.name, t]))
+    // A token may name a whole group, by id or display name.
+    const byGroup = new Map<string, Template[]>()
+    for (const { group, templates } of grouped) {
+        byGroup.set(group.id, templates)
+        byGroup.set(group.display_name, templates)
+    }
+
+    // Dedupe so `--select ubuntu,ubuntu-22.04` yields each template once.
+    const seen = new Set<string>()
     const result: Template[] = []
-    for (const part of trimmed.split(',')) {
-        const name = part.trim()
-        if (!name) continue
-        const t = byName.get(name)
-        if (!t) throw new Error(`Unknown template: "${name}"`)
+    const add = (t: Template): void => {
+        if (seen.has(t.name)) return
+        seen.add(t.name)
         result.push(t)
+    }
+
+    for (const part of trimmed.split(',')) {
+        const token = part.trim()
+        if (!token) continue
+        const groupTemplates = byGroup.get(token)
+        if (groupTemplates) {
+            groupTemplates.forEach(add)
+            continue
+        }
+        const t = byName.get(token)
+        if (!t) throw new Error(`Unknown template or group: "${token}"`)
+        add(t)
     }
     if (result.length === 0) throw new Error('Empty --select value.')
     return result

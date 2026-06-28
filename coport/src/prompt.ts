@@ -172,16 +172,15 @@ export const reviewAssignments = async (
                 clack.log.error(result.error)
                 continue
             }
-            current = current.map((a, i) =>
-                i === idx
-                    ? {
-                          ...a,
-                          vmid: result.vmid,
-                          conflict: false,
-                          overwrite: false,
-                      }
-                    : a
-            )
+            // The edited VMID is now explicit, so it's neither a conflict nor an
+            // overwrite. Replace just that row.
+            current = [...current]
+            current[idx] = {
+                ...current[idx]!,
+                vmid: result.vmid,
+                conflict: false,
+                overwrite: false,
+            }
             continue
         }
 
