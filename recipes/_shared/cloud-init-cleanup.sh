@@ -11,6 +11,16 @@ if [ -d /var/lib/dbus ]; then
   ln -s /etc/machine-id /var/lib/dbus/machine-id
 fi
 rm -f /etc/ssh/ssh_host_*
+# The build's ephemeral SSH key must not ship in the template: every recipe
+# seeds it for the packer user, and Ubuntu's installer cloud-init additionally
+# writes a neutered disable_root stanza with it to /root. Clones get their own
+# credentials from cloud-init on first boot. Deleting the key mid-session is
+# safe: sshd authenticates per connection, Packer keeps its single connection
+# open for the remaining provisioners, and no later step opens a new one.
+rm -f /root/.ssh/authorized_keys
+for d in /home/*/.ssh; do
+  rm -f "$d/authorized_keys"
+done
 truncate -s 0 /var/log/wtmp /var/log/btmp /var/log/lastlog || true
 find /var/log -type f -exec truncate -s 0 {} + || true
 history -c || true
