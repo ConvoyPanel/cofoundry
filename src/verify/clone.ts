@@ -63,6 +63,25 @@ export const sentinelPassword = (): string => {
     return chars.join('')
 }
 
+/**
+ * Every caller-supplied value is attached with `--opt=value`: the sentinel
+ * password samples `-` as a legal character, and a value that starts with `-`
+ * is parsed by Proxmox's Getopt-based CLI as an option name — `qm set` then
+ * rejects the whole command with "Unknown option: <password minus its dash>".
+ * The fixed literals (`ip=dhcp`, `enabled=1`) can never start with `-`, so
+ * their space form is safe either way.
+ */
+export const cloudInitSetCommand = (
+    vmid: number,
+    hostname: string,
+    ciUser: string,
+    password: string,
+    remoteKeyPath: string
+): string =>
+    `qm set ${vmid} --name=${shellQuote(hostname)} ` +
+    `--ciuser=${shellQuote(ciUser)} --cipassword=${shellQuote(password)} ` +
+    `--sshkeys=${shellQuote(remoteKeyPath)} --ipconfig0 ip=dhcp --agent enabled=1`
+
 export interface CloudInitSetup {
     ctx: CheckContext
     /** Removes the local temp dir holding the generated private key. */
@@ -156,9 +175,7 @@ export const prepareCloudInit = async (
     // that is destroyed minutes later, and never reused.
     await captureRemote(
         env.SSH_TARGET,
-        `qm set ${vmid} --name ${shellQuote(hostname)} ` +
-            `--ciuser ${shellQuote(ciUser)} --cipassword ${shellQuote(password)} ` +
-            `--sshkeys ${shellQuote(remoteKey)} --ipconfig0 ip=dhcp --agent enabled=1`
+        cloudInitSetCommand(vmid, hostname, ciUser, password, remoteKey)
     )
 
     return {

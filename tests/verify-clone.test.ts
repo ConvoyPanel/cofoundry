@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
     autologonScript,
+    cloudInitSetCommand,
     parseDiskSize,
     sentinelHostname,
     sentinelPassword,
@@ -52,6 +53,26 @@ describe('sentinel values', () => {
     test('values differ between runs', () => {
         expect(sentinelHostname()).not.toBe(sentinelHostname())
         expect(sentinelPassword()).not.toBe(sentinelPassword())
+    })
+})
+
+describe('cloudInitSetCommand', () => {
+    test('attaches every value with = so a leading-dash password stays a value', () => {
+        // The sentinel password samples '-'; with `--cipassword <value>`,
+        // Proxmox's Getopt CLI parses a leading-dash value as an option name
+        // and rejects the command ("Unknown option: <password minus dash>").
+        const cmd = cloudInitSetCommand(
+            9500,
+            'cfv-ab12',
+            'cfverify',
+            '-ci8q=#t5u7pb4qvkjl=',
+            '/tmp/verify.pub'
+        )
+        expect(cmd).toContain("--cipassword='-ci8q=#t5u7pb4qvkjl='")
+        expect(cmd).toContain("--name='cfv-ab12'")
+        expect(cmd).toContain("--ciuser='cfverify'")
+        expect(cmd).toContain("--sshkeys='/tmp/verify.pub'")
+        expect(cmd).not.toMatch(/--(name|ciuser|cipassword|sshkeys) /)
     })
 })
 
