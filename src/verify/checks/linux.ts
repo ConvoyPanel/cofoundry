@@ -87,15 +87,38 @@ grep -qF '${sshKeyBody(ctx.sshPublicKey)}' "$home/.ssh/authorized_keys"`,
             // injected.
             id: 'no-foreign-authorized-keys',
             description: 'no authorized_keys entry other than the injected key',
-            script: ctx => `rc=0
+            // TEMPORARY DIAGNOSTIC (docs/check-upstream-handoff.md #6): every
+            // Ubuntu leg flags a line here whose provenance is unconfirmed
+            // because the previous log truncated it at 60 chars. This block
+            // emits the full offending line, classifies whether it is
+            // cloud-init's inert disable-root stub, and prints the line's key
+            // body next to the injected body so the CI log alone decides the
+            // fix. Revert to a one-line `unexpected key in $f` once #6 is
+            // resolved — a full key body in the log is only wanted while
+            // investigating.
+            script: ctx => `injected='${sshKeyBody(ctx.sshPublicKey)}'
+rc=0
 for f in /root/.ssh/authorized_keys /home/*/.ssh/authorized_keys; do
   [ -f "$f" ] || continue
   while IFS= read -r line; do
     case "$line" in
       ''|'#'*) continue ;;
-      *'${sshKeyBody(ctx.sshPublicKey)}'*) continue ;;
+      *"$injected"*) continue ;;
     esac
-    echo "unexpected key in $f: $(echo "$line" | cut -c1-60)..."
+    echo "unexpected key in $f:"
+    echo "  full: $line"
+    case "$line" in
+      *'command="'*'Please login as the user'*'exit 142'*)
+        echo "  classified: cloud-init disable-root stub (inert forced command)" ;;
+      *) echo "  classified: NOT the disable-root stub" ;;
+    esac
+    body=$(printf '%s\\n' "$line" | awk '{for(i=1;i<NF;i++) if($i ~ /^(ssh-|ecdsa-|sk-)/){print $(i+1); exit}}')
+    if [ -n "$body" ]; then
+      [ "$body" = "$injected" ] && echo "  key-body: MATCHES injected key" \\
+                                || echo "  key-body: DIFFERS from injected: $body"
+    else
+      echo "  key-body: could not parse a key type from the line"
+    fi
     rc=1
   done < "$f"
 done
