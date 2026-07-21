@@ -27,8 +27,20 @@ export const linuxSuite: CheckSuite = {
         {
             id: 'cloud-init-done',
             description: 'cloud-init reached the done state',
-            script: 'cloud-init status --wait',
-            expectStdout: /status:\s*done/,
+            // --wait blocks until a terminal state. Newer cloud-init (24.x, on
+            // el10/debian-13/ubuntu) exits 2 for a recoverable ("degraded")
+            // error even when the boot still reached done, where older releases
+            // exit 0. `cloud-init-no-errors` is the real error gate, so accept a
+            // done/degraded-done outcome and fail only on a fatal error (exit 1)
+            // or a status that never reached done.
+            script: `out=$(cloud-init status --wait 2>/dev/null); rc=$?
+printf '%s\\n' "$out"
+[ "$rc" = 1 ] && { echo 'cloud-init reported a fatal error'; exit 1; }
+case "$out" in
+  *'status: done'*|*'status: degraded done'*) exit 0 ;;
+esac
+echo 'cloud-init did not reach a done state'
+exit 1`,
             severity: 'fail',
             phase: 'first-boot',
             timeoutS: 300,
