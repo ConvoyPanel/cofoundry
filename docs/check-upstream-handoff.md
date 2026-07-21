@@ -19,7 +19,7 @@ changing shape between runs. Four are fixed and verified; **one remains open**
 | 3   | guest-exec enabler no-op'd on el9/el10 (allow-list) but reported success                                                           | almalinux/rocky 9, 10                   | ✅ fixed `3be5e0b`             |
 | 4   | `systemd-healthy` trusted `is-system-running --wait`, ineffective on systemd 239                                                   | el8 (systemd 239)                       | ✅ fixed `90e2e79`             |
 | 5   | `cloud-init-done` failed on cloud-init 24.x "degraded done" (exit 2)                                                               | alma-10, rocky-10, debian-13, ubuntu-\* | ✅ fixed `d718868`             |
-| 6   | `no-foreign-authorized-keys` flags an unexpected key in `/root/.ssh/authorized_keys`                                               | **ubuntu 22/24/25/26 only**             | ⏳ **OPEN — needs a decision** |
+| 6   | `no-foreign-authorized-keys` flags an unexpected key in `/root/.ssh/authorized_keys`                                               | **ubuntu 22/24/25/26 only**             | ⏳ **OPEN — diagnostic deployed (`7b35243`), awaiting a run to decide** |
 
 After fixes 1–5, the expected outcome of the next run is: **all Debian, all
 AlmaLinux, all Rocky green; Ubuntu still red on #6 only.** (Not yet confirmed by a
@@ -66,14 +66,30 @@ surviving into a template as a fleet-wide backdoor. Loosening it is a security
 decision that should have a maintainer's sign-off, and the exact provenance of
 the key is still unconfirmed. Do not blindly weaken it.
 
-**To finish the investigation** (get the real key, then decide):
+**Status — diagnostic is in place, awaiting the next run.** The 60-char
+truncation was self-inflicted: the check itself ran `cut -c1-60` on the
+offending line (the runner already surfaces a check's full stdout in the CI
+log). A **temporary diagnostic** now replaces that truncation
+(`no-foreign-authorized-keys` in `src/verify/checks/linux.ts`, commit below): for
+each unexpected line it prints the full untruncated line, classifies whether it
+matches cloud-init's inert disable-root stub signature
+(`command="...Please login as the user...exit 142"`), and prints the line's key
+body next to the injected body (MATCHES / DIFFERS). Provenance is therefore
+decidable **from the CI job log alone** — no clone-and-`cat` needed.
 
-1. Build the Ubuntu template and dump the file directly, e.g. run a build to a
-   node you can reach and `cat /root/.ssh/authorized_keys` on a clone, or add a
-   temporary diagnostic that captures the full (untruncated) offending line into
-   the diagnostics dir the smoke test already uploads.
-2. Compare the trailing key body against the verify-injected key
-   (`sshKeyBody(ctx.sshPublicKey)` at runtime).
+**To finish the investigation:**
+
+1. Ask the owner to re-run **Check upstream images** (fixes #3–#5 also still need
+   a run to confirm — see below). Read the Ubuntu leg's `no-foreign-authorized-keys`
+   output in the job log.
+2. Decide from the `classified:` / `key-body:` lines:
+   - `disable-root stub` + `DIFFERS` → inert upstream stub; apply the recommended
+     carve-out below.
+   - `NOT the disable-root stub` → a genuinely foreign baked-in key; fix the
+     recipe/image, not the check.
+3. Once decided, **revert the temporary diagnostic** back to a one-line
+   `unexpected key in $f` message — a full key body in the log is only wanted
+   while investigating.
 
 **Candidate fixes, once provenance is known:**
 
@@ -95,6 +111,7 @@ the key is still unconfirmed. Do not blindly weaken it.
 | `c972f6e` | `recipes/_shared/post/enable-guest-exec.sh` (new), 6 RHEL `*.pkr.hcl`, `docs/recipes.md`, `tests/recipe-consistency.test.ts` | Enable guest-exec on RHEL, run after `dnf update`. el8 block-list + el9/el10 allow-list.                                                                                                                        |
 | `3be5e0b` | `recipes/_shared/post/enable-guest-exec.sh`                                                                                  | Fix the el9/el10 branch: scope the RPC membership/verify greps to the active `FILTER_RPC_ARGS=` line, not the whole file (a commented-out example line was matching, so the append was skipped yet "verified"). |
 | `90e2e79` | `src/verify/checks/linux.ts`                                                                                                 | Poll `is-system-running` instead of trusting `--wait` (which only waits on systemd ≥ 240; el8 ships 239).                                                                                                       |
+| `7b35243` | `src/verify/checks/linux.ts`                                                                                                | **Temporary diagnostic for #6.** Drop the check's own `cut -c1-60`; print the full offending line, a disable-root-stub classification, and a key-body MATCHES/DIFFERS comparison. Revert once #6 is decided.    |
 | `d718868` | `src/verify/checks/linux.ts`                                                                                                 | Accept cloud-init "degraded done" (exit 2) in `cloud-init-done`; fail only on fatal (exit 1) / non-done.                                                                                                        |
 
 ## Verification methodology (how the above were proven without CI cycles)
