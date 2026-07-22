@@ -61,6 +61,30 @@ Copy the matching `user-data` and empty `meta-data` files under
 `recipes/<recipe>/http/`. Update release-specific package or boot arguments only
 when required by that installer.
 
+The build's ephemeral SSH key is installed for the `packer` user in a
+`late-command`, **not** through the autoinstall `ssh:` section. Subiquity's
+`ssh.authorized-keys` registers the key as an *instance* public key, and
+cloud-init then also plants it in `/root/.ssh/authorized_keys` as a neutered
+`disable_root` forced-command stub (`command="…Please login as the user…exit
+142"`) — the build key leaking into the shipped template, which the
+`no-foreign-authorized-keys` verify check flags on every Ubuntu leg. Per-user
+keys never propagate to root, so the recipe instead creates `packer` at install
+time via the `identity:` block (locked password; `packer` authenticates by key
+and is deleted before export) and writes the key + a `NOPASSWD` sudoers file in
+late-commands, mirroring the Debian preseed and AlmaLinux/Rocky kickstart flows.
+Because the `ssh:` section is gone, `openssh-server` is listed under `packages:`
+(installing it enables `ssh.service` via the systemd preset) and the existing
+`sshd_config.d/10-cofoundry.conf` late-command carries `PasswordAuthentication`.
+
+Assumptions to confirm on the next live Ubuntu build (unverified at time of
+writing): Subiquity accepts `identity.password: "!"`; the `identity` user's
+`/home/packer` exists by the time `late-commands` run (so the `install -d`/key
+write land with `packer` ownership); and Packer's key login succeeds on the
+post-install reboot. Watch for an SSH timeout — that would mean one of these did
+not hold. Also re-run the `no-foreign-authorized-keys` check to confirm root is
+clean at the source (the `cloud-init-cleanup.sh` root strip remains as a
+belt-and-suspenders backstop regardless).
+
 Keep `boot_key_interval = "100ms"`. Proxmox types the boot command through the
 QEMU `sendkey` API; with no interval the guest keyboard buffer intermittently
 drops characters. This was observed corrupting the initramfs `ip=` netmask
