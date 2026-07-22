@@ -18,14 +18,23 @@ autoinstall:
         nameservers:
           addresses:
             - __PACKER_BUILD_DNS__
-  ssh:
-    install-server: true
-    allow-pw: true
-    disable_root: false
-    authorized-keys:
-      - __PACKER_SSH_PUBLIC_KEY__
+  # The build's ephemeral SSH key is installed for the packer user in a
+  # late-command (below), never through the autoinstall `ssh:` section.
+  # Subiquity's `ssh.authorized-keys` registers the key as an instance public
+  # key, which cloud-init then also plants in /root/.ssh/authorized_keys as a
+  # neutered disable_root stub — the build key leaking into the shipped
+  # template. Injecting it per-user keeps it off root entirely and matches the
+  # Debian preseed and AlmaLinux/Rocky kickstart flows.
+  identity:
+    realname: packer
+    username: packer
+    hostname: packer-ubuntu
+    # Locked: packer authenticates by key only and is deleted before the
+    # template is exported. Mirrors the preseed's `passwd/user-password-crypted !`.
+    password: "!"
   packages:
     - qemu-guest-agent
+    - openssh-server
   storage:
     layout:
       name: direct
@@ -35,13 +44,11 @@ autoinstall:
     - curtin in-target -- bash -c "echo 'GRUB_CMDLINE_LINUX=\"console=tty0 console=ttyS0,115200\"' > /etc/default/grub.d/50-cofoundry.cfg"
     - curtin in-target -- update-grub
     - curtin in-target -- bash -c "mkdir -p /etc/ssh/sshd_config.d && printf 'PermitRootLogin yes\\nPasswordAuthentication yes\\n' > /etc/ssh/sshd_config.d/10-cofoundry.conf"
-  user-data:
-    package_upgrade: false
-    users:
-      - name: packer
-        groups: [adm, sudo]
-        lock-passwd: true
-        sudo: ALL=(ALL) NOPASSWD:ALL
-        shell: /bin/bash
-        ssh_authorized_keys:
-          - __PACKER_SSH_PUBLIC_KEY__
+    # Install the ephemeral build key for packer only — deliberately not root.
+    - curtin in-target -- install -d -m 700 -o packer -g packer /home/packer/.ssh
+    - curtin in-target -- bash -c "echo '__PACKER_SSH_PUBLIC_KEY__' > /home/packer/.ssh/authorized_keys"
+    - curtin in-target -- chmod 600 /home/packer/.ssh/authorized_keys
+    - curtin in-target -- chown packer:packer /home/packer/.ssh/authorized_keys
+    - curtin in-target -- usermod -aG adm,sudo packer
+    - curtin in-target -- bash -c "echo 'packer ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/packer"
+    - curtin in-target -- chmod 440 /etc/sudoers.d/packer
