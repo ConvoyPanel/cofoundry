@@ -324,6 +324,36 @@ found in the same verification: the seeded `AdministratorPassword` is applied
 *after* cloudbase's specialize-phase cipassword — see the VERIFIED DEFECT
 subsection below.
 
+#### Server 2019: the OOBE rewrite is insufficient — GeneralizationState sticks at 3 (2026-07-23)
+
+The `oobeSystem` rewrite above was verified only on windows-server-2025. On
+**windows-server-2019 it does not work**: run #51 rebuilt the 2019 template and
+its `cf verify` clone failed with `Cloudbase-Init did not settle within 900s`.
+Reproduced live on 2026-07-23 by restoring run #51's exported 2019 template
+(`windows-server-2019-amd64.vma.zst`), cloning it, and booting the clone — no
+rebuild needed, since the failure is at clone first boot, not build time:
+
+- `GeneralizationState` read **3** (`HKLM\SYSTEM\Setup\Status\SysprepStatus`) and
+  `cloudbase-init.log` filled with one `Waiting for sysprep completion.
+  GeneralizationState: 3` line per second — the exact stuck-service signature.
+- Yet the clone reached the **Windows lock screen** (`Press Ctrl+Alt+Delete to
+  unlock`), so the visible OOBE screens *were* suppressed (the `Hide*` settings
+  work); OOBE simply never ran the completion step that advances the state to 7.
+  The shipped `oobeSystem` block (Hide\* + `AdministratorPassword`) that gets 2025
+  to 7 leaves 2019 at 3.
+- The specialize pass is identical to the 2025 flow: `remove-build-profile.ps1`
+  (Order 1), then cloudbase-init `--config …-unattend.conf && exit 1 || exit 2`
+  with `<WillReboot>OnRequest</WillReboot>` (Order 2). The `Panther\unattend.xml`
+  and `C:\Windows\Temp\cb-sysprep-unattend.xml` copies both confirm this.
+
+Status: **root cause reproduced and characterised; a 2019 fix is NOT yet found.**
+Server 2019's OOBE completion differs from 2025's and needs a version-specific
+answer-file change; each attempt is a full ~1h rebuild + clone verify, so it was
+left for a deliberate follow-up rather than burned through blind. Candidate
+directions to try next: a `SetupComplete.cmd` (`C:\Windows\Setup\Scripts`) that
+forces `GeneralizationState=7`, or reworking the specialize `WillReboot=OnRequest`
+reboot so 2019's OOBE finalisation is not cut short.
+
 #### VERIFIED DEFECT (2026-07-21): the seeded AdministratorPassword overwrites the cloud-init password
 
 Verified on the first clone (windows-server-2025, first build of this flow),
