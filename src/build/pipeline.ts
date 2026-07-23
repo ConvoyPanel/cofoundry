@@ -40,6 +40,24 @@ export type PipelineResult = {
     failed: { name: string; error: string }[]
 }
 
+// Packer prefixes every streamed line with `<builder>.<source>: ` (e.g.
+// `==> proxmox-iso.windows-server-2019: …`). Our stream renderer already tags
+// each line with `[<recipe>]`, so that builder prefix just repeats the recipe
+// name on every line. Strip it — keeping any leading `==> ` step marker — so a
+// line reads `[windows-server-2019] ==> downloading …` instead of doubling the
+// name. Only strips when the source segment matches this recipe, leaving any
+// other `word.word:`-shaped text in genuine build output untouched.
+export const stripPackerBuildPrefix = (
+    line: string,
+    recipeName: string
+): string => {
+    const escaped = recipeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return line.replace(
+        new RegExp(`^(==> )?[a-z0-9-]+\\.${escaped}:\\s*`),
+        (_all, arrow: string | undefined) => arrow ?? ''
+    )
+}
+
 export type PipelineDependencies = {
     syncRepo: typeof syncRepoToRemote
     prefetch: typeof prefetchPhase
@@ -377,7 +395,10 @@ const runRecipe = async (
                         snapshotDir,
                     },
                     line => {
-                        const trimmed = line.trim()
+                        const trimmed = stripPackerBuildPrefix(
+                            line.trim(),
+                            recipe.name
+                        )
                         if (!trimmed) return
                         if (trimmed.includes('A template was created:')) {
                             templateSummary = trimmed

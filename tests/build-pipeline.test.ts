@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import type { RecipeInfo } from '@/config.ts'
 import type { Env } from '@/env.ts'
-import { runPipeline, type PipelineDependencies } from '@/build/pipeline.ts'
+import {
+    runPipeline,
+    stripPackerBuildPrefix,
+    type PipelineDependencies,
+} from '@/build/pipeline.ts'
 
 const env = {} as Env
 const recipe = {
@@ -218,6 +222,36 @@ describe('runPipeline', () => {
         // The banner must be re-logged AFTER the teardown noise so the summary
         // ring buffer ends on the created template, not the benign warning.
         expect(bannerIdx).toBeGreaterThan(noiseIdx)
+    })
+
+    test('strips the redundant packer builder prefix, keeping the step marker', () => {
+        expect(
+            stripPackerBuildPrefix(
+                '==> proxmox-iso.windows-server-2019: downloading 5 update(s)',
+                'windows-server-2019'
+            )
+        ).toBe('==> downloading 5 update(s)')
+        // Indented sub-output arrives without the `==>` marker after trimming.
+        expect(
+            stripPackerBuildPrefix(
+                'proxmox-iso.windows-server-2019:     download 11%',
+                'windows-server-2019'
+            )
+        ).toBe('download 11%')
+    })
+
+    test('leaves other builder-shaped text untouched', () => {
+        // A different source name must not be stripped.
+        expect(
+            stripPackerBuildPrefix(
+                '==> proxmox-iso.debian-12: booting',
+                'windows-server-2019'
+            )
+        ).toBe('==> proxmox-iso.debian-12: booting')
+        // Genuine `word.word:` content in a message is preserved.
+        expect(
+            stripPackerBuildPrefix('config.yaml: parsed', 'windows-server-2019')
+        ).toBe('config.yaml: parsed')
     })
 
     test('rejects duplicate recipes in a parallel build', async () => {
