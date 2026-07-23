@@ -68,20 +68,31 @@ cloud-init then also plants it in `/root/.ssh/authorized_keys` as a neutered
 `disable_root` forced-command stub (`command="…Please login as the user…exit
 142"`) — the build key leaking into the shipped template, which the
 `no-foreign-authorized-keys` verify check flags on every Ubuntu leg. Per-user
-keys never propagate to root, so the recipe instead creates `packer` at install
-time via the `identity:` block (locked password; `packer` authenticates by key
-and is deleted before export) and writes the key + a `NOPASSWD` sudoers file in
-late-commands, mirroring the Debian preseed and AlmaLinux/Rocky kickstart flows.
-Because the `ssh:` section is gone, `openssh-server` is listed under `packages:`
-(installing it enables `ssh.service` via the systemd preset) and the existing
+keys never propagate to root, so the recipe instead declares `packer` via the
+`identity:` block (locked password; `packer` authenticates by key and is deleted
+before export) and writes the key + a `NOPASSWD` sudoers file in late-commands,
+mirroring the Debian preseed and AlmaLinux/Rocky kickstart flows. Because the
+`ssh:` section is gone, `openssh-server` is listed under `packages:` (installing
+it enables `ssh.service` via the systemd preset) and the existing
 `sshd_config.d/10-cofoundry.conf` late-command carries `PasswordAuthentication`.
 
-Assumptions to confirm on the next live Ubuntu build (unverified at time of
-writing): Subiquity accepts `identity.password: "!"`; the `identity` user's
-`/home/packer` exists by the time `late-commands` run (so the `install -d`/key
-write land with `packer` ownership); and Packer's key login succeeds on the
-post-install reboot. Watch for an SSH timeout — that would mean one of these did
-not hold. Also re-run the `no-foreign-authorized-keys` check to confirm root is
+**The `identity` user does not exist in the target when `late-commands` run.**
+Confirmed on a live 22.04 build (and reproduced for 25.10): Subiquity defers
+`identity`-user creation to cloud-init's *first boot* of the installed system,
+so at `curtin in-target` time there is no `packer` user or group. The original
+`install -d -m 700 -o packer -g packer /home/packer/.ssh` therefore failed with
+`install: invalid user 'packer'`, and a failed late-command **aborts the entire
+autoinstall** — the installer drops to its error shell with sshd still up, so
+Packer sees port 22 open but can never authenticate and times out after 30
+minutes. (This is a different failure from the boot-key corruption below, though
+both surface as a 30-minute SSH timeout; tell them apart from the serial console
+— an aborted install shows `An error occurred. Press enter to start a shell`.)
+
+The recipe now creates the group and user in-target (`groupadd`/`useradd`,
+guarded so they no-op where a Subiquity version already made them) *before* the
+key-install commands. cloud-init reconciles the pre-existing `packer` user
+idempotently on first boot, so its locked password, sudo group, and home are
+still applied. Re-run the `no-foreign-authorized-keys` check to confirm root is
 clean at the source (the `cloud-init-cleanup.sh` root strip remains as a
 belt-and-suspenders backstop regardless).
 

@@ -44,6 +44,15 @@ autoinstall:
     - curtin in-target -- bash -c "echo 'GRUB_CMDLINE_LINUX=\"console=tty0 console=ttyS0,115200\"' > /etc/default/grub.d/50-cofoundry.cfg"
     - curtin in-target -- update-grub
     - curtin in-target -- bash -c "mkdir -p /etc/ssh/sshd_config.d && printf 'PermitRootLogin yes\\nPasswordAuthentication yes\\n' > /etc/ssh/sshd_config.d/10-cofoundry.conf"
+    # Subiquity defers the identity user to cloud-init's first boot, so `packer`
+    # does not yet exist in the target when these late-commands run — confirmed
+    # on a live 22.04/25.10 build where the `-o packer` install below failed
+    # "invalid user 'packer'" and aborted the whole autoinstall (30-min SSH
+    # timeout: installer sshd up, no packer key). Create the group and user
+    # in-target first; cloud-init reconciles the pre-existing user idempotently
+    # on first boot. See docs/recipes.md#ubuntu-autoinstall.
+    - curtin in-target -- bash -c "getent group packer >/dev/null || groupadd packer"
+    - curtin in-target -- bash -c "id -u packer >/dev/null 2>&1 || useradd --create-home --gid packer --shell /bin/bash packer"
     # Install the ephemeral build key for packer only — deliberately not root.
     - curtin in-target -- install -d -m 700 -o packer -g packer /home/packer/.ssh
     - curtin in-target -- bash -c "echo '__PACKER_SSH_PUBLIC_KEY__' > /home/packer/.ssh/authorized_keys"
