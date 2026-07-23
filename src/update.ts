@@ -64,19 +64,19 @@ const parseChecksumFile = (
     const matches: { filename: string; sha256: string }[] = []
 
     // BSD-style: "SHA256 (filename) = hash" — used by AlmaLinux, Rocky Linux
-    const bsdRe = /^SHA256 \((.+?)\) = ([0-9a-f]{64})$/gm
+    const bsdRe = /^SHA256 \((.+?)\) = ([0-9a-fA-F]{64})$/gm
     let m: RegExpExecArray | null
     while ((m = bsdRe.exec(content)) !== null) {
         if (filenameRe.test(m[1]!))
-            matches.push({ filename: m[1]!, sha256: m[2]! })
+            matches.push({ filename: m[1]!, sha256: m[2]!.toLowerCase() })
     }
     if (matches.length > 0) return matches.at(-1)!
 
     // GNU-style: "hash  filename" or "hash *filename" — used by Ubuntu, Debian
-    const gnuRe = /^([0-9a-f]{64})\s+\*?(\S+\.iso)$/gm
+    const gnuRe = /^([0-9a-fA-F]{64})\s+\*?(\S+\.iso)$/gm
     while ((m = gnuRe.exec(content)) !== null) {
         if (filenameRe.test(m[2]!))
-            matches.push({ filename: m[2]!, sha256: m[1]! })
+            matches.push({ filename: m[2]!, sha256: m[1]!.toLowerCase() })
     }
     return matches.at(-1)
 }
@@ -112,8 +112,11 @@ export const applyIsoUpdate = async (
         /^(# iso_target_path:\s*\$\{var\.iso_cache_dir}\/).+$/m,
         `$1${newIsoFilename}`
     )
+    // [0-9a-fA-F]: recipe pins may be pasted from vendors that publish
+    // uppercase hashes; a case-sensitive match would silently leave the old
+    // pin while iso_url advances, producing a permanently failing build.
     out = out.replace(
-        /(\biso_checksum\s*=\s*"sha256:)[0-9a-f]{64}(")/,
+        /(\biso_checksum\s*=\s*"sha256:)[0-9a-fA-F]{64}(")/,
         `$1${update.sha256}$2`
     )
     if (oldIsoFilename && oldIsoFilename !== newIsoFilename)
