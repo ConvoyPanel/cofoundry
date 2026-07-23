@@ -5,6 +5,10 @@ import { join } from 'node:path'
 import PQueue from 'p-queue'
 import pRetry from 'p-retry'
 import SftpClient from 'ssh2-sftp-client'
+import {
+    openProxyCommandSock,
+    resolveProxyCommand,
+} from '@/build/sftp/proxy.ts'
 
 export type SshTarget = { user: string; host: string; port: number }
 
@@ -50,8 +54,29 @@ const connectOnce = async (target: string): Promise<SftpClient> => {
         if (keyFile) config.privateKey = await readFile(keyFile)
         else config.authHandler = ['none']
     }
+
+    // Reach the node the same way every `execa('ssh', …)` call does: through the
+    // ProxyCommand from ~/.ssh/config, when one applies. ssh2 handshakes over
+    // the supplied socket instead of dialling host:port itself, so tailnet/
+    // SOCKS/bastion setups work here as they do for the rest of the tool. No
+    // ProxyCommand (the CI case) means a plain direct connect, as before.
+    const proxyCommand = await resolveProxyCommand(host, port)
+    const proxied = proxyCommand ? openProxyCommandSock(proxyCommand) : null
+    if (proxied) config.sock = proxied.sock
+
     const client = new SftpClient()
-    await client.connect(config as Parameters<SftpClient['connect']>[0])
+    // Tear the ProxyCommand child down whenever the connection ends — whether it
+    // closes cleanly, errors, or the handshake below never completes.
+    if (proxied) {
+        client.on('close', proxied.cleanup)
+        client.on('end', proxied.cleanup)
+    }
+    try {
+        await client.connect(config as Parameters<SftpClient['connect']>[0])
+    } catch (err) {
+        proxied?.cleanup()
+        throw err
+    }
     return client
 }
 
