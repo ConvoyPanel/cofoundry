@@ -104,6 +104,46 @@ DISM filesystem-limitation failure against the staged image.
 7. The host truncates the disk, creates the vzdump artifact, and destroys the
    build VM.
 
+### Setup quit-confirmation modal opened by the boot keypress blanket
+
+Observed live 2026-07-21 on windows-server-2025 (three identical
+"Timeout waiting for WinRM" failures at exactly 46m14s — the 45m
+`winrm_timeout` plus fixed overhead, so the identical duration carries no
+information about *where* the guest stalled). A console screendump of the
+fourth attempt showed Windows Setup at "23% complete" with a modal
+**"Windows Server Setup — Are you sure you want to quit?"** dialog open and
+focus on **No**.
+
+Root cause: the ~60-second `<enter>` blanket that covers the OVMF
+"Press any key to boot from CD or DVD" window keeps typing after WinPE's GUI
+has loaded. The "Installing Windows Server" screen has a single focusable
+Cancel button, so a stray Enter presses it and opens the quit-confirmation
+modal. Any *following* Enter presses the modal's default **No** and closes it
+again — which is why the burst usually gets away with it — but when the modal
+opens on (or near) the burst's final keystroke, nothing remains to dismiss it
+and Setup sits blocked until `winrm_timeout` expires. Whether the race hits
+depends on how fast WinPE loads, i.e. on node I/O load: three parallel Windows
+builds reproduced it 3/3, while the previous day's staggered run passed. The
+inline comment claiming stray Enters are "harmless (autounattend drives Setup
+non-interactively)" is therefore wrong for the GUI phase; the burst length is
+still required for the boot prompt itself (see the failure reference).
+
+Live rescue, verified working: dismiss the modal from the host —
+
+```sh
+qm sendkey <build-vmid> ret   # presses the focused "No"; install resumed at once
+```
+
+`qm sendkey <vmid> esc` was tried first and does NOT close this modal.
+Progress jumped 23% → 56% within seconds of dismissal, confirming the modal
+gates the install's phase transitions.
+
+Candidate permanent fix (untested): replace `<enter>` in the boot blanket with
+a key OVMF accepts as "any key" but that cannot activate a focused button in
+the Setup GUI (e.g. `<up>`). Verify OVMF actually honors the chosen key at the
+boot prompt before committing to it — a key it ignores turns every build into
+"no bootable device".
+
 ### Windows Update automatic reboot suppression
 
 Windows Update's own Update Orchestrator will auto-restart the VM when a
@@ -129,13 +169,11 @@ re-enables the reboot tasks before sysprep, so the shipped template keeps
 Windows' default update policy rather than inheriting a "never auto-reboot"
 state.
 
-Status: **unverified on a live build** at time of writing. Confirm on the next
-real run that both WU rounds complete without a mid-round reboot and record the
-outcome here. If a mid-round reboot still occurs, the `Reboot*` task disable was
-likely denied (TrustedInstaller-owned) — capture whether `NoAutoUpdate` alone
-held, and whether the reboot came from the orchestrator or from a boot-time
-servicing commit (the latter would need a different approach, e.g. settling the
-servicing stack before each round rather than suppressing auto-reboot).
+Status: **VERIFIED on a live build 2026-07-21.** All three Windows recipes
+built to completion (2019, 2022, and 2025 at 1h28m of provisioning) with both
+WU rounds finishing and no mid-round orchestrator reboot killing a provisioner.
+(The 2025 run needed four attempts, but every failure was the boot-keypress
+quit-modal race described above — pre-WinRM, unrelated to WU.)
 
 Cloudbase-Init is deliberately installed after Windows Update. Server 2025
 checkpoint cumulative updates can perform a near-full OS redeploy and create
@@ -208,13 +246,12 @@ hides the EULA, sets `SkipMachineOOBE`/`SkipUserOOBE`, keeps
 hostname. An earlier comment in `Finalize.ps1` claiming it sets a placeholder
 password was wrong and has been corrected.
 
-Status: **unverified on a live build** at time of writing. The mechanism is
-confirmed on a clone by hand (deleting the profile fixed that VM); what remains
-unproven is that the injected specialize command runs correctly on a fresh build.
-On the next real run, confirm the clone boots to a working desktop on first
-Administrator logon without an operator click, and that the XML injection did not
-break OOBE auto-completion — a clone hanging at OOBE in noVNC is the regression
-to watch for. Record the outcome here.
+Status: **VERIFIED on a live build 2026-07-21** (first clone off the first
+windows-server-2025 build of this flow): `C:\Users` contained only `Public` —
+the injected specialize command ran and deleted the build profile, and OOBE
+auto-completed (`GeneralizationState=7`, no operator prompt). An interactive
+first Administrator logon to the desktop was not exercised (blocked by the
+password-overwrite defect below), but the stale-profile mechanism itself works.
 
 ### Cloudbase-Init never runs on a clone (OOBE never completes)
 
@@ -249,9 +286,11 @@ children as an ordered sequence.
 
 The password comes from `CF_ADMIN_PASSWORD`, passed by each Windows recipe as
 `var.winrm_password` — the build's own WinRM password, so nothing is hardcoded in
-the repo. Cloudbase-Init overwrites it with the cloud-init password seconds into
-first boot; it only has to carry the clone from OOBE to that point, and it doubles
-as a known fallback when injection fails.
+the repo. The original design assumed Cloudbase-Init would overwrite it with the
+cloud-init password seconds into first boot — **live verification proved the
+opposite order** (see the VERIFIED DEFECT below): the oobeSystem pass applies
+this seeded password *after* cloudbase's specialize-phase cipassword, so it ends
+up as the clone's final Administrator password.
 
 Handling of that plaintext password, which is a real exposure and should not be
 assumed away:
@@ -259,44 +298,68 @@ assumed away:
 - `C:\Windows\Temp\cb-sysprep-unattend.xml` — the copy passed to sysprep. Nothing
   used to clean it up; it was still present on an inspected clone. The specialize
   script now deletes it.
-- `C:\Windows\Panther\unattend.xml` — Windows is *expected* to scrub password
-  fields to `*SENSITIVE*DATA*DELETED*`. **This is unverified on this image.** The
-  inspected clone predates the change and had no password fields to scrub, so
-  there was nothing to observe. Verify on the next build rather than trusting it.
-
-  > **OPEN ITEM — now checked automatically, but still unobserved.**
-  >
-  > `cf verify` runs a `no-plaintext-build-password` check on every Windows
-  > build (see `src/verify/checks/windows.ts`). When it can recover the build's
-  > `winrm_password` from the node's Packer vars file it greps the answer files
-  > and Panther logs for that exact value; otherwise it falls back to asserting
-  > no answer file carries a non-empty password element. A failing verify is
-  > now the signal — but until a build has actually run through it with a
-  > recoverable password, treat the scrubbing as unconfirmed. The manual probe:
-  >
-  > ```powershell
-  > Select-String -Path C:\Windows\Panther\unattend.xml -Pattern 'SENSITIVE|<Value>'
-  > ```
-  >
-  > `*SENSITIVE*DATA*DELETED*` → Windows scrubs it, and only the `C:\Windows\Temp`
-  > copy leaks. That copy exists in the exported disk until a clone first boots, so
-  > it would then be worth switching `Finalize.ps1` to `sysprep /quit`, deleting the
-  > file, and shutting down explicitly — closing the gap entirely.
-  >
-  > A literal password → the build's WinRM password ships readable in a template
-  > published to a public CDN, and the whole approach needs rethinking (the
-  > `AdministratorPassword` seeding, not just the cleanup). Do not ship builds
-  > publicly until this is answered.
-  >
-  > Record the answer here either way and delete this box.
+- `C:\Windows\Panther\unattend.xml` — **VERIFIED SCRUBBED 2026-07-21** on the
+  first clone off the first real build of this flow (windows-server-2025):
+  `Select-String` showed `<AdministratorPassword>*SENSITIVE*DATA*DELETED*</AdministratorPassword>`.
+  Windows scrubs the Panther copy, so only the `C:\Windows\Temp` copy carried
+  the password, and the specialize script now deletes it (also verified: the
+  file was absent on the clone). Since the Temp copy still exists in the
+  exported template disk until a clone first boots, switching `Finalize.ps1` to
+  `sysprep /quit` + explicit delete + shutdown remains the way to close the gap
+  entirely. `cf verify` now also runs a `no-plaintext-build-password` check on
+  every Windows build (`src/verify/checks/windows.ts`): when it can recover the
+  build's `winrm_password` from the node's Packer vars file it greps the answer
+  files and Panther logs for that exact value, else it asserts no answer file
+  carries a non-empty password element — so future regressions surface as a
+  failing verify rather than requiring this manual probe.
 - Both files exist in the exported template disk until a clone first boots, so
   treat the template artifact itself as carrying the build's WinRM password.
 
-Status: **unverified on a live build** at time of writing. The mechanism is proven
-on a clone by hand; the rewritten answer file has not yet driven a real sysprep.
-On the next run confirm the clone reaches the desktop with no operator prompt and
-that `GeneralizationState` reads 7. A clone stalling at an OOBE screen in noVNC is
-the regression to watch.
+Status: **VERIFIED on a live build 2026-07-21.** The rewritten answer file drove
+a real sysprep (windows-server-2025); the first clone reached
+`GeneralizationState=7` with no operator prompt, and every plugin ran
+(`SetHostNamePlugin` renamed + rebooted, `SetUserPasswordPlugin`,
+`ExtendVolumesPlugin`, `UserDataPlugin`, `LocalScriptsPlugin`). One new defect
+found in the same verification: the seeded `AdministratorPassword` is applied
+*after* cloudbase's specialize-phase cipassword — see the VERIFIED DEFECT
+subsection below.
+
+#### VERIFIED DEFECT (2026-07-21): the seeded AdministratorPassword overwrites the cloud-init password
+
+Verified on the first clone (windows-server-2025, first build of this flow),
+with a full paper trail. On the clone's first boot the order of operations is:
+
+1. Cloudbase-Init's sysprep-phase run (released by the GeneralizationState fix)
+   executes the full MAIN plugin stage **during specialize**: `cloudbase-init.log`
+   06:37:08 — `Password succesfully updated for user Administrator` (the
+   Proxmox `cipassword` from the configdrive).
+2. The **oobeSystem pass runs after it**: `Panther\UnattendGC\setupact.log`
+   06:37:37 — `[Shell Unattend] UserAccounts: Password set for 'Administrator'`
+   — applying the seeded `AdministratorPassword` (the build's ephemeral WinRM
+   password) **29 seconds after** Cloudbase-Init set the cipassword.
+3. Cloudbase-Init's plugins are run-once per instance, so nothing re-applies
+   the cipassword on later boots.
+
+Net effect: every clone's final Administrator password is the build's
+generated per-build secret — which is deleted with the build workdir — and
+`ValidateCredentials('Administrator', <cipassword>)` returns False. The
+assumption earlier in this section ("Cloudbase-Init overwrites it with the
+cloud-init password seconds into first boot") is exactly backwards: cloudbase's
+metadata pass runs at specialize, *before* oobeSystem, not after.
+
+Everything else in the rewritten flow verified GOOD on the same clone:
+`GeneralizationState=7`, all plugins ran (hostname applied + rename reboot),
+`C:\Users` contains only `Public` (stale-profile deletion works),
+`cb-sysprep-unattend.xml` deleted, no WinRM firewall rules (stock posture),
+Panther password scrubbed.
+
+Operational workaround until fixed: QEMU-GA works on clones, so
+`qm guest exec <vmid> -- net user Administrator <new-password>` restores
+access. Fix directions to evaluate: stop seeding a *secret* password (seed a
+public throwaway instead — OOBE only needs *a* value while Hide* settings do
+the skipping); or re-arm the SetUserPassword plugin so the post-OOBE service
+pass re-applies metadata; or move the cloudbase run out of the sysprep
+specialize phase so it runs after oobeSystem.
 
 #### Cloud-init password must satisfy the guest password policy
 
@@ -435,9 +498,11 @@ umount /tmp/vm
 | Specialize fails with `ERROR_BADDB` / `0x800703f9`        | Intermittent corrupt `COMPONENTS` hive transaction state                                                                                                            | Retain retries; investigate host RAM or storage integrity rather than CompactOS permutations           |
 | WU round-two provisioner exits 1 after ~4 min, no artifact | Update Orchestrator auto-restarts the headless VM mid-scan, killing the powershell provisioner; retries all die the same way                                        | `Install.ps1` disables WU auto-update/auto-reboot for the build; `Finalize.ps1` restores it before sysprep |
 | Two builds interfere or an orphan controls the slot       | Stale remote Packer/watchdog or fixed VMID state                                                                                                                    | Slot-derived VMIDs, stale process cleanup, orphan VM eviction, and name-based pruning                  |
+| WinRM timeout at exactly `winrm_timeout` + overhead; Setup GUI shows "Are you sure you want to quit?" | The `<enter>` boot blanket outlives WinPE load; a stray Enter presses Setup's Cancel and the modal opens on the burst's last keystroke, blocking the install | Screendump the console first; `qm sendkey <vmid> ret` dismisses it (esc does not). Candidate fix: use a non-activating key such as `<up>` in the blanket |
 | Clone boots to a gray desktop with no taskbar             | Template shipped the build's `C:\Users\Administrator`; its pre-generalize shell state crash-loops `ShellHost.exe` (`0xc0000409` in `ControlCenter.dll`)              | `Finalize.ps1` deletes that profile from the unattend's specialize pass so each clone builds a fresh one |
 | Clone asks for an Administrator password; cloud-init never applies | Deprecated `SkipMachineOOBE`/`SkipUserOOBE` leave `GeneralizationState` at 3, so Cloudbase-Init loops "Waiting for sysprep completion" and runs no plugins   | `Finalize.ps1` rewrites the unattend's OOBE block to `Hide*` settings + `AdministratorPassword` from `CF_ADMIN_PASSWORD` |
 | `Set user password failed: ... password policy requirements` | Proxmox `cipassword` violates the guest's `PasswordComplexity = 1` policy                                                                                        | Caller must supply a compliant password; the seeded `AdministratorPassword` keeps the clone reachable meanwhile |
+| Clone's `cipassword` does not work despite `Password succesfully updated` in the cloudbase log | Cloudbase's sysprep-phase run sets the cipassword at specialize; oobeSystem then applies the seeded `AdministratorPassword` (setupact.log: `UserAccounts: Password set`) 29s later, overwriting it with the deleted per-build secret | VERIFIED DEFECT 2026-07-21, see the OOBE section; workaround `qm guest exec <vmid> -- net user Administrator <pw>` |
 
 The intermittent `ERROR_BADDB` failure reproduced with verified install media,
 adequate free disk space, and no competing build process. Host RAM or the
