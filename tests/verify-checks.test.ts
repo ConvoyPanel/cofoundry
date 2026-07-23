@@ -226,22 +226,27 @@ describe('windows checks', () => {
         expect(structural).not.toContain('ild-pw')
     })
 
-    test.skipIf(!pwsh)('every script parses as PowerShell', () => {
-        // One pwsh invocation for the whole suite, not one per check: pwsh
-        // cold-start is ~hundreds of ms, and N of them serially blew bun's 5s
-        // per-test timeout on slower CI runners, failing the step at random.
-        // Each script travels as base64 so no quoting choices are needed, and
-        // the parser id is echoed back on any failure so the offender is named.
-        const items = windowsSuite.checks
-            .map(check => {
-                const b64 = Buffer.from(
-                    renderScript(check, ctx),
-                    'utf8'
-                ).toString('base64')
-                return `@{id='${check.id}';b64='${b64}'}`
-            })
-            .join(',')
-        const program = `$fail=0
+    // 30s timeout: even a single pwsh cold-start can exceed bun's 5s default on
+    // a loaded CI runner (observed ~7s), which failed this step at random. One
+    // invocation for the whole suite keeps the wall time well under this cap.
+    test.skipIf(!pwsh)(
+        'every script parses as PowerShell',
+        () => {
+            // One pwsh invocation for the whole suite, not one per check: pwsh
+            // cold-start is ~hundreds of ms, and N of them serially blew bun's 5s
+            // per-test timeout on slower CI runners, failing the step at random.
+            // Each script travels as base64 so no quoting choices are needed, and
+            // the parser id is echoed back on any failure so the offender is named.
+            const items = windowsSuite.checks
+                .map(check => {
+                    const b64 = Buffer.from(
+                        renderScript(check, ctx),
+                        'utf8'
+                    ).toString('base64')
+                    return `@{id='${check.id}';b64='${b64}'}`
+                })
+                .join(',')
+            const program = `$fail=0
 foreach($it in @(${items})){
   $s=[System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($it.b64))
   $e=$null
@@ -249,19 +254,24 @@ foreach($it in @(${items})){
   if($e.Count){$fail=1;Write-Output ("{0}: {1}" -f $it.id, (($e | ForEach-Object { $_.Message }) -join '; '))}
 }
 exit $fail`
-        const scriptFile = join(tmpdir(), `cf-pwsh-parse-${process.pid}.ps1`)
-        writeFileSync(scriptFile, program)
-        try {
-            const result = spawnSync(
-                'pwsh',
-                ['-NoProfile', '-File', scriptFile],
-                {
-                    encoding: 'utf8',
-                }
+            const scriptFile = join(
+                tmpdir(),
+                `cf-pwsh-parse-${process.pid}.ps1`
             )
-            expect(result.status, result.stdout).toBe(0)
-        } finally {
-            rmSync(scriptFile, { force: true })
-        }
-    })
+            writeFileSync(scriptFile, program)
+            try {
+                const result = spawnSync(
+                    'pwsh',
+                    ['-NoProfile', '-File', scriptFile],
+                    {
+                        encoding: 'utf8',
+                    }
+                )
+                expect(result.status, result.stdout).toBe(0)
+            } finally {
+                rmSync(scriptFile, { force: true })
+            }
+        },
+        30000
+    )
 })
