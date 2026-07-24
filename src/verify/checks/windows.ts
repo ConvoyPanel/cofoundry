@@ -52,16 +52,31 @@ if ($s -ne 7) {
             phase: 'first-boot',
         },
         {
+            // Assert real completion, not the absence of any ERROR line.
+            // Cloudbase-Init logs benign ERRORs on every Proxmox clone that are
+            // not failures: the --ciuser/--cipassword we set render as a
+            // #cloud-config user_data whose modules it does not implement
+            // ("Plugin '...' is currently not supported"), and it tries the Debian
+            // netcfg parser first on Proxmox's network config ("Invalid Debian
+            // config to parse"). A genuine plugin failure is logged as
+            // "plugin '<name>' failed with error"; a CRITICAL is always one. The
+            // original 2019 hang is caught by the completion assertion — it looped
+            // "Waiting for sysprep completion" forever and never reached the end.
             id: 'cloudbase-init-completed',
-            description: 'Cloudbase-Init ran with no plugin failures',
+            description:
+                'Cloudbase-Init ran to completion with no plugin failures',
             script: `$log = 'C:\\Program Files\\Cloudbase Solutions\\Cloudbase-Init\\log\\cloudbase-init.log'
 if (-not (Test-Path $log)) {
   Write-Output 'cloudbase-init.log missing — the service never ran'
   exit 1
 }
-$bad = Select-String -Path $log -Pattern 'ERROR','CRITICAL','Waiting for sysprep completion'
-if ($bad) {
-  $bad | Select-Object -First 20 | ForEach-Object { Write-Output $_.Line }
+$failed = Select-String -Path $log -Pattern "plugin '[^']+' failed with error", 'CRITICAL'
+if ($failed) {
+  $failed | Select-Object -First 20 | ForEach-Object { Write-Output $_.Line }
+  exit 1
+}
+if (-not (Select-String -Path $log -Pattern 'Plugins execution done')) {
+  Write-Output 'Cloudbase-Init did not finish (no "Plugins execution done") — likely still waiting for sysprep completion'
   exit 1
 }`,
             severity: 'fail',

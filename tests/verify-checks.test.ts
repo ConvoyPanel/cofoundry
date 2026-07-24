@@ -168,12 +168,17 @@ describe('windows checks', () => {
         expect(ids).toContain('shell-no-crashes')
     })
 
-    test('the sysprep-wait loop is treated as a cloudbase-init failure', () => {
+    test('the sysprep-wait hang is caught by requiring a completion marker', () => {
+        // The stuck-at-sysprep clone loops "Waiting for sysprep completion"
+        // forever and never reaches "Plugins execution done", so asserting the
+        // completion marker catches it without grepping benign ERROR noise.
         const script = renderScript(
             windowsSuite.checks.find(c => c.id === 'cloudbase-init-completed')!,
             ctx
         )
-        expect(script).toContain('Waiting for sysprep completion')
+        expect(script).toContain('Plugins execution done')
+        // A genuine plugin failure is still a failure.
+        expect(script).toContain("plugin '[^']+' failed with error")
     })
 
     test('shell health is judged after a logon, not before', () => {

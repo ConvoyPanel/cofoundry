@@ -130,8 +130,35 @@ if (-not $svc) { throw "cloudbase-init service not found after install" }
 Stop-Service -Name cloudbase-init -Force -ErrorAction SilentlyContinue
 Set-Service -Name cloudbase-init -StartupType Automatic -ErrorAction SilentlyContinue
 
+# Server 2019 only: make Cloudbase-Init delayed-auto-start.
+#
+# A Server 2019 clone reaches GeneralizationState=7 early -- while OOBE is still on
+# screen -- so an Automatic-start Cloudbase-Init wakes and runs its plugins before
+# the VDS, WMI-licensing, and user-profile subsystems are ready. That first run
+# fails ExtendVolumes/Licensing/CreateUser (they only recover after the hostname
+# reboot) and, worse, races the oobeSystem pass: its SetUserPassword lands before
+# oobeSystem re-seeds the AdministratorPassword, so the clone ships with the build's
+# throwaway WinRM password instead of the cloud-init one. Delaying the service to
+# auto-start (~2 min) lets OOBE finish and the box settle first, so it runs clean and
+# its password write wins -- matching how 2022/2025 already behave (they reach 7 only
+# once OOBE completes). Verified live on a clone: with delayed start the cloud-init
+# password validates, no early plugin errors, and no "Waiting for sysprep" lines.
+if ([int](Get-CimInstance Win32_OperatingSystem).BuildNumber -le 17763) {
+  Write-Step "set Cloudbase-Init to delayed auto-start (Server 2019 clone timing)"
+  # Windows PowerShell 5.1's Set-Service has no AutomaticDelayedStart; sc.exe does.
+  # The spaces after 'start=' are required by sc.exe's argument parser.
+  & sc.exe config cloudbase-init start= delayed-auto | Out-Null
+}
+
 $cloudbaseConfDir = "C:\Program Files\Cloudbase Solutions\Cloudbase-Init\conf"
 New-Item -ItemType Directory -Force -Path $cloudbaseConfDir | Out-Null
+# The plugins list below intentionally omits CreateUserPlugin. Administrator
+# already exists on the clone, so it never needs creating; its only effect is
+# opening an Administrator logon session, which re-creates the
+# C:\Users\Administrator profile that remove-build-profile.ps1 deletes at specialize
+# -- shipping a stale profile again. SetUserPasswordPlugin applies the cloud-init
+# password on its own (verified live: the password validates and C:\Users holds only
+# Public). Comment kept out here rather than in the .conf so the parser never sees it.
 @"
 [DEFAULT]
 username=Administrator
@@ -148,7 +175,7 @@ logfile=cloudbase-init.log
 default_log_levels=comtypes=INFO,suds=INFO,iso8601=WARN,requests=WARN
 local_scripts_path=C:\Program Files\Cloudbase Solutions\Cloudbase-Init\LocalScripts\
 metadata_services=cloudbaseinit.metadata.services.configdrive.ConfigDriveService,cloudbaseinit.metadata.services.nocloudservice.NoCloudConfigDriveService
-plugins=cloudbaseinit.plugins.common.mtu.MTUPlugin,cloudbaseinit.plugins.windows.ntpclient.NTPClientPlugin,cloudbaseinit.plugins.common.sethostname.SetHostNamePlugin,cloudbaseinit.plugins.windows.createuser.CreateUserPlugin,cloudbaseinit.plugins.common.setuserpassword.SetUserPasswordPlugin,cloudbaseinit.plugins.common.networkconfig.NetworkConfigPlugin,cloudbaseinit.plugins.windows.licensing.WindowsLicensingPlugin,cloudbaseinit.plugins.common.sshpublickeys.SetUserSSHPublicKeysPlugin,cloudbaseinit.plugins.windows.extendvolumes.ExtendVolumesPlugin,cloudbaseinit.plugins.common.userdata.UserDataPlugin,cloudbaseinit.plugins.common.localscripts.LocalScriptsPlugin
+plugins=cloudbaseinit.plugins.common.mtu.MTUPlugin,cloudbaseinit.plugins.windows.ntpclient.NTPClientPlugin,cloudbaseinit.plugins.common.sethostname.SetHostNamePlugin,cloudbaseinit.plugins.common.setuserpassword.SetUserPasswordPlugin,cloudbaseinit.plugins.common.networkconfig.NetworkConfigPlugin,cloudbaseinit.plugins.windows.licensing.WindowsLicensingPlugin,cloudbaseinit.plugins.common.sshpublickeys.SetUserSSHPublicKeysPlugin,cloudbaseinit.plugins.windows.extendvolumes.ExtendVolumesPlugin,cloudbaseinit.plugins.common.userdata.UserDataPlugin,cloudbaseinit.plugins.common.localscripts.LocalScriptsPlugin
 
 [config_drive]
 types=vfat,iso
@@ -305,22 +332,14 @@ foreach ($pair in @(
 }
 $runSync.PrependChild($cmdNode) | Out-Null
 
-# Make OOBE actually complete, so sysprep finishes and Cloudbase-Init can run.
+# Make OOBE complete unattended, so the clone reaches a logon instead of an
+# interactive OOBE screen.
 #
-# Cloudbase-Init's Unattend.xml drives OOBE with <SkipMachineOOBE> and
-# <SkipUserOOBE>. Microsoft deprecated both: they suppress the screens without
-# performing the completion work that advances
-# HKLM\SYSTEM\Setup\Status\SysprepStatus\GeneralizationState to 7. A clone then
-# boots stuck at GeneralizationState 3, and Cloudbase-Init's
-# wait_for_boot_completion loops "Waiting for sysprep completion" forever -- so
-# the cloud-init password, hostname, and volume extension are never applied and
-# an operator is left setting the Administrator password by hand in noVNC.
-# Confirmed on a clone: flipping that value to 7 released the service and every
-# plugin ran on the next poll.
-#
-# The replacement is the explicit Hide* screen set plus an AdministratorPassword
-# -- the same combination the per-recipe autounattend.xml already uses to get
-# through OOBE unattended during the build.
+# Cloudbase-Init's Unattend.xml drives OOBE with the deprecated <SkipMachineOOBE>
+# and <SkipUserOOBE>. The replacement is the explicit Hide* screen set plus an
+# AdministratorPassword -- the same combination the per-recipe autounattend.xml
+# uses to clear OOBE unattended during the build. (The International-Core component
+# added below covers the one screen Hide* cannot -- see that block.)
 $oobe = $unattendXml.SelectSingleNode(
   "/u:unattend/u:settings[@pass='oobeSystem']/u:component[@name='Microsoft-Windows-Shell-Setup']/u:OOBE", $ns)
 if (-not $oobe) {
@@ -381,6 +400,40 @@ foreach ($pair in @(@("Value", $env:CF_ADMIN_PASSWORD), @("PlainText", "true")))
 $userAccounts.AppendChild($adminPassword) | Out-Null
 # UserAccounts follows OOBE in the Shell-Setup sequence, matching autounattend.xml.
 $shellSetup.InsertAfter($userAccounts, $oobe) | Out-Null
+
+# Add a Microsoft-Windows-International-Core component to the oobeSystem pass so a
+# clone's OOBE does not stop at the region/language/keyboard screen ("Hi there").
+#
+# Cloudbase-Init's shipped Unattend.xml carries only a Shell-Setup component. The
+# Hide* settings above suppress the EULA, local-account, and OEM screens, but none
+# of them covers the first regional screen -- that one is skipped only by supplying
+# locale settings, which the per-recipe autounattend.xml does during the build but
+# the clone's answer file does not. Without this, Server 2019's OOBE reaches "Hi
+# there" and blocks for an operator: GeneralizationState still advances to 7 and
+# Cloudbase-Init runs every plugin, but OOBE never completes, so the clone never
+# reaches an unattended logon (cf verify's shell-session-present fails, and a live
+# clone sits in noVNC). Confirmed live: adding this component lets OOBE complete to
+# the logon screen. en-US mirrors the build's autounattend; Server 2022/2025 skip
+# the screen on their own, so pre-answering it there is a harmless no-op.
+$oobeSystemNode = $shellSetup.ParentNode
+$intlName = "Microsoft-Windows-International-Core"
+if (-not $oobeSystemNode.SelectSingleNode("u:component[@name='$intlName']", $ns)) {
+  $intl = $unattendXml.CreateElement("component", $nsUri)
+  foreach ($attr in @(
+      @("name", $intlName),
+      @("processorArchitecture", "amd64"),
+      @("publicKeyToken", "31bf3856ad364e35"),
+      @("language", "neutral"),
+      @("versionScope", "nonSxS"))) {
+    $intl.SetAttribute($attr[0], $attr[1])
+  }
+  foreach ($locale in @("InputLocale", "SystemLocale", "UILanguage", "UserLocale")) {
+    $el = $unattendXml.CreateElement($locale, $nsUri)
+    $el.InnerText = "en-US"
+    $intl.AppendChild($el) | Out-Null
+  }
+  $oobeSystemNode.PrependChild($intl) | Out-Null
+}
 
 $unattendXml.Save($unattendCopy)
 

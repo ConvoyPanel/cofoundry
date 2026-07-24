@@ -257,6 +257,16 @@ const REBOOT_SCRIPT: Record<GuestShell, string> = {
 const CLOUDBASE_IDLE_SCRIPT = `$s = Get-Service cloudbase-init -ErrorAction SilentlyContinue
 if (-not $s) { Write-Output 'cloudbase-init service missing'; exit 1 }
 if ($s.Status -eq 'Running') { Write-Output 'still running'; exit 1 }
+# "Not Running" alone is not "done": on Server 2019 the service is delayed-auto-
+# start (so it runs after OOBE settles, not during it), and a delayed service reads
+# as Stopped for its whole pre-start window. Returning then would run checks before
+# Cloudbase-Init has applied the hostname/password at all. Require the marker the
+# service writes when a plugin run finishes, so idleness means "ran and stopped",
+# not "not yet started".
+$log = 'C:\\Program Files\\Cloudbase Solutions\\Cloudbase-Init\\log\\cloudbase-init.log'
+if (-not (Test-Path $log) -or -not (Select-String -Path $log -Pattern 'Plugins execution done' -Quiet)) {
+  Write-Output 'not finished yet'; exit 1
+}
 Write-Output $s.Status`
 
 /**

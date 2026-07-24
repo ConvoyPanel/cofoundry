@@ -324,35 +324,98 @@ found in the same verification: the seeded `AdministratorPassword` is applied
 *after* cloudbase's specialize-phase cipassword — see the VERIFIED DEFECT
 subsection below.
 
-#### Server 2019: the OOBE rewrite is insufficient — GeneralizationState sticks at 3 (2026-07-23)
+#### Server 2019: two separate clone failures — OOBE hang (fixed) and an intermittent stuck-at-3 (open) (2026-07-24)
 
-The `oobeSystem` rewrite above was verified only on windows-server-2025. On
-**windows-server-2019 it does not work**: run #51 rebuilt the 2019 template and
-its `cf verify` clone failed with `Cloudbase-Init did not settle within 900s`.
-Reproduced live on 2026-07-23 by restoring run #51's exported 2019 template
-(`windows-server-2019-amd64.vma.zst`), cloning it, and booting the clone — no
-rebuild needed, since the failure is at clone first boot, not build time:
+Run #51's 2019 `cf verify` failed with `Cloudbase-Init did not settle within
+900s`. Live characterisation on 2026-07-23/24 (restore the exported vma, `qm
+clone`, boot — the failure is at clone first boot, not build time) found **two
+distinct modes**, only one of which the earlier "GeneralizationState sticks at 3"
+note actually described:
 
-- `GeneralizationState` read **3** (`HKLM\SYSTEM\Setup\Status\SysprepStatus`) and
-  `cloudbase-init.log` filled with one `Waiting for sysprep completion.
-  GeneralizationState: 3` line per second — the exact stuck-service signature.
-- Yet the clone reached the **Windows lock screen** (`Press Ctrl+Alt+Delete to
-  unlock`), so the visible OOBE screens *were* suppressed (the `Hide*` settings
-  work); OOBE simply never ran the completion step that advances the state to 7.
-  The shipped `oobeSystem` block (Hide\* + `AdministratorPassword`) that gets 2025
-  to 7 leaves 2019 at 3.
-- The specialize pass is identical to the 2025 flow: `remove-build-profile.ps1`
-  (Order 1), then cloudbase-init `--config …-unattend.conf && exit 1 || exit 2`
-  with `<WillReboot>OnRequest</WillReboot>` (Order 2). The `Panther\unattend.xml`
-  and `C:\Windows\Temp\cb-sysprep-unattend.xml` copies both confirm this.
+**Mode A — reaches state 7 but OOBE blocks on the region screen (FIXED).** On a
+clone whose specialize/OOBE runs, `GeneralizationState` *does* reach 7 and
+Cloudbase-Init runs — but OOBE stops on the interactive **"Hi there"
+region/language/keyboard** screen and never completes, so no unattended logon
+happens (`shell-session-present` fails; a live clone waits in noVNC). The
+`Hide*` OOBE flags do not cover that first regional screen — only a
+`Microsoft-Windows-International-Core` component (InputLocale/SystemLocale/
+UILanguage/UserLocale) skips it, which the per-recipe `autounattend.xml` has for
+the build but the clone answer file lacked. Fixes, all validated live on clones:
+- `Finalize.ps1` now injects `Microsoft-Windows-International-Core` (en-US) into
+  the clone's oobeSystem unattend → OOBE completes to the logon screen.
+- `Finalize.ps1` sets Cloudbase-Init to **delayed-auto-start on 2019 only** (build
+  `<= 17763`, via `sc.exe config cloudbase-init start= delayed-auto`). A 2019 clone
+  hits state 7 *early* — while OOBE is still on screen — so an Automatic-start
+  service ran plugins before VDS/WMI/user-profile were ready (ExtendVolumes/
+  Licensing/CreateUser errors that recover only after the hostname reboot) and its
+  SetUserPassword landed *before* oobeSystem re-seeded the AdministratorPassword,
+  so clones shipped with the build's throwaway password (the documented
+  password-overwrite defect). Delaying it lets OOBE finish first: clean run,
+  cloud-init password validates, no "Waiting for sysprep" lines. 2022/2025 reach 7
+  only once OOBE completes, so they already behave this way — hence the 2019 scope.
+- `Finalize.ps1` drops `CreateUserPlugin` from the Cloudbase-Init plugin list.
+  Administrator already exists; its only effect on a clone was opening a logon
+  session that re-created the `C:\Users\Administrator` profile
+  `remove-build-profile.ps1` deletes, re-shipping a stale profile
+  (`build-profile-removed` fails). `SetUserPasswordPlugin` sets the password alone.
+- `cf verify` calibrated to match: `cloudbase-init-completed`
+  (`src/verify/checks/windows.ts`) now asserts "Plugins execution done" plus no
+  `plugin '<name>' failed with error`/`CRITICAL`, instead of grepping every `ERROR`
+  line — every Proxmox Windows clone logs benign ERRORs ("… is currently not
+  supported" for the cipassword user_data cloud-config modules; "Invalid Debian
+  config to parse" for the netcfg parser). And `waitForWindowsInit`
+  (`src/verify/guest.ts`) now requires the completion marker, because a
+  delayed-auto service reads as Stopped before it fires and would otherwise be
+  taken as "already done". A clone that reaches state 7 now passes every check.
 
-Status: **root cause reproduced and characterised; a 2019 fix is NOT yet found.**
-Server 2019's OOBE completion differs from 2025's and needs a version-specific
-answer-file change; each attempt is a full ~1h rebuild + clone verify, so it was
-left for a deliberate follow-up rather than burned through blind. Candidate
-directions to try next: a `SetupComplete.cmd` (`C:\Windows\Setup\Scripts`) that
-forces `GeneralizationState=7`, or reworking the specialize `WillReboot=OnRequest`
-reboot so 2019's OOBE finalisation is not cut short.
+**Mode B — stuck at GeneralizationState 3, specialize never runs (OPEN).** On some
+builds the clone boots straight to the lock screen with `GeneralizationState=3`,
+**no `C:\Windows\Panther\setupact.log` (specialize pass), and the build's
+`C:\Users\Administrator` profile intact** — i.e. the first-boot specialize/OOBE
+passes never ran, so none of the Mode-A answer-file fixes can help, and
+Cloudbase-Init loops "Waiting for sysprep completion" forever. This is the actual
+run #51 signature. It is **per-build and intermittent**: two clones of a template
+built 2026-07-24 02:43 both stuck at 3, while two clones of an earlier template
+both reached 7 — with the *only* source diff between those builds being a
+runtime Cloudbase-Init config line, which cannot affect sysprep. The differentiator
+is the **Windows-Update servicing state at sysprep time**: the build whose clones
+worked had its update round *roll back* ("We couldn't complete the updates / Undoing
+changes"), the build whose clones stuck installed the 2026-07 cumulative cleanly.
+This is a known-hard sysprep/CBS interaction (generalize producing an image that
+does not re-run specialize after a cumulative update). **Not yet fixed.**
+
+Dug into the broken 02:43 template's baked sysprep logs on a clone
+(`C:\Windows\System32\Sysprep\Panther\setup{act,err}.log`, plus `HKLM\SYSTEM\Setup`):
+- The clone has **`SetupType=0` and empty `CmdLine`** — a correctly generalized
+  reseal-to-OOBE image arms the next boot to run `windeploy.exe` (SetupType +
+  CmdLine); here it is unarmed, so the clone boots as a completed install and never
+  runs specialize. `RespecializeCmdLine = sysprep /respecialize /quiet` is set
+  instead, and on the clone that respecialize **fails**: `RunExternalDlls: … the
+  machine is in an invalid state … hr = 0x8007001f`.
+- The build's own generalize (logged 02:39–02:41) hit
+  `SYSPRP MRTGeneralize: ERROR: Failed ConnectServer` (a **WMI connect failure**) and
+  `Failed to re-enable Compat-Gentel custom trigger`. The recipe does **not** disable
+  the Compatibility-Appraiser/DiagTrack tasks (only UpdateOrchestrator reboot tasks,
+  re-enabled in Finalize; `AllowTelemetry=0` is a policy value, not a task disable),
+  so this is not recipe-induced. WMI being unresponsive at sysprep time points to
+  **sysprep running before the post-cumulative-update servicing had fully settled**,
+  leaving a corrupt generalize (unarmed OOBE + a respecialize that can't run).
+
+Leading fix hypothesis (unvalidated): before the `Sysprep.exe` call in
+`Finalize.ps1`, ensure the box is fully settled — WMI (`winmgmt`) responds to a
+probe, no pending CBS servicing, and ideally an extra clean reboot + delay after the
+last Windows-Update round — so generalize does not race post-update servicing.
+**Caveat: Mode B is intermittent, so no single build can confirm a fix; validating
+needs several consecutive clean clone-verifies.** Faster iteration is possible with
+the offline clone workflow, but the generalize corruption is baked at build time, so
+Mode-B validation unavoidably needs real rebuilds.
+
+**Dead ends (do not retry).** A `SetupComplete.cmd` forcing `GeneralizationState=7`
+never fires — it is gated on the OOBE completion that never happens. An AtStartup
+scheduled task forcing 7 is fragile and non-deterministic: it can force 7 mid-setup,
+so Cloudbase-Init reboots mid-specialize and bricks the clone with "The computer
+restarted unexpectedly", and it runs plugins before subsystems are ready. Forcing 7
+treats a symptom; the real Mode-A fix is letting OOBE complete (International-Core).
 
 #### VERIFIED DEFECT (2026-07-21): the seeded AdministratorPassword overwrites the cloud-init password
 
