@@ -36,12 +36,10 @@ agentContext: |
     1. A populated `.env` — `PVE_HOST`, `PVE_NODE`, `PVE_TOKEN_ID`,
        `PVE_TOKEN_SECRET`, `SSH_TARGET`. It's gitignored and mounted from your host
        checkout, so it's already here if you filled it in on the host.
-    2. Network + SSH reach to the node. If the node is on a tailnet, compose the
-       `.sbx/tailscale` kit (`--kit .sbx/tailscale --kit .sbx/dev`) and point
-       `SSH_TARGET`/`PVE_HOST` at the node's `100.x` tailnet IP. With Tailscale SSH
-       enabled on the node you don't even need an SSH key in the sandbox — the
-       tailnet brokers auth. Otherwise the sandbox needs a key authorized on the
-       node (`ssh-copy-id`) plus a route to it.
+    2. Network + SSH reach to the node, which the sandbox does not provide on its
+       own. Point `SSH_TARGET`/`PVE_HOST` at an address it can reach, and give it
+       a key authorized on the node (`ssh-copy-id`) unless SSH auth is brokered
+       some other way.
 
   Read-only commands like `cf list` work with none of the above.
 
