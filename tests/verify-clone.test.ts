@@ -74,6 +74,15 @@ describe('cloudInitSetCommand', () => {
         expect(cmd).toContain("--sshkeys='/tmp/verify.pub'")
         expect(cmd).not.toMatch(/--(name|ciuser|cipassword|sshkeys) /)
     })
+
+    test('omits --sshkeys when no key path is given (Windows clones)', () => {
+        // Windows templates ship no OpenSSH; seeded keys only make
+        // SetUserSSHPublicKeysPlugin fail (WinError 2) and trip the
+        // cloudbase-init-completed check.
+        const cmd = cloudInitSetCommand(9500, 'cfv-ab12', 'Administrator', 'pw')
+        expect(cmd).not.toContain('--sshkeys')
+        expect(cmd).toContain('--ipconfig0 ip=dhcp')
+    })
 })
 
 describe('autologonScript', () => {

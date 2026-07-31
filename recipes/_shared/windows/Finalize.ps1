@@ -159,6 +159,12 @@ New-Item -ItemType Directory -Force -Path $cloudbaseConfDir | Out-Null
 # -- shipping a stale profile again. SetUserPasswordPlugin applies the cloud-init
 # password on its own (verified live: the password validates and C:\Users holds only
 # Public). Comment kept out here rather than in the .conf so the parser never sees it.
+#
+# SetUserSSHPublicKeysPlugin is omitted too: the template ships no OpenSSH, so
+# there is nothing for seeded keys to grant, and with `--sshkeys` metadata present
+# the plugin fails outright ([WinError 2], observed live on a 2019 clone) --
+# which cf verify's cloudbase-init-completed correctly reads as a plugin failure.
+# Re-add it only if the template ever installs Win32-OpenSSH.
 @"
 [DEFAULT]
 username=Administrator
@@ -175,7 +181,7 @@ logfile=cloudbase-init.log
 default_log_levels=comtypes=INFO,suds=INFO,iso8601=WARN,requests=WARN
 local_scripts_path=C:\Program Files\Cloudbase Solutions\Cloudbase-Init\LocalScripts\
 metadata_services=cloudbaseinit.metadata.services.configdrive.ConfigDriveService,cloudbaseinit.metadata.services.nocloudservice.NoCloudConfigDriveService
-plugins=cloudbaseinit.plugins.common.mtu.MTUPlugin,cloudbaseinit.plugins.windows.ntpclient.NTPClientPlugin,cloudbaseinit.plugins.common.sethostname.SetHostNamePlugin,cloudbaseinit.plugins.common.setuserpassword.SetUserPasswordPlugin,cloudbaseinit.plugins.common.networkconfig.NetworkConfigPlugin,cloudbaseinit.plugins.windows.licensing.WindowsLicensingPlugin,cloudbaseinit.plugins.common.sshpublickeys.SetUserSSHPublicKeysPlugin,cloudbaseinit.plugins.windows.extendvolumes.ExtendVolumesPlugin,cloudbaseinit.plugins.common.userdata.UserDataPlugin,cloudbaseinit.plugins.common.localscripts.LocalScriptsPlugin
+plugins=cloudbaseinit.plugins.common.mtu.MTUPlugin,cloudbaseinit.plugins.windows.ntpclient.NTPClientPlugin,cloudbaseinit.plugins.common.sethostname.SetHostNamePlugin,cloudbaseinit.plugins.common.setuserpassword.SetUserPasswordPlugin,cloudbaseinit.plugins.common.networkconfig.NetworkConfigPlugin,cloudbaseinit.plugins.windows.licensing.WindowsLicensingPlugin,cloudbaseinit.plugins.windows.extendvolumes.ExtendVolumesPlugin,cloudbaseinit.plugins.common.userdata.UserDataPlugin,cloudbaseinit.plugins.common.localscripts.LocalScriptsPlugin
 
 [config_drive]
 types=vfat,iso

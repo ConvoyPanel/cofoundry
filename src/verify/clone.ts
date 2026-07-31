@@ -70,17 +70,24 @@ export const sentinelPassword = (): string => {
  * rejects the whole command with "Unknown option: <password minus its dash>".
  * The fixed literals (`ip=dhcp`, `enabled=1`) can never start with `-`, so
  * their space form is safe either way.
+ *
+ * `remoteKeyPath` is omitted for Windows: the templates ship no OpenSSH, so
+ * seeded keys make Cloudbase-Init's SetUserSSHPublicKeysPlugin fail with
+ * `[WinError 2]` (observed live on a 2019 clone), which
+ * `cloudbase-init-completed` correctly reads as a plugin failure. With no keys
+ * in the metadata the plugin skips instead.
  */
 export const cloudInitSetCommand = (
     vmid: number,
     hostname: string,
     ciUser: string,
     password: string,
-    remoteKeyPath: string
+    remoteKeyPath?: string
 ): string =>
     `qm set ${vmid} --name=${shellQuote(hostname)} ` +
     `--ciuser=${shellQuote(ciUser)} --cipassword=${shellQuote(password)} ` +
-    `--sshkeys=${shellQuote(remoteKeyPath)} --ipconfig0 ip=dhcp --agent enabled=1`
+    (remoteKeyPath ? `--sshkeys=${shellQuote(remoteKeyPath)} ` : '') +
+    `--ipconfig0 ip=dhcp --agent enabled=1`
 
 export interface CloudInitSetup {
     ctx: CheckContext
@@ -175,7 +182,13 @@ export const prepareCloudInit = async (
     // that is destroyed minutes later, and never reused.
     await captureRemote(
         env.SSH_TARGET,
-        cloudInitSetCommand(vmid, hostname, ciUser, password, remoteKey)
+        cloudInitSetCommand(
+            vmid,
+            hostname,
+            ciUser,
+            password,
+            isWindows ? undefined : remoteKey
+        )
     )
 
     return {
