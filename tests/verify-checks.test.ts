@@ -147,6 +147,18 @@ describe('linux checks', () => {
         expect(script).not.toMatch(/END\{print s/)
     })
 
+    test('the packer build-user teardown has a direct regression check', () => {
+        // The recipe teardown is `userdel ... || true`, so a failed removal is
+        // silent at build time; this check is what makes it loud at verify.
+        const script = renderScript(
+            linuxSuite.checks.find(c => c.id === 'no-build-user')!,
+            ctx
+        )
+        expect(script).toContain('getent passwd packer')
+        expect(script).toContain('/home/packer')
+        expect(script).toContain('/etc/sudoers.d/')
+    })
+
     test('first-boot-only checks are not repeated post-reboot', () => {
         // Host-key and machine-id regeneration are observable on the first boot
         // only; asserting them again after a reboot would always fail.
@@ -215,6 +227,35 @@ describe('windows checks', () => {
         )
         expect(script).toContain('Win32_LogicalDisk')
         expect(script).not.toContain('Get-Volume')
+    })
+
+    test('the cipassword check escapes quoting and never echoes the secret', () => {
+        // ctx.ciPassword deliberately contains a single quote: inside a
+        // PowerShell single-quoted literal it must double, or the script
+        // truncates at the quote and the remainder executes as code.
+        const script = renderScript(
+            windowsSuite.checks.find(c => c.id === 'cipassword-validates')!,
+            ctx
+        )
+        expect(script).toContain("'p''w\"d$x'")
+        expect(script).toContain('ValidateCredentials')
+        // The password may appear only as the quoted argument, never in output.
+        expect(script).not.toMatch(/Write-Output[^\n]*p''w/)
+    })
+
+    test('the WU-restore regression check covers both the policy and the tasks', () => {
+        // Finalize.ps1 restores the AU policy and the UpdateOrchestrator
+        // reboot tasks after generalize; a regression ships templates that
+        // never auto-update.
+        const script = renderScript(
+            windowsSuite.checks.find(c => c.id === 'wu-policy-restored')!,
+            ctx
+        )
+        expect(script).toContain('NoAutoUpdate')
+        expect(script).toContain('UpdateOrchestrator')
+        for (const t of ['Reboot', 'Reboot_AC', 'Reboot_Battery']) {
+            expect(script).toContain(`'${t}'`)
+        }
     })
 
     test('the password-leak check greps the exact value when it is known', () => {

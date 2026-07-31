@@ -23,8 +23,9 @@ const SECRET_BEARING_PATHS = [
     'C:\\Windows\\Temp\\cb-sysprep-unattend.xml',
 ]
 
-const psList = (items: string[]): string =>
-    items.map(i => `'${i.replace(/'/g, "''")}'`).join(',')
+const psQuote = (s: string): string => `'${s.replace(/'/g, "''")}'`
+
+const psList = (items: string[]): string => items.map(psQuote).join(',')
 
 export const windowsSuite: CheckSuite = {
     shell: 'powershell',
@@ -166,6 +167,95 @@ Write-Output "$($s.Name) StartType=$($s.StartType) Status=$($s.Status)"
 if ($s.StartType -ne 'Automatic') { exit 1 }`,
             severity: 'fail',
             phase: 'first-boot',
+        },
+        {
+            // The direct regression test for the password-overwrite defect:
+            // when the specialize-pass cloudbase run consumes
+            // SetUserPasswordPlugin's run-once slot, the oobeSystem pass
+            // re-seeds the build's throwaway password afterwards and the
+            // cloud-init password never validates (verified live on 2025,
+            // 2026-07-21). Checked directly so it fails here by name, not ten
+            // minutes later as a mysterious autologon that never appears.
+            // The password itself is never echoed.
+            id: 'cipassword-validates',
+            description: 'the cloud-init password authenticates the ci user',
+            script: ctx => `Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+$ct = [System.DirectoryServices.AccountManagement.ContextType]::Machine
+$pc = New-Object System.DirectoryServices.AccountManagement.PrincipalContext($ct)
+$ok = $pc.ValidateCredentials(${psQuote(ctx.ciUser)}, ${psQuote(ctx.ciPassword)})
+Write-Output "ValidateCredentials(${ctx.ciUser})=$ok"
+if (-not $ok) {
+  Write-Output 'cloud-init password does not validate — oobeSystem likely re-applied the seeded build password after cloudbase set it'
+  exit 1
+}`,
+            severity: 'fail',
+            phase: 'first-boot',
+            timeoutS: 120,
+        },
+        {
+            // Install.ps1 suppresses WU auto-update/auto-reboot for the build;
+            // Finalize.ps1 must restore Windows' defaults before export. A
+            // regression there ships templates that silently never update.
+            id: 'wu-policy-restored',
+            description:
+                'Windows Update automatic-reboot defaults are restored',
+            script: `$bad = @()
+$au = 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU'
+if (Test-Path $au) {
+  $v = Get-ItemProperty $au -ErrorAction SilentlyContinue
+  if ($v.NoAutoUpdate -eq 1) { $bad += 'AU policy still sets NoAutoUpdate=1' }
+  if ($v.NoAutoRebootWithLoggedOnUsers -eq 1) { $bad += 'AU policy still sets NoAutoRebootWithLoggedOnUsers=1' }
+}
+foreach ($t in @('Reboot', 'Reboot_AC', 'Reboot_Battery')) {
+  $task = Get-ScheduledTask -TaskPath '\\Microsoft\\Windows\\UpdateOrchestrator\\' -TaskName $t -ErrorAction SilentlyContinue
+  if ($task -and $task.State -eq 'Disabled') { $bad += "UpdateOrchestrator\\$t is still disabled" }
+}
+if ($bad) {
+  $bad | ForEach-Object { Write-Output $_ }
+  exit 1
+}
+Write-Output 'WU update/reboot defaults in place'`,
+            severity: 'fail',
+            phase: 'first-boot',
+            timeoutS: 120,
+        },
+        {
+            // PreFinalize.ps1 disables the pagefile so Finalize's zero pass can
+            // compact that space; Finalize re-enables system management before
+            // sysprep. If that restore regresses, clones run with no pagefile.
+            id: 'pagefile-restored',
+            description: 'the system-managed pagefile is back on the clone',
+            script: `$cs = Get-CimInstance Win32_ComputerSystem
+Write-Output "AutomaticManagedPagefile=$($cs.AutomaticManagedPagefile)"
+if (-not $cs.AutomaticManagedPagefile) {
+  Write-Output 'pagefile left disabled by the build'
+  exit 1
+}
+if (-not [System.IO.File]::Exists('C:\\pagefile.sys')) {
+  Write-Output 'pagefile.sys was not recreated at boot'
+  exit 1
+}`,
+            severity: 'warn',
+            phase: 'first-boot',
+        },
+        {
+            // The build may now run sysprep /generalize up to twice (the armed-
+            // reseal gate retries once), and each generalize consumes a
+            // licensing rearm. Headroom left on the shipped template is what a
+            // user's own sysprep of a clone would draw from.
+            id: 'rearm-headroom',
+            description: 'the template ships with licensing rearms remaining',
+            script: `$out = cscript.exe //nologo C:\\Windows\\System32\\slmgr.vbs /dlv 2>&1 | Out-String
+$m = [regex]::Match($out, 'Windows rearm count:\\s*(\\d+)')
+if (-not $m.Success) {
+  Write-Output 'could not read the rearm count from slmgr /dlv'
+  exit 1
+}
+Write-Output "remaining Windows rearm count: $($m.Groups[1].Value)"
+if ([int]$m.Groups[1].Value -lt 1) { exit 1 }`,
+            severity: 'warn',
+            phase: 'first-boot',
+            timeoutS: 120,
         },
         {
             // Cloudbase-Init applies the hostname and reboots to make it stick,

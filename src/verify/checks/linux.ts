@@ -127,6 +127,34 @@ exit $rc`,
             phase: 'first-boot',
         },
         {
+            // The recipes create a throwaway `packer` build user and tear it
+            // down with `userdel --remove --force packer || true` — the
+            // `|| true` means a failed userdel would silently ship the user,
+            // its home (holding the build's authorized key), and its NOPASSWD
+            // sudoers grant to every clone. This asserts the teardown actually
+            // happened rather than merely not erroring.
+            id: 'no-build-user',
+            description: 'the throwaway packer build user was fully removed',
+            script: `rc=0
+if getent passwd packer >/dev/null 2>&1; then
+  echo "build user 'packer' still in /etc/passwd"
+  rc=1
+fi
+if [ -e /home/packer ]; then
+  echo '/home/packer left behind'
+  ls -la /home/packer 2>/dev/null
+  rc=1
+fi
+left=$(grep -rl packer /etc/sudoers.d/ 2>/dev/null)
+if [ -n "$left" ]; then
+  printf 'packer sudoers entry left behind: %s\\n' "$left"
+  rc=1
+fi
+exit $rc`,
+            severity: 'fail',
+            phase: 'first-boot',
+        },
+        {
             // Verify grows the disk beyond its shipped size before boot, so
             // leftover unallocated space proves growpart did not run.
             //
