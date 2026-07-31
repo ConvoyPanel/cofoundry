@@ -480,6 +480,24 @@ WU restore actually reduce how often the gate trips still needs several
 consecutive builds to judge. Offline hive inspection (above) verifies a
 template's arming without burning a 900s clone-verify.
 
+Live `cf verify` of that armed 10:24 template (2026-07-31) confirmed the
+offline prediction end-to-end: the clone reached `GeneralizationState=7` and
+passed generalization-state, build-profile-removed, hostname-applied,
+system-volume-extended, winrm-not-exposed, no-plaintext-build-password,
+shell-session-present, and shell-no-crashes. Two verify-side defects surfaced
+and were fixed in the same session:
+
+- **`--sshkeys` on a Windows clone makes `SetUserSSHPublicKeysPlugin` fail**
+  (`[WinError 2]`, on both init runs) because the template ships no OpenSSH —
+  the one red check in an otherwise green battery. `cf verify` no longer seeds
+  SSH keys for Windows clones (fixes verification of already-built templates),
+  and `Finalize.ps1` drops the plugin from the shipped conf.
+- **`waitForWindowsInit` could declare done before SetHostName's rename
+  reboot** ("Plugins execution done" lands pre-reboot), so the check phase
+  raced the reboot and the harness's own reboot step failed with "could not
+  read a boot id". The wait now also requires the sentinel hostname to be the
+  active computer name, which is only true after that reboot.
+
 **Dead ends (do not retry).** A `SetupComplete.cmd` forcing `GeneralizationState=7`
 never fires — it is gated on the OOBE completion that never happens. An AtStartup
 scheduled task forcing 7 is fragile and non-deterministic: it can force 7 mid-setup,
