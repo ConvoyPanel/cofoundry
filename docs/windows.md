@@ -175,6 +175,36 @@ WU rounds finishing and no mid-round orchestrator reboot killing a provisioner.
 (The 2025 run needed four attempts, but every failure was the boot-keypress
 quit-modal race described above — pre-WinRM, unrelated to WU.)
 
+**Recurrence 2026-07-31 on windows-server-2025 (partial, under concurrent
+load).** A 2025 build errored after 1h58m with the exact original signature:
+round two reached `iteration 1 - searching for updates`, ran ~3–4 minutes, then
+`Script exited with non-zero exit status: 1` / `Builds finished but no
+artifacts were created`. Facts established at the time, so the next
+investigation does not redo them:
+
+- The suppression is **still present and unmodified** in `Install.ps1`
+  (`NoAutoUpdate`, `NoAutoRebootWithLoggedOnUsers`, and the
+  `UpdateOrchestrator\Reboot*` task disables). This is not a lost fix.
+- A **windows-server-2022 build running concurrently passed straight through
+  the same round-two window** (entered round two at 22:40:03, installed and
+  continued), so the failure is not a blanket regression of the mechanism.
+- The distinguishing condition versus the 07-21 verification is
+  **concurrency**: two Windows builds in parallel, node load average ~9.8, and
+  the failing build took 1h58m to reach round two versus 1h28m of total
+  provisioning on the quiet 07-21 run. A WinRM/provisioner drop under load is
+  therefore as plausible as an orchestrator reboot, and the two are not
+  distinguishable from the packer log alone.
+- `CF_BUILD_ATTEMPTS` retried (attempt 2/3). The original systematic form of
+  this bug killed *every* attempt identically, so a retry that succeeds is
+  itself evidence the cause is load-related rather than the deterministic
+  orchestrator restart.
+
+If it recurs, capture the guest's side before the VM is destroyed: the
+`System` event log around the failure (event 1074/6008 identifies a restart and
+its initiator) distinguishes an orchestrator reboot from a dropped provisioner
+session. Do not re-derive the suppression-is-missing hypothesis — it was
+checked and ruled out here.
+
 Cloudbase-Init is deliberately installed after Windows Update. Server 2025
 checkpoint cumulative updates can perform a near-full OS redeploy and create
 `C:\Windows.old`. Installed software survived the observed redeploy, but the
