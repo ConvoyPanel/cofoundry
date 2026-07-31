@@ -188,6 +188,40 @@ types=vfat,iso
 locations=cdrom,hdd,partition
 "@ | Set-Content -Path (Join-Path $cloudbaseConfDir "cloudbase-init.conf") -Encoding ASCII
 
+# Also overwrite cloudbase-init-unattend.conf -- the config the specialize-pass
+# RunSynchronous command runs with on a clone's first boot. The MSI's shipped
+# copy ran the FULL plugin stage during specialize, which is the root of the
+# password-overwrite defect: SetUserPasswordPlugin consumed its run-once slot
+# *before* the oobeSystem pass applied the seeded build AdministratorPassword,
+# so the build's throwaway password ended up as the clone's final credential
+# (verified live on Server 2025, 2026-07-21; see docs/windows.md). Restricting
+# the specialize run to MTU + hostname leaves SetUserPasswordPlugin for the
+# post-OOBE service run, whose write lands *after* oobeSystem and therefore
+# wins -- the same ordering the delayed-auto start gives Server 2019.
+# Logged to its own file so cloudbase-init.log stays the service run's record
+# (cf verify's cloudbase-init-completed parses that log).
+@"
+[DEFAULT]
+username=Administrator
+groups=Administrators
+inject_user_password=true
+first_logon_behaviour=no
+check_latest_version=false
+bsdtar_path=C:\Program Files\Cloudbase Solutions\Cloudbase-Init\bin\bsdtar.exe
+mtools_path=C:\Program Files\Cloudbase Solutions\Cloudbase-Init\bin\
+verbose=true
+debug=false
+logdir=C:\Program Files\Cloudbase Solutions\Cloudbase-Init\log\
+logfile=cloudbase-init-unattend.log
+default_log_levels=comtypes=INFO,suds=INFO,iso8601=WARN,requests=WARN
+metadata_services=cloudbaseinit.metadata.services.configdrive.ConfigDriveService,cloudbaseinit.metadata.services.nocloudservice.NoCloudConfigDriveService
+plugins=cloudbaseinit.plugins.common.mtu.MTUPlugin,cloudbaseinit.plugins.common.sethostname.SetHostNamePlugin
+
+[config_drive]
+types=vfat,iso
+locations=cdrom,hdd,partition
+"@ | Set-Content -Path (Join-Path $cloudbaseConfDir "cloudbase-init-unattend.conf") -Encoding ASCII
+
 if ($env:CF_FINAL_DISK_SIZE) {
   Write-Step "shrink C: for final disk $($env:CF_FINAL_DISK_SIZE)"
   Shrink-SystemPartition $env:CF_FINAL_DISK_SIZE

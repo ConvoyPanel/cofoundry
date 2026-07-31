@@ -542,6 +542,18 @@ the skipping); or re-arm the SetUserPassword plugin so the post-OOBE service
 pass re-applies metadata; or move the cloudbase run out of the sysprep
 specialize phase so it runs after oobeSystem.
 
+**Handling as of 2026-07-31 (third direction, generalized):** the defect's
+mechanism is that the specialize-pass cloudbase run used the MSI's shipped
+`cloudbase-init-unattend.conf`, which runs the **full** plugin stage —
+consuming `SetUserPasswordPlugin`'s run-once slot before oobeSystem applies
+the seeded password. `Finalize.ps1` now overwrites that conf with a restricted
+one (MTU + SetHostName only, logging to `cloudbase-init-unattend.log`), so the
+password is applied by the post-OOBE **service** run, after oobeSystem — the
+same ordering the delayed-auto start already gives Server 2019. 2019's flow is
+unchanged by this. Status: **expected fix for 2022/2025, pending a live
+rebuild + verify** (`cipassword-validates` in `cf verify` is the direct
+regression check).
+
 #### Cloud-init password must satisfy the guest password policy
 
 Once unblocked, `SetUserPasswordPlugin` can still fail:
