@@ -354,6 +354,7 @@ const runVerifyLocked = async (
                 !(await waitForWindowsInit(
                     env.SSH_TARGET,
                     vmid,
+                    ctx.hostname,
                     WINDOWS_INIT_TIMEOUT_S
                 ))
             ) {

@@ -254,7 +254,9 @@ const REBOOT_SCRIPT: Record<GuestShell, string> = {
     powershell: 'shutdown.exe /r /t 5 /f',
 }
 
-const CLOUDBASE_IDLE_SCRIPT = `$s = Get-Service cloudbase-init -ErrorAction SilentlyContinue
+const cloudbaseIdleScript = (
+    expectedHostname: string
+): string => `$s = Get-Service cloudbase-init -ErrorAction SilentlyContinue
 if (-not $s) { Write-Output 'cloudbase-init service missing'; exit 1 }
 if ($s.Status -eq 'Running') { Write-Output 'still running'; exit 1 }
 # "Not Running" alone is not "done": on Server 2019 the service is delayed-auto-
@@ -267,6 +269,15 @@ $log = 'C:\\Program Files\\Cloudbase Solutions\\Cloudbase-Init\\log\\cloudbase-i
 if (-not (Test-Path $log) -or -not (Select-String -Path $log -Pattern 'Plugins execution done' -Quiet)) {
   Write-Output 'not finished yet'; exit 1
 }
+# The marker lands *before* SetHostName's rename reboot fires, so "done + a
+# briefly stable boot id" can still race that reboot (observed live: checks ran,
+# then the reboot step found the agent mid-restart and could not read a boot
+# id). The applied computer name is the deterministic signal: it only matches
+# the sentinel after the rename reboot, and the plugins are run-once per
+# instance, so no further init reboot can follow it.
+if ($env:COMPUTERNAME -ne '${expectedHostname}') {
+  Write-Output "hostname not applied yet ($env:COMPUTERNAME)"; exit 1
+}
 Write-Output $s.Status`
 
 /**
@@ -278,8 +289,11 @@ Write-Output $s.Status`
  * indistinguishable from real failures.
  *
  * Idleness is confirmed twice at the same boot id, because the service is also
- * briefly not-Running on the boot *before* its reboot. Transport errors are
- * expected here — they are what the reboot looks like from outside.
+ * briefly not-Running on the boot *before* its reboot, and the sentinel
+ * hostname must already be the active computer name (the rename only takes
+ * effect on the reboot, so a matching name proves that reboot is behind us).
+ * Transport errors are expected here — they are what the reboot looks like
+ * from outside.
  *
  * Linux needs no equivalent: `cloud-init status --wait` blocks for exactly this
  * and is itself the first Linux check.
@@ -287,19 +301,16 @@ Write-Output $s.Status`
 export const waitForWindowsInit = async (
     target: string,
     vmid: number,
+    hostname: string,
     timeoutS: number,
     intervalS = 10
 ): Promise<boolean> => {
     const deadline = Date.now() + timeoutS * 1000
+    // Windows applies at most the 15-character NetBIOS prefix of a longer name.
+    const idleScript = cloudbaseIdleScript(hostname.slice(0, 15))
     let stableBootId = ''
     while (Date.now() < deadline) {
-        const res = await guestExec(
-            target,
-            vmid,
-            'powershell',
-            CLOUDBASE_IDLE_SCRIPT,
-            30
-        )
+        const res = await guestExec(target, vmid, 'powershell', idleScript, 30)
         if (res.exitCode === 0) {
             const bootId = await readBootId(target, vmid, 'powershell')
             if (bootId && bootId === stableBootId) return true
