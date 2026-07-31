@@ -229,17 +229,6 @@ Get-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -ErrorAct
   Where-Object { $_.Profile -match "Public" } |
   Disable-NetFirewallRule -ErrorAction SilentlyContinue
 
-Write-Step "restore Windows Update automatic-reboot behavior"
-# Install.ps1 disabled WU auto-update/auto-reboot for the build so the Server 2025
-# checkpoint cumulative could not restart the VM mid-provisioner. Undo it so the
-# sysprep'd template ships with Windows' default update policy instead of an
-# inherited "never auto-reboot" state that would silently change behavior on
-# every clone.
-Remove-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Force -Recurse -ErrorAction SilentlyContinue
-foreach ($t in @("Reboot", "Reboot_AC", "Reboot_Battery")) {
-  Enable-ScheduledTask -TaskPath "\Microsoft\Windows\UpdateOrchestrator\" -TaskName $t -ErrorAction SilentlyContinue | Out-Null
-}
-
 Write-Step "sysprep and shutdown"
 # Pass cloudbase-init's bundled Unattend.xml so OOBE on the cloned VM auto-
 # completes (accepts EULA, skips the machine and user OOBE screens) and its
@@ -462,22 +451,128 @@ Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection
 # lowering it to 3 would weaken the shipped template's security posture without
 # meaningfully improving privacy -- AllowTelemetry above is the correct lever.
 
-$p = Start-Process -FilePath "C:\Windows\System32\Sysprep\Sysprep.exe" `
-  -ArgumentList "/generalize", "/oobe", "/shutdown", "/quiet", "/unattend:$unattendCopy" `
-  -Wait -PassThru
-if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) {
-  throw "Sysprep exited $($p.ExitCode)"
+# Gate sysprep on a fully settled system (Server 2019 generalize reliability).
+#
+# 2019's sysprep /generalize intermittently produced a template whose clones never
+# ran specialize: the image shipped with SetupType=0 (OOBE unarmed), so windeploy
+# never launched, the queued /respecialize failed ("the machine is in an invalid
+# state", hr=0x8007001f), and GeneralizationState stuck at 3 forever. The broken
+# build's differentiator was a cleanly-installed cumulative at sysprep time, so
+# generalize is not allowed to race half-applied servicing. NOTE the generalize
+# error lines once blamed for this (MRTGeneralize "Failed ConnectServer",
+# "Compat-Gentel", BCD c000000d) were falsified as indicators on 2026-07-31: a
+# template whose hives were verified armed offline carries all of them, and they
+# appear with this settle gate active too. Benign noise -- do not key off them.
+# See docs/windows.md ("Mode B").
+Write-Step "wait for a settled system before sysprep"
+
+# 1. No half-applied servicing. A generalize captured over a pending CBS operation
+# or a queued file-rename is exactly the corrupt-image case. The WU pass and the
+# windows-restart before this script normally clear it; wait a bounded time in case
+# the last cumulative deferred work, then fail loudly rather than ship a silently
+# broken template.
+$cbsKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing"
+$sessionMgr = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager"
+$servicingDeadline = [DateTime]::Now.AddMinutes(10)
+while ([DateTime]::Now -lt $servicingDeadline) {
+  $pending = (Test-Path "$cbsKey\RebootPending") -or (Test-Path "$cbsKey\PackagesPending") -or
+    (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\WindowsUpdate\Auto Update\RebootRequired") -or
+    [bool](Get-ItemProperty $sessionMgr -Name PendingFileRenameOperations -ErrorAction SilentlyContinue)
+  if (-not $pending) { break }
+  Start-Sleep 15
 }
-# Sysprep writes this tag only when generalize actually succeeded -- its exit
-# code alone is unreliable (a command-line parse failure also exits 0).
-$deadline = [DateTime]::Now.AddMinutes(2)
-$tagPath = "C:\Windows\System32\Sysprep\Sysprep_succeeded.tag"
-while (-not (Test-Path $tagPath) -and [DateTime]::Now -lt $deadline) { Start-Sleep 5 }
-if (-not (Test-Path $tagPath)) {
-  throw "Sysprep did not generalize (Sysprep_succeeded.tag missing) - check C:\Windows\System32\Sysprep\Panther\setupact.log"
+if ((Test-Path "$cbsKey\RebootPending") -or (Test-Path "$cbsKey\PackagesPending")) {
+  throw "servicing still pending before sysprep (CBS RebootPending/PackagesPending) - a generalize over this state ships a template whose clones never specialize"
 }
 
-# All failure paths above throw; reaching here is success. Explicit exit 0 so a
-# stale $LastExitCode from an earlier native command can't fail the provisioner
-# (the machine is about to power off from sysprep /shutdown).
+# 2. WMI must answer. Several generalize providers query it; confirm it responds
+# before sysprep runs (probe only -- restarting it drags dependent services down
+# right before generalize, which is riskier than waiting).
+$wmiOk = $false
+foreach ($i in 1..30) {
+  try { Get-CimInstance Win32_OperatingSystem -ErrorAction Stop | Out-Null; $wmiOk = $true; break }
+  catch { Start-Sleep 5 }
+}
+if (-not $wmiOk) { throw "WMI (winmgmt) not responding before sysprep - generalize would race it" }
+
+# 3. Let the Windows Modules Installer finish any transaction, then settle.
+Wait-Process -Name TiWorker, TrustedInstaller -Timeout 300 -ErrorAction SilentlyContinue
+Start-Sleep 45
+
+# Sysprep via /quit, gated on the image actually being armed for OOBE.
+#
+# /generalize /oobe leaves three markers when the reseal completed: SetupType=2 and
+# CmdLine=oobe\windeploy.exe under HKLM\SYSTEM\Setup (they arm windeploy.exe, which
+# runs specialize/OOBE on the clone's first boot), and
+# ImageState=IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE in the SOFTWARE hive. The Mode-B
+# failure ships without them, and no other signal catches that: sysprep exits 0 and
+# writes Sysprep_succeeded.tag even then, and its error log cannot be grepped for
+# it (see the falsified-noise note above -- an earlier retry heuristic keyed on
+# Compat-Gentel/RunExternalDlls lines matched known-good builds). So run sysprep
+# with /quit instead of /shutdown to keep control, assert the armed markers
+# directly, and retry once on failure (two generalizes stay well inside the
+# activation rearm limit). If the image still is not armed, fail the build: an
+# unarmed template is certainly broken on every clone, and failing here turns a
+# 900s clone-verify timeout into an in-build CF_BUILD_ATTEMPTS retry.
+function Test-GeneralizeArmed {
+  $setup = Get-ItemProperty "HKLM:\SYSTEM\Setup" -ErrorAction SilentlyContinue
+  $imageState = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State" -ErrorAction SilentlyContinue).ImageState
+  return ($setup.SetupType -eq 2) -and
+    ($setup.CmdLine -match "windeploy\.exe") -and
+    ($imageState -eq "IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE")
+}
+
+$tagPath = "C:\Windows\System32\Sysprep\Sysprep_succeeded.tag"
+$gateLog = "C:\Windows\Temp\cf-sysprep-retry.log"
+$maxAttempts = 2
+$armed = $false
+for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+  Remove-Item $tagPath -Force -ErrorAction SilentlyContinue
+  Write-Step "sysprep generalize (attempt $attempt/$maxAttempts)"
+  $p = Start-Process -FilePath "C:\Windows\System32\Sysprep\Sysprep.exe" `
+    -ArgumentList "/generalize", "/oobe", "/quit", "/quiet", "/unattend:$unattendCopy" `
+    -Wait -PassThru
+  if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "Sysprep exited $($p.ExitCode)" }
+  # The tag is still required -- its absence catches runs that never generalized
+  # at all (e.g. the command-line parse failure that exits 0).
+  $deadline = [DateTime]::Now.AddMinutes(3)
+  while (-not (Test-Path $tagPath) -and [DateTime]::Now -lt $deadline) { Start-Sleep 5 }
+  $armed = (Test-Path $tagPath) -and (Test-GeneralizeArmed)
+  $setup = Get-ItemProperty "HKLM:\SYSTEM\Setup" -ErrorAction SilentlyContinue
+  ("[{0}] attempt {1}: sysprepExit={2} tag={3} SetupType={4} CmdLine='{5}' armed={6}" -f `
+      (Get-Date -Format s), $attempt, $p.ExitCode, (Test-Path $tagPath), $setup.SetupType, $setup.CmdLine, $armed) |
+    Out-File -Append -Encoding ascii $gateLog
+  if ($armed) { break }
+  if ($attempt -lt $maxAttempts) { Start-Sleep 45 }
+}
+if (-not $armed) {
+  throw "sysprep did not arm the image for OOBE after $maxAttempts attempts (need SetupType=2 + windeploy CmdLine + IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE) - an unarmed template sticks every clone at GeneralizationState 3; check C:\Windows\System32\Sysprep\Panther\setuperr.log and $gateLog"
+}
+
+Write-Step "restore Windows Update automatic-reboot behavior"
+# Install.ps1 disabled WU auto-update/auto-reboot for the build so a pending
+# cumulative could not restart the VM mid-provisioner. Restore it only now, after
+# generalize: the template still ships Windows' default update policy (registry
+# writes after /quit land in the sealed image), but the orchestrator can no longer
+# fire a restart between here and the power-off below -- a reboot in that window
+# would let windeploy consume the armed SetupType on the build VM and export a
+# Mode-B template.
+Remove-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Force -Recurse -ErrorAction SilentlyContinue
+foreach ($t in @("Reboot", "Reboot_AC", "Reboot_Battery")) {
+  Enable-ScheduledTask -TaskPath "\Microsoft\Windows\UpdateOrchestrator\" -TaskName $t -ErrorAction SilentlyContinue | Out-Null
+}
+
+# The sysprep answer-file copy carries the plaintext AdministratorPassword and is
+# dead weight once generalize has cached it into C:\Windows\Panther. Deleting it
+# here (instead of only at clone specialize) keeps it out of the exported template
+# disk entirely; the specialize-script deletion stays as a backstop.
+Remove-Item $unattendCopy -Force -ErrorAction SilentlyContinue
+
+# Generalize is done but /quit left the machine running. Power it off so the
+# node-side vzdump captures the sealed image -- the same end state sysprep
+# /shutdown produced; packer sees a normal shutdown-disconnect here.
+Write-Step "generalize complete and armed; shutting down"
+& shutdown.exe /s /t 0 /f
+# Give the OS time to power off; nothing after this needs to run.
+Start-Sleep 180
 exit 0

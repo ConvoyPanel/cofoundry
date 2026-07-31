@@ -303,10 +303,11 @@ assumed away:
   `Select-String` showed `<AdministratorPassword>*SENSITIVE*DATA*DELETED*</AdministratorPassword>`.
   Windows scrubs the Panther copy, so only the `C:\Windows\Temp` copy carried
   the password, and the specialize script now deletes it (also verified: the
-  file was absent on the clone). Since the Temp copy still exists in the
-  exported template disk until a clone first boots, switching `Finalize.ps1` to
-  `sysprep /quit` + explicit delete + shutdown remains the way to close the gap
-  entirely. `cf verify` now also runs a `no-plaintext-build-password` check on
+  file was absent on the clone). The Temp copy used to persist in the exported
+  template disk until a clone's first boot; since 2026-07-31 `Finalize.ps1` runs
+  sysprep with `/quit` and deletes it before shutting down (see the Mode-B
+  update below), so it no longer ships at all — the specialize-script delete
+  stays as a backstop for templates built earlier. `cf verify` now also runs a `no-plaintext-build-password` check on
   every Windows build (`src/verify/checks/windows.ts`): when it can recover the
   build's `winrm_password` from the node's Packer vars file it greps the answer
   files and Panther logs for that exact value, else it asserts no answer file
@@ -409,6 +410,75 @@ last Windows-Update round — so generalize does not race post-update servicing.
 needs several consecutive clean clone-verifies.** Faster iteration is possible with
 the offline clone workflow, but the generalize corruption is baked at build time, so
 Mode-B validation unavoidably needs real rebuilds.
+
+##### 2026-07-31: node-only experiments recovered; the "corruption signature" falsified; Finalize now asserts the armed reseal
+
+The 2026-07-24 session continued past the notes above with **uncommitted**
+`Finalize.ps1` experiments that only survived in the node's content-addressed
+build snapshots (`/var/lib/vz/dump/cofoundry-snapshots/<hash>/recipes/...` —
+these record exactly what each build ran; treat them as ground truth when the
+working tree has moved on). Eight 2019 builds ran 07-23 19:50 → 07-24 10:24 UTC
+in three stages:
+
+1. snapshot `d72654c7` (repo `Finalize.ps1`, plain `/shutdown`) → includes the
+   broken 02:41–02:43 export;
+2. snapshot `a05bf60f` adds a **settle gate** before sysprep (bounded wait for no
+   CBS `RebootPending`/`PackagesPending`/`PendingFileRenameOperations`, WMI
+   responds, TiWorker/TrustedInstaller exited);
+3. snapshot `6549a0d1` adds `/quit` + a **retry loop keyed on grepping
+   `setuperr.log` for `Compat-Gentel|re-specialize internal providers|RunExternalDlls`**,
+   shipping anyway (with a warning in `C:\Windows\Temp\cf-sysprep-retry.log`)
+   if the signature persisted → produced the final 10:24 export.
+
+The 10:24 template was then inspected **offline** (no boot): decompress the vma,
+`vma extract`, loop-mount the NTFS partition (`mount -t ntfs3 -o
+ro,loop,offset=$((239616*512))` — the primary GPT is valid but the backup header
+is truncated away by the 100G→30G shrink, so compute the offset with `sgdisk -p`),
+and export `HKLM\SYSTEM\Setup` + `HKLM\SOFTWARE\...\Setup\State` with `reged -x`.
+Findings, with evidence preserved on the node in `/root/win2019-evidence-20260731/`:
+
+- The 10:24 template is **correctly armed**: `SetupType=2`,
+  `CmdLine="oobe\windeploy.exe"`, `OOBEInProgress=1`,
+  `ImageState=IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE`, `GeneralizationState=4`.
+- Its `setuperr.log` nevertheless contains **every** error previously blamed for
+  Mode B — `SYSPRP MRTGeneralize: ERROR: Failed ConnectServer`, `Failed to
+  re-enable Compat-Gentel custom trigger`, `BCD ... c000000d` — and the settle
+  gate was active for that build. **These lines appear in known-armed builds:
+  they are benign noise, not a corruption signature.** The stage-3 retry
+  heuristic therefore cannot discriminate (it flagged this good build "corrupt"
+  on both attempts and shipped it with a false warning), and the earlier
+  paragraph's WMI-race reading of `Failed ConnectServer` loses its evidence.
+- `RespecializeCmdLine = sysprep /respecialize /quiet` is present in this armed
+  template too — it is **normal** on a resealed image, not a Mode-B artifact.
+  The real Mode-B anomaly reduces to exactly one thing: `SetupType=0`/empty
+  `CmdLine`, i.e. the reseal-to-OOBE arming is missing (then first boot falls
+  back to the respecialize path, which fails `0x8007001f` on a generalized
+  image and strands the clone at `GeneralizationState=3`).
+- Proxmox task logs show every build (broken and good) was captured with
+  `status = stopped` and an identical `qmshutdown → qmtemplate → qmstop →
+  vzdump` sequence — no host-visible restart distinguishes the broken build. If
+  a post-sysprep boot consumed the arming (e.g. an UpdateOrchestrator reboot
+  racing the sysprep shutdown, plausible since `Finalize.ps1` re-enabled those
+  tasks *right before* sysprep, and only on builds whose cumulative installed
+  cleanly — matching the observed differentiator), it happened guest-internally
+  and is invisible in retained host logs. The 02:43 vma was overwritten by later
+  builds, so this cannot be settled retroactively.
+
+Current handling (in the repo `Finalize.ps1` as of this date, superseding both
+node-only experiments): keep the settle gate; run sysprep with `/quit`; **assert
+the armed markers directly** (`SetupType=2` + windeploy `CmdLine` +
+`IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE`) instead of grepping error lines, retry
+once, and **fail the build** if still unarmed (an unarmed template is broken on
+every clone — never "ship anyway"); move the WU auto-reboot restore to *after*
+generalize so no orchestrator reboot can race it; delete the plaintext-password
+`cb-sysprep-unattend.xml` before power-off (the `/quit` flow finally allows
+this, closing the exposure gap flagged in the Cloudbase-Init section). The
+`/quit` → `shutdown.exe /s /t 0 /f` → vzdump flow itself is live-proven by the
+10:24 build. Validation status: the arming gate makes an unarmed export
+**impossible** (it fails the build instead); whether the settle gate + reordered
+WU restore actually reduce how often the gate trips still needs several
+consecutive builds to judge. Offline hive inspection (above) verifies a
+template's arming without burning a 900s clone-verify.
 
 **Dead ends (do not retry).** A `SetupComplete.cmd` forcing `GeneralizationState=7`
 never fires — it is gated on the OOBE completion that never happens. An AtStartup
@@ -595,7 +665,8 @@ umount /tmp/vm
 | Clone boots to a gray desktop with no taskbar             | Template shipped the build's `C:\Users\Administrator`; its pre-generalize shell state crash-loops `ShellHost.exe` (`0xc0000409` in `ControlCenter.dll`)              | `Finalize.ps1` deletes that profile from the unattend's specialize pass so each clone builds a fresh one |
 | Clone asks for an Administrator password; cloud-init never applies | Deprecated `SkipMachineOOBE`/`SkipUserOOBE` leave `GeneralizationState` at 3, so Cloudbase-Init loops "Waiting for sysprep completion" and runs no plugins   | `Finalize.ps1` rewrites the unattend's OOBE block to `Hide*` settings + `AdministratorPassword` from `CF_ADMIN_PASSWORD` |
 | `Set user password failed: ... password policy requirements` | Proxmox `cipassword` violates the guest's `PasswordComplexity = 1` policy                                                                                        | Caller must supply a compliant password; the seeded `AdministratorPassword` keeps the clone reachable meanwhile |
-| Clone's `cipassword` does not work despite `Password succesfully updated` in the cloudbase log | Cloudbase's sysprep-phase run sets the cipassword at specialize; oobeSystem then applies the seeded `AdministratorPassword` (setupact.log: `UserAccounts: Password set`) 29s later, overwriting it with the deleted per-build secret | VERIFIED DEFECT 2026-07-21, see the OOBE section; workaround `qm guest exec <vmid> -- net user Administrator <pw>` |
+| Clone's `cipassword` does not work despite `Password succesfully updated` in the cloudbase log | Cloudbase's sysprep-phase run sets the cipassword at specialize; oobeSystem then applies the seeded `AdministratorPassword` (setupact.log: `UserAccounts: Password set`) 29s later, overwriting it with the deleted per-build secret | VERIFIED DEFECT 2026-07-21, see the OOBE section; workaround `qm guest exec <vmid> -- net user Administrator <pw>` (2019: fixed by delayed-auto cloudbase start) |
+| Clone stuck at `GeneralizationState=3`, no `C:\Windows\Panther\setupact.log`, build profile intact (Mode B) | Template exported with `SetupType=0`/empty `CmdLine` — the reseal-to-OOBE arming is missing, so windeploy never runs and the respecialize fallback fails `0x8007001f` | `Finalize.ps1` runs sysprep `/quit`, asserts `SetupType=2` + windeploy `CmdLine` + `IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE`, retries once, and fails the build if unarmed; verify templates offline via hive inspection (see the 2026-07-31 Mode-B update) |
 
 The intermittent `ERROR_BADDB` failure reproduced with verified install media,
 adequate free disk space, and no competing build process. Host RAM or the
@@ -628,3 +699,8 @@ investigation, not a reason to repeat rejected CompactOS changes.
   Relying on them stalls `GeneralizationState` at 3 and hangs Cloudbase-Init
   indefinitely. Use the explicit `Hide*` screen settings plus an
   `AdministratorPassword` instead.
+- Grepping sysprep's `setuperr.log` for `Compat-Gentel` / `MRTGeneralize
+  Failed ConnectServer` / `RunExternalDlls` as a generalize-corruption signal
+  was falsified 2026-07-31: an offline-verified **armed** template carries all
+  of those lines. Assert `HKLM\SYSTEM\Setup` `SetupType=2` + windeploy
+  `CmdLine` + `IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE` instead.
