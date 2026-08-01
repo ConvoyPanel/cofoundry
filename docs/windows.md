@@ -205,6 +205,50 @@ its initiator) distinguishes an orchestrator reboot from a dropped provisioner
 session. Do not re-derive the suppression-is-missing hypothesis — it was
 checked and ruled out here.
 
+### Post-update restart settling
+
+**Both 2026-08-01 build failures were the same defect**, and it is upstream of
+the round-two investigation above: `windows-restart` had no
+`restart_check_command`, so packer used its default, which reports the machine
+"restarted" the moment WinRM answers. After a cumulative update WinRM comes back
+long before Windows finishes committing it — TiWorker/TrustedInstaller are still
+saturating the disk. Packer would then wait `pause_before = 30s` and provision
+straight into that window. Two different symptoms, one cause:
+
+- **windows-server-2022, 02:50Z, 2h36m.** `PROVISIONER ERROR: The term
+  'c:/Windows/Temp/script-<uuid>.ps1' is not recognized...`. Packer's upload of
+  the round-two script had not landed when `ps_execute` ran it.
+- **windows-server-2025, 02:47Z and 04:42Z (attempts 1 and 2), 1h53m/1h55m.**
+  The documented round-two signature — `iteration 1 - searching for updates`,
+  ~2–3 min, exit 1. The scan was starting while servicing was still active,
+  which is also exactly the state that makes the Update Orchestrator restart the
+  VM, so this subsumes the orchestrator hypothesis rather than contradicting it.
+
+Fix (all three recipes): a shared `local.restart_check` wired into every
+`windows-restart` provisioner as `restart_check_command`. It refuses to report
+the machine back until the guest has been up ≥180s **and** no `TiWorker` or
+`TrustedInstaller` process is running, so packer keeps polling through the
+servicing window instead of provisioning into it. The pre-Finalize restart
+timeout went 15m → 30m for the same headroom.
+
+`ps_execute` was hardened alongside it: its wait-for-upload deadline went 120s →
+300s, and when the deadline expires it now fails with `script never arrived at
+<path>` instead of falling through and running the missing path, which is what
+turned a slow upload into the misleading "is not recognized" error.
+
+Status: **UNVERIFIED on a live build.** Written 2026-08-01 after both rebuilds
+failed; no build has yet run with `restart_check_command` in place. The export
+gate is still unexercised too — neither 2026-08-01 build reached it.
+
+Note for whoever verifies this: cf cannot capture guest evidence for these
+failures on its own. `collectDiagnostics` runs only after *all*
+`CF_BUILD_ATTEMPTS` are exhausted (`src/build/executor.ts`), by which point
+packer has already run `Deleting VM`, and `windowsGuestLogs`
+(`src/build/diagnostics/guest-logs.ts`) collects Panther + CBS but not the
+System event log. Poll the live guest instead — `qm guest exec <vmid> --timeout
+30 -- powershell -Command '<script>'`. That subcommand emits JSON by default and
+has **no `--output-format` option**; passing one makes every call fail to parse.
+
 Cloudbase-Init is deliberately installed after Windows Update. Server 2025
 checkpoint cumulative updates can perform a near-full OS redeploy and create
 `C:\Windows.old`. Installed software survived the observed redeploy, but the

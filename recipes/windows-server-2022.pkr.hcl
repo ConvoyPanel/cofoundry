@@ -75,7 +75,16 @@ locals {
   # local drives the guest-side partition shrink (Finalize.ps1).
   final_disk_size = "30G"
 
-  ps_execute = "powershell -executionpolicy bypass \"& { $ErrorActionPreference='Stop'; $_p='{{.Path}}'; $_v='{{.Vars}}'; $_dl=[DateTime]::Now.AddSeconds(120); while ((-not (Test-Path $_p) -or -not (Test-Path $_v)) -and [DateTime]::Now -lt $_dl) { Start-Sleep 2 }; try { . $_v; & $_p } catch { Write-Host ('PROVISIONER ERROR: ' + $_.Exception.Message); exit 1 }; if ($LastExitCode) { exit $LastExitCode }; exit 0 }\""
+  ps_execute = "powershell -executionpolicy bypass \"& { $ErrorActionPreference='Stop'; $_p='{{.Path}}'; $_v='{{.Vars}}'; $_dl=[DateTime]::Now.AddSeconds(300); while ((-not (Test-Path $_p) -or -not (Test-Path $_v)) -and [DateTime]::Now -lt $_dl) { Start-Sleep 2 }; if (-not (Test-Path $_p)) { Write-Host ('PROVISIONER ERROR: script never arrived at ' + $_p + ' - the upload did not land within 300s'); exit 1 }; try { . $_v; & $_p } catch { Write-Host ('PROVISIONER ERROR: ' + $_.Exception.Message); exit 1 }; if ($LastExitCode) { exit $LastExitCode }; exit 0 }\""
+
+  # Packer's default restart check reports "restarted" the instant WinRM answers,
+  # which after a cumulative update is while Windows is still committing the
+  # update (TiWorker/TrustedInstaller saturating the disk). Provisioning into
+  # that window is what broke the 2026-08-01 builds: the uploaded script had not
+  # landed in C:\Windows\Temp yet on 2022 ("is not recognized"), and the round-two
+  # update scan was killed mid-flight on 2025. Hold the restart open until
+  # servicing is actually idle. See docs/windows.md#post-update-restart-settling.
+  restart_check = "powershell -Command \"& { if (((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalSeconds -lt 180) { exit 1 }; if (Get-Process -Name TiWorker,TrustedInstaller -ErrorAction SilentlyContinue) { exit 1 }; Write-Output 'restarted.' }\""
 }
 
 source "proxmox-iso" "windows-server-2022" {
@@ -188,8 +197,8 @@ source "proxmox-iso" "windows-server-2022" {
   # install (setup error dialog leaves the VM "running" with WinRM never coming
   # up) fails the attempt in ~45 min instead of hanging the full timeout —
   # cf retries the build (CF_BUILD_ATTEMPTS) to ride out intermittent flakes.
-  winrm_timeout  = "45m"
-  winrm_port     = 5985
+  winrm_timeout = "45m"
+  winrm_port    = 5985
 }
 
 build {
@@ -201,7 +210,8 @@ build {
   }
 
   provisioner "windows-restart" {
-    restart_timeout = "30m"
+    restart_check_command = local.restart_check
+    restart_timeout       = "30m"
   }
 
   provisioner "powershell" {
@@ -210,8 +220,9 @@ build {
     script          = "${path.root}/_shared/windows/WU.ps1"
   }
   provisioner "windows-restart" {
-    restart_timeout = "90m"
-    restart_command = "powershell -Command \"if (Test-Path 'C:/Windows/Temp/tb-wu-reboot.flag') { Remove-Item 'C:/Windows/Temp/tb-wu-reboot.flag' -Force; shutdown /r /f /t 5 /c 'packer wu reboot' } else { exit 0 }\""
+    restart_check_command = local.restart_check
+    restart_timeout       = "90m"
+    restart_command       = "powershell -Command \"if (Test-Path 'C:/Windows/Temp/tb-wu-reboot.flag') { Remove-Item 'C:/Windows/Temp/tb-wu-reboot.flag' -Force; shutdown /r /f /t 5 /c 'packer wu reboot' } else { exit 0 }\""
   }
 
   provisioner "powershell" {
@@ -220,8 +231,9 @@ build {
     script          = "${path.root}/_shared/windows/WU.ps1"
   }
   provisioner "windows-restart" {
-    restart_timeout = "90m"
-    restart_command = "powershell -Command \"if (Test-Path 'C:/Windows/Temp/tb-wu-reboot.flag') { Remove-Item 'C:/Windows/Temp/tb-wu-reboot.flag' -Force; shutdown /r /f /t 5 /c 'packer wu reboot' } else { exit 0 }\""
+    restart_check_command = local.restart_check
+    restart_timeout       = "90m"
+    restart_command       = "powershell -Command \"if (Test-Path 'C:/Windows/Temp/tb-wu-reboot.flag') { Remove-Item 'C:/Windows/Temp/tb-wu-reboot.flag' -Force; shutdown /r /f /t 5 /c 'packer wu reboot' } else { exit 0 }\""
   }
 
   provisioner "powershell" {
@@ -230,12 +242,13 @@ build {
     script          = "${path.root}/_shared/windows/PreFinalize.ps1"
   }
   provisioner "windows-restart" {
-    restart_timeout = "15m"
+    restart_check_command = local.restart_check
+    restart_timeout       = "30m"
   }
 
   provisioner "powershell" {
-    pause_before     = "30s"
-    execute_command  = local.ps_execute
+    pause_before    = "30s"
+    execute_command = local.ps_execute
     environment_vars = [
       "CF_FINAL_DISK_SIZE=${local.final_disk_size}",
       # Seeds <AdministratorPassword> in the sysprep answer file so OOBE completes
@@ -243,7 +256,7 @@ build {
       # password on first boot; it is the fallback if that injection fails.
       "CF_ADMIN_PASSWORD=${var.winrm_password}",
     ]
-    script           = "${path.root}/_shared/windows/Finalize.ps1"
+    script = "${path.root}/_shared/windows/Finalize.ps1"
   }
 
   post-processor "shell-local" {
