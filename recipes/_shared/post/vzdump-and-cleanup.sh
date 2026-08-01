@@ -55,6 +55,10 @@ _pve() {
 # shellcheck source=shrink-disk.sh
 . "$SCRIPT_DIR/shrink-disk.sh"
 
+# assert_generalized() — Windows-only, no-op for every other recipe.
+# shellcheck source=assert-generalized.sh
+. "$SCRIPT_DIR/assert-generalized.sh"
+
 cleanup() {
   if [ -n "$REMOTE_ARTIFACT" ]; then
     _pve "rm -f '$REMOTE_ARTIFACT' '$REMOTE_LOG'" || true
@@ -84,6 +88,12 @@ esac
 
 echo "==> setting template name to $CF_RECIPE_NAME"
 _pve "qm set '$CF_BUILT_VMID' --name '$CF_RECIPE_NAME' >/dev/null"
+
+# Windows only: refuse to export an image sysprep did not actually generalize.
+# Deliberately before the shrink — a failed build then costs no export time, and
+# the GPT backup header is still intact for the read-only mount. set -e makes
+# this fail the build (see assert-generalized.sh for why it cannot be guest-side).
+assert_generalized
 
 # Opt-in disk shrink: recipe declared `# final_disk_size:` and cf forwarded it
 # as CF_FINAL_DISK_SIZE. Must run while the VM is stopped, before vzdump.
