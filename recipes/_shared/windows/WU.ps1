@@ -9,6 +9,39 @@ $WULog        = "C:\Windows\Temp\tb-wu.log"
 $WUScript     = "C:\Windows\Temp\tb-wu.ps1"
 $WUTaskName   = "TBWindowsUpdate"
 
+# Install.ps1 suppresses Windows' automatic update/reboot agent for the build,
+# but *installing a cumulative update wipes that policy*. Observed live on a
+# 2026-08-01 windows-server-2022 build, mid-round-one: the AU key held only
+# `AUOptions = 3` -- Install.ps1's NoAutoUpdate and NoAutoRebootWithLoggedOnUsers
+# values were gone, UsoSvc was Running, and Schedule Scan / USO_UxBroker were
+# back to Ready. Round two then starts with the agent re-armed, the Update
+# Orchestrator finds a pending restart and reboots the VM out from under this
+# provisioner ~2-3 min in. The process is killed rather than failing, so nothing
+# throws and packer only reports `Script exited with non-zero exit status: 1`.
+#
+# So the suppression cannot be applied once at install time -- it has to be
+# re-armed around every round. See docs/windows.md#wu-round-two.
+function Set-BuildUpdateSuppression($Phase) {
+  $auPolicyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
+  New-Item -Path $auPolicyPath -Force | Out-Null
+  Set-ItemProperty -Path $auPolicyPath -Name "NoAutoUpdate"                  -Value 1 -Type DWord -Force
+  Set-ItemProperty -Path $auPolicyPath -Name "NoAutoRebootWithLoggedOnUsers" -Value 1 -Type DWord -Force
+
+  # Owned by TrustedInstaller, so a Disable may be denied -- the AU policy above
+  # is the authoritative control. Matches the task list Install.ps1 disables.
+  foreach ($t in @("Reboot", "Reboot_AC", "Reboot_Battery")) {
+    Disable-ScheduledTask -TaskPath "\Microsoft\Windows\UpdateOrchestrator\" -TaskName $t -ErrorAction SilentlyContinue | Out-Null
+  }
+
+  # Report what actually stuck: this is the state that was silently lost before,
+  # so a future failure should not have to be diagnosed from outside the guest.
+  $applied = Get-ItemProperty -Path $auPolicyPath -ErrorAction SilentlyContinue
+  Write-Step ("update suppression ({0}): NoAutoUpdate={1} NoAutoRebootWithLoggedOnUsers={2}" -f `
+      $Phase, $applied.NoAutoUpdate, $applied.NoAutoRebootWithLoggedOnUsers)
+}
+
+Set-BuildUpdateSuppression "before round"
+
 # Clear state from any prior round. The reboot flag is preserved across the WU
 # provisioner and read by the conditional restart_command in the recipe.
 Remove-Item $WUFlag       -Force -ErrorAction SilentlyContinue
@@ -326,6 +359,13 @@ if (-not (Test-Path $WUFlag)) {
   }
   throw "Windows Update did not create $WUFlag after $([int]$stopwatch.Elapsed.TotalMinutes)m"
 }
+
+# Re-arm before handing back to packer. The installs above are what wipe the
+# policy, so setting it again here means the machine comes back from packer's
+# reboot already suppressed -- closing the window between boot and the next
+# round's Set-BuildUpdateSuppression call, which is when the orchestrator would
+# otherwise be free to fire its pending restart.
+Set-BuildUpdateSuppression "after round"
 
 if (Test-Path $WURebootFlag) {
   Write-Step "updates installed - reboot required (conditional windows-restart will reboot)"

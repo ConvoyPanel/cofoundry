@@ -185,6 +185,9 @@ investigation does not redo them:
 - The suppression is **still present and unmodified** in `Install.ps1`
   (`NoAutoUpdate`, `NoAutoRebootWithLoggedOnUsers`, and the
   `UpdateOrchestrator\Reboot*` task disables). This is not a lost fix.
+  **-- Superseded 2026-08-01: this checked the source, not the running guest.
+  The policy *is* present in `Install.ps1` and *is* lost at runtime. See
+  "Root cause found" below.**
 - A **windows-server-2022 build running concurrently passed straight through
   the same round-two window** (entered round two at 22:40:03, installed and
   continued), so the failure is not a blanket regression of the mechanism.
@@ -199,30 +202,64 @@ investigation does not redo them:
   itself evidence the cause is load-related rather than the deterministic
   orchestrator restart.
 
-If it recurs, capture the guest's side before the VM is destroyed: the
-`System` event log around the failure (event 1074/6008 identifies a restart and
-its initiator) distinguishes an orchestrator reboot from a dropped provisioner
-session. Do not re-derive the suppression-is-missing hypothesis — it was
-checked and ruled out here.
+**Root cause found 2026-08-01: installing a cumulative update wipes the
+suppression.** Measured directly on a live windows-server-2022 guest during
+round one, via `qm guest exec`:
+
+    HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU
+      AUOptions = 3            <- Windows' own value
+      (NoAutoUpdate and NoAutoRebootWithLoggedOnUsers are GONE)
+
+    UsoSvc            Running / Automatic
+    Schedule Scan     Ready
+    USO_UxBroker      Ready
+    Reboot_AC         Disabled   <- the task disable did survive
+
+`Install.ps1` writes those two values once, at install time. The round-one
+cumulative update removes them and re-arms the automatic agent. Round two then
+begins with the orchestrator live; it finds the pending restart and reboots the
+VM ~2–3 minutes in, killing the provisioner. Nothing throws — the process is
+killed — so packer reports only `Script exited with non-zero exit status: 1`,
+which is exactly the observed signature. The earlier note above that this was
+"not a lost fix" verified the *source* and never checked the *guest*.
+
+Fix: `WU.ps1` re-arms the suppression itself, both at the start of a round and
+again after the installs (so the machine returns from packer's reboot already
+suppressed), and logs the values that actually stuck. `Install.ps1` keeps its
+original call for the pre-round-one window; `Finalize.ps1` still deletes the
+whole AU key before sysprep, so the shipped template is unaffected.
+
+Note this is *not* distinguishable from a load-related WinRM drop by the packer
+log alone, which is why the 07-31 investigation stalled on the concurrency
+correlation. Capture the guest directly instead — `qm guest exec <vmid>
+--timeout 30 -- powershell -Command '<script>'`. That subcommand emits JSON by
+default and has **no `--output-format` option**; passing one makes every call
+fail to parse. cf's own `collectDiagnostics` cannot help here: it runs only
+after all `CF_BUILD_ATTEMPTS` are exhausted, by which point packer has already
+run `Deleting VM`.
 
 ### Post-update restart settling
 
-**Both 2026-08-01 build failures were the same defect**, and it is upstream of
-the round-two investigation above: `windows-restart` had no
-`restart_check_command`, so packer used its default, which reports the machine
-"restarted" the moment WinRM answers. After a cumulative update WinRM comes back
-long before Windows finishes committing it — TiWorker/TrustedInstaller are still
-saturating the disk. Packer would then wait `pause_before = 30s` and provision
-straight into that window. Two different symptoms, one cause:
+`windows-restart` had no `restart_check_command`, so packer used its default,
+which reports the machine "restarted" the moment WinRM answers. After a
+cumulative update WinRM comes back long before Windows finishes committing it —
+TiWorker/TrustedInstaller are still saturating the disk. Packer would then wait
+`pause_before = 30s` and provision straight into that window.
+
+**This was first written as the single cause of both 2026-08-01 failures. That
+was wrong for 2025** — a rebuild with the fix in place still failed round two
+identically, which is what forced the guest-side measurement that found the
+policy wipe above. The restart gap did widen from ~2.5 min to ~8 min, so the
+check works; it just was not what was killing 2025. Treat this section as the
+fix for the *upload race* only:
 
 - **windows-server-2022, 02:50Z, 2h36m.** `PROVISIONER ERROR: The term
   'c:/Windows/Temp/script-<uuid>.ps1' is not recognized...`. Packer's upload of
   the round-two script had not landed when `ps_execute` ran it.
-- **windows-server-2025, 02:47Z and 04:42Z (attempts 1 and 2), 1h53m/1h55m.**
-  The documented round-two signature — `iteration 1 - searching for updates`,
-  ~2–3 min, exit 1. The scan was starting while servicing was still active,
-  which is also exactly the state that makes the Update Orchestrator restart the
-  VM, so this subsumes the orchestrator hypothesis rather than contradicting it.
+- **windows-server-2025, 02:47Z / 04:42Z / 07:29Z, ~1h55m each.** The documented
+  round-two signature — `iteration 1 - searching for updates`, ~2–3 min, exit 1.
+  The 07:29Z run already had `restart_check_command`, so this one is **not** the
+  restart race; see the policy-wipe root cause above.
 
 Fix (all three recipes): a shared `local.restart_check` wired into every
 `windows-restart` provisioner as `restart_check_command`. It refuses to report
