@@ -251,23 +251,9 @@ Remove-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service" -For
 cmd.exe /c 'winrm set winrm/config/service @{AllowUnencrypted="false"} >nul 2>&1'
 cmd.exe /c 'winrm set winrm/config/service/auth @{Basic="false"} >nul 2>&1'
 
-Write-Step "restore stock WinRM firewall exposure"
-# WinRM itself is deliberately left running: on Windows Server (unlike client
-# SKUs) the service, the HTTP listener on 5985, and the Domain/Private firewall
-# rules are all enabled out of the box, so disabling them would ship a template
-# that deviates from stock Server behavior.
-#
-# What the build adds on top of that is removed here:
-#   - "WinRM-HTTP", created by autounattend.xml's netsh command, applies to every
-#     profile including Public.
-#   - the stock "Windows Remote Management (HTTP-In)" rule bound to the Public
-#     profile, which winrm quickconfig enables and which is not on by default.
-# Both leave the management port reachable on untrusted networks on every clone.
-Remove-NetFirewallRule -Name "WinRM-HTTP" -ErrorAction SilentlyContinue
-Remove-NetFirewallRule -DisplayName "WinRM-HTTP" -ErrorAction SilentlyContinue
-Get-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -ErrorAction SilentlyContinue |
-  Where-Object { $_.Profile -match "Public" } |
-  Disable-NetFirewallRule -ErrorAction SilentlyContinue
+# NOTE: the WinRM firewall teardown deliberately does NOT happen here. It used to,
+# and it silently truncated this entire script -- see "restore stock WinRM firewall
+# exposure" near the shutdown at the end of this file for the full explanation.
 
 Write-Step "remove per-user Appx packages that block generalize"
 # sysprep /generalize aborts in pre-validation if any Appx package is registered
@@ -291,14 +277,34 @@ try {
 } catch {
   Write-Step "  (could not enumerate provisioned packages: $($_.Exception.Message))"
 }
+# Edge resists unregistration while any of its processes are alive, and a WU
+# round that updates Edge leaves them running. Stop them before the attempt.
+Get-Process -Name msedge, msedgewebview2, MicrosoftEdgeUpdate -ErrorAction SilentlyContinue |
+  Stop-Process -Force -ErrorAction SilentlyContinue
+
+$blockers = @()
 try {
   foreach ($pkg in Get-AppxPackage -AllUsers -ErrorAction Stop) {
     if ($provisioned -contains $pkg.PackageFullName) { continue }
     Write-Step "  unregistering $($pkg.PackageFullName)"
-    Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+    try {
+      Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction Stop
+    } catch {
+      $blockers += $pkg.PackageFullName
+      Write-Step "    FAILED to unregister: $($_.Exception.Message)"
+    }
   }
 } catch {
   Write-Step "  (Appx enumeration unavailable: $($_.Exception.Message))"
+}
+
+# Still best-effort -- sysprep's pre-validation is the authority and
+# assert-generalized gates the export -- but never silent. The 2026-08-01 build
+# swallowed this failure and paid for it three hours later with a bare
+# 0x80073cf2 sysprep abort, with nothing in the build log naming the package.
+if ($blockers.Count) {
+  Write-Step "  WARNING $($blockers.Count) package(s) registered for a user but not provisioned; sysprep generalize aborts 0x80073cf2 on these:"
+  foreach ($b in $blockers) { Write-Step "    $b" }
 }
 
 Write-Step "sysprep and shutdown"
@@ -639,6 +645,38 @@ foreach ($t in @("Reboot", "Reboot_AC", "Reboot_Battery")) {
 # here (instead of only at clone specialize) keeps it out of the exported template
 # disk entirely; the specialize-script deletion stays as a backstop.
 Remove-Item $unattendCopy -Force -ErrorAction SilentlyContinue
+
+Write-Step "restore stock WinRM firewall exposure"
+# MUST stay here, immediately before the shutdown. This block used to run before
+# the Appx cleanup and sysprep, and it silently killed every build: the build NIC
+# is on an unidentified (Public-profile) network, so removing these rules drops
+# packer's live WinRM session. The script kept running on the guest, but its
+# output and exit code never got back, and packer read the disconnect as success
+# -- then exported a never-generalized template. That is the 2026-07-31 "silent
+# non-generalized export", and it recurred on 2026-08-01 at 13:26Z with sysprep
+# failing invisibly behind a session that had already gone away.
+#
+# Running it here is safe: sysprep used /quit, so the machine is still up, and
+# registry writes after generalize land in the sealed image (same reason the WU
+# policy restore above sits here). Losing the session now costs nothing, because
+# the only remaining action is the power-off.
+#
+# WinRM itself is deliberately left running: on Windows Server (unlike client
+# SKUs) the service, the HTTP listener on 5985, and the Domain/Private firewall
+# rules are all enabled out of the box, so disabling them would ship a template
+# that deviates from stock Server behavior.
+#
+# What the build adds on top of that is removed here:
+#   - "WinRM-HTTP", created by autounattend.xml's netsh command, applies to every
+#     profile including Public.
+#   - the stock "Windows Remote Management (HTTP-In)" rule bound to the Public
+#     profile, which winrm quickconfig enables and which is not on by default.
+# Both leave the management port reachable on untrusted networks on every clone.
+Remove-NetFirewallRule -Name "WinRM-HTTP" -ErrorAction SilentlyContinue
+Remove-NetFirewallRule -DisplayName "WinRM-HTTP" -ErrorAction SilentlyContinue
+Get-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -ErrorAction SilentlyContinue |
+  Where-Object { $_.Profile -match "Public" } |
+  Disable-NetFirewallRule -ErrorAction SilentlyContinue
 
 # Generalize is done but /quit left the machine running. Power it off so the
 # node-side vzdump captures the sealed image -- the same end state sysprep

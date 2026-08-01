@@ -787,6 +787,45 @@ Still open: the precise mechanism by which packer concluded success. It was not
 worth another build cycle to pin down, because fix 2 makes the outcome safe
 either way — but do not "explain" it in this document without evidence.
 
+**Both fixes confirmed working on a live build 2026-08-01 13:26Z.** A
+windows-server-2022 build reached sysprep for the first time since the WU
+round-two failures were fixed, sysprep aborted, and the gate did exactly its job:
+
+```
+==> assert-generalized: inspecting /var/lib/vz/images/200107/base-200107-disk-1.qcow2
+assert-generalized: reading Windows volume at sector 239616
+assert-generalized: FAIL Sysprep_succeeded.tag missing — sysprep did not generalize this image
+--- guest sysprep setuperr.log (last 20 lines) ---
+SYSPRP Package Microsoft.MicrosoftEdge.Stable_150.0.4078.105_neutral__8wekyb3d8bbwe was ins...
+SYSPRP Failed to remove apps for the current user: 0x80073cf2.
+SYSPRP Exit code of RemoveAllApps thread was 0x3cf2.
+assert-generalized: FAIL SetupType is not 2 / CmdLine does not launch windeploy.exe /
+                    ImageState is not GENERALIZE_RESEAL_TO_OOBE
+assert-generalized: REFUSING to export — every clone would stick at GeneralizationState 3
+```
+
+This is the 2026-07-31 silent export caught loudly, with the culprit named. Note
+`ImageState` read back `IMAGE_STATE_COMPLETE`, i.e. a plain un-generalized image —
+exactly what shipped silently before.
+
+**The Appx cleanup (fix 3) is not sufficient.** It ran and Edge still blocked
+sysprep. Its `Remove-AppxPackage -ErrorAction SilentlyContinue` swallowed
+whatever went wrong, so the build log named nothing and the failure only surfaced
+three hours later as a bare `0x80073cf2`. Changed so the per-package failure is
+caught and printed, Edge processes (`msedge`, `msedgewebview2`,
+`MicrosoftEdgeUpdate`) are stopped first since the package cannot be unregistered
+while they run, and any package still registered-but-not-provisioned is listed as
+a WARNING naming the exact blocker. Still deliberately non-fatal — sysprep's
+pre-validation and the gate remain the authority.
+
+**Unverified:** whether stopping the Edge processes is enough to make the removal
+succeed. The next failure will at least say why it did not, which the previous
+one could not. Do not assume this is fixed.
+
+Packer also emits a second, cosmetic error alongside the real one on this path —
+`Error destroying builder artifact: ... msgpack decode error ... bad artifact: []`.
+It is a plugin quirk when a post-processor fails, not a separate fault.
+
 **Dead ends (do not retry).** A `SetupComplete.cmd` forcing `GeneralizationState=7`
 never fires — it is gated on the OOBE completion that never happens. An AtStartup
 scheduled task forcing 7 is fragile and non-deterministic: it can force 7 mid-setup,
