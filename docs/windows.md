@@ -237,6 +237,50 @@ into the gap before it. A windows-server-2022 build survived exactly this reboot
 at 10:08:42 because the earlier 180s-uptime check happened to still be holding —
 which is the same mechanism, arrived at by luck rather than design.
 
+### The silent non-generalized export: the WinRM firewall teardown
+
+**Root cause identified 2026-08-01 13:26Z.** `Finalize.ps1` restored the stock
+WinRM firewall exposure *before* the Appx cleanup and sysprep. The build NIC sits
+on an unidentified (Public-profile) network, so removing `WinRM-HTTP` and
+disabling the Public-profile `Windows Remote Management (HTTP-In)` rule drops
+packer's live WinRM session. The script kept running on the guest — sysprep ran,
+and failed — but its output and exit code never got back, and **packer read the
+disconnect as provisioner success** and went straight to export.
+
+That is the mechanism behind the 2026-07-31 silent non-generalized export. The
+`3094234` diagnosis (stale `$LastExitCode`) was a real weakness but not this;
+`ps_execute` never got the chance to return anything at all. The evidence is the
+truncation point: the build log ends at `==> restore stock WinRM firewall
+exposure` and the next line is packer's `Stopping VM`, with the Appx and sysprep
+steps between them never appearing — identical across the 07-31 run and the
+08-01 13:26Z run.
+
+Fix: the firewall teardown moved to immediately before the final shutdown, after
+generalize. Sysprep uses `/quit`, so the machine is still up and registry writes
+land in the sealed image (the WU policy restore already relies on this). Losing
+the session there costs nothing, since the only remaining action is power-off.
+
+**Keep this ordering.** Anything that can sever WinRM must run after sysprep, or
+it will silently truncate the script and re-introduce a shipped broken template.
+
+### Sysprep Appx pre-validation: being provisioned does not mean safe
+
+With the session restored, the underlying generalize failure was visible:
+
+    SYSPRP Package Microsoft.MicrosoftEdge.Stable_150.0.4078.105_neutral__8wekyb3d8bbwe
+           was installed for a user, but not provisioned for all users
+    SYSPRP Failed to remove apps for the current user: 0x80073cf2
+
+`f861196` was written for exactly this package and still missed it, because its
+loop skipped anything appearing in `Get-AppxProvisionedPackage`. Edge appears
+there under the very full name sysprep rejects, so it was skipped every time.
+Provisioning covers a package *version*; a WU round installs a newer Edge for the
+current user, and it is that per-user registration generalize refuses.
+
+Fix: skip only packages with **no per-user registration** (`PackageUserInformation`
+with `InstallState = Installed`); on a failed unregister, drop the provisioned
+entry and retry; and report survivors by name instead of `SilentlyContinue`.
+
 ### Superseded: the policy-wipe theory (correct observation, wrong conclusion)
 
 Installing a cumulative update **does** wipe the suppression — this part is real

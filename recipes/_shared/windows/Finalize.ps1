@@ -285,13 +285,41 @@ Get-Process -Name msedge, msedgewebview2, MicrosoftEdgeUpdate -ErrorAction Silen
 $blockers = @()
 try {
   foreach ($pkg in Get-AppxPackage -AllUsers -ErrorAction Stop) {
-    if ($provisioned -contains $pkg.PackageFullName) { continue }
+    # Being provisioned is NOT sufficient to skip. That was the 2026-08-01 13:26Z
+    # failure: Edge appears in $provisioned under the exact full name sysprep then
+    # rejected, so it was skipped and never unregistered. Provisioning covers a
+    # package *version*; a WU round installs a newer Edge for the current user, and
+    # it is that per-user registration generalize refuses. Only skip when nothing
+    # is actually registered to a user -- a purely staged package is harmless.
+    $registered = @()
+    try {
+      $registered = @($pkg.PackageUserInformation |
+        Where-Object { $_.InstallState -eq "Installed" })
+    } catch {
+      # Cannot tell -- fall through and attempt removal rather than assume safe.
+    }
+    if (($provisioned -contains $pkg.PackageFullName) -and $registered.Count -eq 0) { continue }
+
     Write-Step "  unregistering $($pkg.PackageFullName)"
     try {
       Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction Stop
     } catch {
-      $blockers += $pkg.PackageFullName
-      Write-Step "    FAILED to unregister: $($_.Exception.Message)"
+      Write-Step "    unregister failed: $($_.Exception.Message)"
+      # A per-user registration that will not go usually needs its provisioned
+      # entry dropped first, which also stops it re-registering at next logon.
+      try {
+        Get-AppxProvisionedPackage -Online -ErrorAction Stop |
+          Where-Object { $_.DisplayName -eq $pkg.Name } |
+          ForEach-Object {
+            Write-Step "    deprovisioning $($_.PackageName)"
+            Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction Stop | Out-Null
+          }
+        Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction Stop
+        Write-Step "    recovered after deprovisioning"
+      } catch {
+        $blockers += $pkg.PackageFullName
+        Write-Step "    STILL REGISTERED after deprovision attempt: $($_.Exception.Message)"
+      }
     }
   }
 } catch {
