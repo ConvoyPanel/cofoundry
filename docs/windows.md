@@ -273,9 +273,54 @@ timeout went 15m → 30m for the same headroom.
 <path>` instead of falling through and running the missing path, which is what
 turned a slow upload into the misleading "is not recognized" error.
 
-Status: **UNVERIFIED on a live build.** Written 2026-08-01 after both rebuilds
-failed; no build has yet run with `restart_check_command` in place. The export
-gate is still unexercised too — neither 2026-08-01 build reached it.
+Status: **TRIED AND FAILED on a live build 2026-08-01.** Do not re-attempt this
+check in this form. windows-server-2025 ran with it and failed at 1h58m with the
+byte-identical round-two signature (`iteration 1 - searching for updates` at
+07:27:58, dead ~2 min later). Measured effect of the check: the post-round-one
+restart took ~8 min with it versus ~7.4 min without — i.e. **it added nothing
+beyond its own 180s uptime floor.**
+
+Why it does not work: `TiWorker`/`TrustedInstaller` are a **weak busy signal**.
+Probing a live 2022 guest at 07:27Z, *mid-update*, showed `TrustedInstaller` in
+state `Stopped` and no `TiWorker` process at all. Those processes are absent for
+most of the servicing window, so the gate opens immediately. Any future settle
+check must key on something that is actually true during servicing — pending
+reboot flags (CBS `RebootPending`, WindowsUpdate `RebootRequired`,
+`PendingFileRenameOperations`), which `Finalize.ps1` already uses, are the
+obvious candidates.
+
+The `ps_execute` hardening above is independent of this and is worth keeping:
+2022's `is not recognized` failure has not recurred.
+
+New evidence from the failed run, which reframes the cause: **the failure prints
+no `PROVISIONER ERROR` line.** `ps_execute` wraps the script in try/catch and
+prefixes any thrown error with that string, so its absence means the powershell
+process was *killed* rather than faulting. That is consistent with the guest
+rebooting under the provisioner and inconsistent with a script-level error —
+evidence for the Update Orchestrator hypothesis above, not against it. Confirm
+by capturing `LastBootUpTime` across the failure (see the note below); a change
+proves the reboot.
+
+The export gate remains unexercised — no 2026-08-01 build has reached it.
+
+### windows-server-2022 Windows Update round-one stall (2026-08-01)
+
+Distinct from the round-two failure and **unexplained**. A 2022 build sat at
+`install 20%` for 145+ minutes, versus 112 min and ~120 min on the two prior
+runs, with the guest genuinely idle rather than slow:
+
+- `SoftwareDistribution\Download` frozen at exactly 1,132,977,685 bytes across a
+  45-second sample; ~2.5 KB of network received in that window.
+- Host-side over 30s: +53 KB disk read, +578 KB disk write, kvm at 8% of one
+  core.
+- `TrustedInstaller` service `Stopped`, no `TiWorker`, `CBS.log` untouched for
+  20 minutes while WUA still reported `install 20%`.
+
+The bound is `WU.ps1`'s own `[TimeSpan]::FromHours(3)` deadline, after which it
+throws `Windows Update did not create <flag>`. This run was cancelled before
+reaching it, so it is not known whether the stall self-resolves. Note both prior
+runs *did* break out of this plateau after ~2 hours, so a long idle stretch here
+is not by itself proof of a hang.
 
 Note for whoever verifies this: cf cannot capture guest evidence for these
 failures on its own. `collectDiagnostics` runs only after *all*
