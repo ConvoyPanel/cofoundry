@@ -56,26 +56,44 @@ done
 [ -n "$NBD" ] || { echo "assert-generalized: could not attach $DISK to an nbd device"; exit 1; }
 
 MNT=$(mktemp -d)
+LOOP=""
 cleanup() {
   umount "$MNT" 2>/dev/null || true
   rmdir "$MNT" 2>/dev/null || true
+  [ -n "$LOOP" ] && losetup -d "$LOOP" 2>/dev/null
   qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
 sleep 2
-partprobe "$NBD" >/dev/null 2>&1 || true
+
+# Map partitions by offset read from the PRIMARY GPT rather than relying on the
+# kernel's /dev/nbdXpN nodes. An exported template normally has no valid *backup*
+# GPT — the post-export shrink truncates the tail of the disk away — and the
+# kernel's partition scanner then refuses the disk entirely, so no pN nodes
+# appear. sgdisk still reads the primary table fine. (This is exactly how the
+# 2026-07-31 offline inspections had to mount these images by hand; a first cut
+# of this script used pN nodes and failed on a known-good template.)
+command -v sgdisk >/dev/null 2>&1 || {
+  echo "assert-generalized: sgdisk not found (install gdisk)"; exit 1; }
+
+STARTS=$(sgdisk -p "$NBD" 2>/dev/null | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {print $2}')
+[ -n "$STARTS" ] || { echo "assert-generalized: could not read a partition table from $DISK"; exit 1; }
 
 # The Windows volume is whichever partition actually carries \Windows\System32 —
-# found by probing rather than by index, since the EFI/MSR layout differs by release.
+# probed rather than indexed, since the EFI/MSR layout differs by release.
 WIN=""
-for p in "$NBD"p1 "$NBD"p2 "$NBD"p3 "$NBD"p4 "$NBD"p5; do
-  [ -b "$p" ] || continue
-  mount -t ntfs3 -o ro "$p" "$MNT" 2>/dev/null || continue
-  if [ -d "$MNT/Windows/System32" ]; then WIN="$p"; break; fi
-  umount "$MNT" 2>/dev/null || true
+for start in $STARTS; do
+  LOOP=$(losetup --find --show --read-only --offset $((start * 512)) "$NBD" 2>/dev/null) || { LOOP=""; continue; }
+  if mount -t ntfs3 -o ro "$LOOP" "$MNT" 2>/dev/null; then
+    if [ -d "$MNT/Windows/System32" ]; then WIN="sector $start"; break; fi
+    umount "$MNT" 2>/dev/null || true
+  fi
+  losetup -d "$LOOP" 2>/dev/null || true
+  LOOP=""
 done
 [ -n "$WIN" ] || { echo "assert-generalized: no Windows partition found in $DISK"; exit 1; }
+echo "assert-generalized: reading Windows volume at $WIN"
 
 FAIL=0
 if [ ! -f "$MNT/Windows/System32/Sysprep/Sysprep_succeeded.tag" ]; then
