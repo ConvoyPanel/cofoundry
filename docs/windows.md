@@ -528,6 +528,65 @@ and were fixed in the same session:
   read a boot id". The wait now also requires the sentinel hostname to be the
   active computer name, which is only true after that reboot.
 
+##### 2026-08-01: a failed sysprep shipped a "successful" template — the likely real Mode B
+
+A `windows-server-2022` build reported `Build 'proxmox-iso.windows-server-2022'
+finished after 3 hours 7 minutes` and published an artifact. Offline inspection
+of that artifact (procedure above) showed it was **never generalized at all**:
+
+| marker | good 2019 template | this 2022 artifact |
+| --- | --- | --- |
+| `SetupType` | 2 | **0** |
+| `CmdLine` | `oobe\windeploy.exe` | **empty** |
+| `ImageState` | `…GENERALIZE_RESEAL_TO_OOBE` | **`IMAGE_STATE_COMPLETE`** |
+| `Sysprep_succeeded.tag` | present | **absent** |
+
+That is the Mode-B signature exactly — and it was produced by a build that
+reported success. Facts established from the artifact itself:
+
+- **Sysprep ran and failed**, at 23:07:16, in Appx pre-validation:
+  `SYSPRP Package Microsoft.MicrosoftEdge.Stable_150.0.4078.105… was installed
+  for a user, but not provisioned for all users` → `Failed to remove apps for
+  the current user: 0x80073cf2` → `Hit failure while pre-validate sysprep
+  generalize internal providers`. A Windows Update had installed Edge per-user
+  during the build. 2019 is immune (legacy Edge is not an Appx package), which
+  is why this surfaced only now.
+- **The script reached sysprep**: `C:\Windows\Temp\cb-sysprep-unattend.xml` and
+  `C:\Windows\Setup\Scripts\remove-build-profile.ps1` were both written (23:06).
+- **`Finalize.ps1`'s own arming gate never recorded an attempt** — its
+  `C:\Windows\Temp\cf-sysprep-retry.log` does not exist, and the export began
+  seconds after sysprep failed, so the guest script was cut off rather than
+  completing its retry.
+- **Packer never saw a failure.** No error appears in the build log; the last
+  guest output is the step *before* sysprep, then packer's `Stopping VM`.
+
+**Why this most likely IS the original Mode B.** Every earlier theory —
+post-cumulative CBS corruption, a WMI race, "transient generalize corruption" —
+was inferred from error lines that were later falsified. This explanation needs
+no such inference: sysprep simply fails (or is cut off), nothing propagates the
+failure, and the unarmed image is exported as a success. It also predicts the
+observed intermittency, since whether generalize completes before packer moves
+on is timing- and load-dependent, and it explains the 02:43Z 2026-07-24 template
+without appealing to a guest-internal reboot. Treat the earlier CBS/WMI framing
+as superseded unless new evidence revives it.
+
+**Fixes (2026-08-01), all three defensive at a different layer:**
+
+1. `ps_execute` in all three recipes wrapped the script call in `try/catch`.
+   It previously ended `exit $LastExitCode`, which reflects the last *native*
+   command, so a thrown error could exit with a stale `0`.
+2. `recipes/_shared/post/assert-generalized.sh` (new) reads the finished disk
+   **from the host** before the shrink and fails the build unless the image is
+   generalized and armed, dumping the guest's `setuperr.log` on failure. This is
+   the guarantee: no guest-side exit-code plumbing can mask it.
+3. `Finalize.ps1` unregisters per-user Appx packages that are not provisioned
+   for all users, which is the supported fix for `0x80073cf2` and leaves the
+   Win32 Edge install alone.
+
+Still open: the precise mechanism by which packer concluded success. It was not
+worth another build cycle to pin down, because fix 2 makes the outcome safe
+either way — but do not "explain" it in this document without evidence.
+
 **Dead ends (do not retry).** A `SetupComplete.cmd` forcing `GeneralizationState=7`
 never fires — it is gated on the OOBE completion that never happens. An AtStartup
 scheduled task forcing 7 is fragile and non-deterministic: it can force 7 mid-setup,
@@ -727,6 +786,8 @@ umount /tmp/vm
 | `Set user password failed: ... password policy requirements` | Proxmox `cipassword` violates the guest's `PasswordComplexity = 1` policy                                                                                        | Caller must supply a compliant password; the seeded `AdministratorPassword` keeps the clone reachable meanwhile |
 | Clone's `cipassword` does not work despite `Password succesfully updated` in the cloudbase log | Cloudbase's sysprep-phase run sets the cipassword at specialize; oobeSystem then applies the seeded `AdministratorPassword` (setupact.log: `UserAccounts: Password set`) 29s later, overwriting it with the deleted per-build secret | VERIFIED DEFECT 2026-07-21, see the OOBE section; workaround `qm guest exec <vmid> -- net user Administrator <pw>` (2019: fixed by delayed-auto cloudbase start) |
 | Clone stuck at `GeneralizationState=3`, no `C:\Windows\Panther\setupact.log`, build profile intact (Mode B) | Template exported with `SetupType=0`/empty `CmdLine` — the reseal-to-OOBE arming is missing, so windeploy never runs and the respecialize fallback fails `0x8007001f` | `Finalize.ps1` runs sysprep `/quit`, asserts `SetupType=2` + windeploy `CmdLine` + `IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE`, retries once, and fails the build if unarmed; verify templates offline via hive inspection (see the 2026-07-31 Mode-B update) |
+| Build reports success but every clone is Mode B | sysprep failed (or was cut off) and the failure never reached packer, so an ungeneralized image was exported | Host-side `assert-generalized.sh` fails the build before export; `ps_execute` propagates thrown errors. See the 2026-08-01 subsection |
+| Sysprep aborts `0x80073cf2` — `installed for a user, but not provisioned for all users` | Windows Update registered an Appx package (typically Edge) for the build user mid-build; generalize pre-validation refuses | `Finalize.ps1` unregisters per-user, non-provisioned Appx packages before sysprep |
 
 The intermittent `ERROR_BADDB` failure reproduced with verified install media,
 adequate free disk space, and no competing build process. Host RAM or the
