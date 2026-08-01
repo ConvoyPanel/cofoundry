@@ -202,9 +202,46 @@ investigation does not redo them:
   itself evidence the cause is load-related rather than the deterministic
   orchestrator restart.
 
-**Root cause found 2026-08-01: installing a cumulative update wipes the
-suppression.** Measured directly on a live windows-server-2022 guest during
-round one, via `qm guest exec`:
+**ACTUAL root cause, 2026-08-01 10:12Z: TrustedInstaller reboots the VM
+itself.** Captured from the guest's System log while the build was live:
+
+    id=1074  The process C:\Windows\servicing\TrustedInstaller.exe (TEMPLATE)
+             has initiated the restart of computer TEMPLATE on behalf of user
+             NT AUTHORITY\SYSTEM for the following reason:
+             Operating System: Upgrade (Planned)  Reason Code: 0x80020003
+
+Sequence on that guest, all within ~90 seconds:
+
+    10:07:22  id=109   kernel shutdown transition   <- packer's own restart
+    10:07:42  id=6005  event log started            <- machine is back
+    10:08:42  id=1074  TrustedInstaller initiates a restart   <- UNSOLICITED
+    10:08:44  id=109   kernel shutdown transition
+    10:08:55           boot
+    10:09:02  id=6005  event log started
+
+The servicing stack performs its *own* planned restart to finish committing the
+update, one minute after the machine returns from packer's restart. That second
+reboot is what kills the provisioner.
+
+**This is why none of the update suppression works.** `NoAutoUpdate` governs the
+AU agent and the `UpdateOrchestrator\Reboot*` tasks govern USO-initiated
+restarts. Neither has any authority over TrustedInstaller restarting to complete
+a servicing operation. Do not re-attempt suppression as a fix for this; the
+reboot is legitimate and must be waited out, not blocked.
+
+Fix: `restart_check` gates on *pending servicing* rather than on liveness —
+`Component Based Servicing\RebootPending`, `WindowsUpdate\Auto Update\
+RebootRequired`, and `PendingFileRenameOperations`, plus a minimum uptime. Packer
+therefore keeps polling across TrustedInstaller's restart instead of provisioning
+into the gap before it. A windows-server-2022 build survived exactly this reboot
+at 10:08:42 because the earlier 180s-uptime check happened to still be holding —
+which is the same mechanism, arrived at by luck rather than design.
+
+### Superseded: the policy-wipe theory (correct observation, wrong conclusion)
+
+Installing a cumulative update **does** wipe the suppression — this part is real
+and was measured directly on a live windows-server-2022 guest during round one,
+via `qm guest exec`:
 
     HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU
       AUOptions = 3            <- Windows' own value
@@ -292,14 +329,53 @@ obvious candidates.
 The `ps_execute` hardening above is independent of this and is worth keeping:
 2022's `is not recognized` failure has not recurred.
 
-The actual cause of the 2025 round-two failure was found separately and is the
-policy wipe documented above (`4e1e166`): the cumulative update strips
-`NoAutoUpdate`, so round two starts with the orchestrator re-armed and it reboots
-the VM mid-scan. This settle check was never going to help, because the problem
-is not that packer resumed too early — it is that the guest reboots itself
-minutes later regardless of when packer resumes.
+Superseded by the measurement below: the restarting process is **TrustedInstaller,
+not the Update Orchestrator**, and the settle idea was right while the signal was
+wrong. Re-keyed onto pending-reboot state — see the next section.
 
 The export gate remains unexercised — no 2026-08-01 build has reached it.
+
+### The round-two reboot is TrustedInstaller, not the Update Orchestrator
+
+**Measured directly 2026-08-01 10:12Z** by polling the live guest's System log
+(`wu-capture.sh`, event 1074 on VM 200107):
+
+```
+10:08:42 id=1074  The process C:\Windows\servicing\TrustedInstaller.exe (TEMPLATE)
+         has initiated the restart of computer TEMPLATE on behalf of
+         NT AUTHORITY\SYSTEM for the following reason:
+         Operating System: Upgrade (Planned)
+         Reason Code: 0x80020003  Shutdown Type: restart
+```
+
+The initiator is the **servicing stack**, finishing a pending component-based
+servicing operation. This is why suppressing the AU policy and disabling the
+`UpdateOrchestrator\Reboot*` tasks does not stop it — those govern the Windows
+Update *agent*, a different subsystem. `4e1e166`'s re-arm works exactly as
+instrumented (round two on 2025 began with `NoAutoUpdate=1
+NoAutoRebootWithLoggedOnUsers=1` logged and confirmed) and the build **still**
+died at 10:11Z, 2.5 min into round two — the fourth identical 2025 failure. Keep
+the re-arm (a re-armed orchestrator is its own hazard) but do not expect it to
+fix this.
+
+The same run also showed why 2022 survives where 2025 dies. It is timing, not a
+per-release difference: TrustedInstaller rebooted the 2022 guest at 10:08:42
+*while packer was still inside its restart-wait loop*, so packer never resumed
+into a session that was about to be killed; it moved on at ~10:12 after the
+second boot settled. On 2025 the same reboot lands after packer has already
+resumed and started round two.
+
+Fix: `local.restart_check` re-keyed off process presence and onto **pending
+reboot state** — CBS `RebootPending`, WindowsUpdate `RebootRequired`, and
+`PendingFileRenameOperations`, plus a 120s floor. If the servicing stack still
+intends to reboot, packer waits; once it has rebooted and settled, the flags
+clear and round two starts on a quiet machine. Validated by running the exact
+predicate on a live guest (returned `restarted.` on a settled 200107) and with
+`packer fmt`. **Unverified on a completed build.**
+
+Do not reach for `TiWorker`/`TrustedInstaller` process presence as the readiness
+signal — a live 2022 guest mid-update showed `TrustedInstaller` `Stopped` with no
+`TiWorker` at all, so that gate opens immediately. That was 5bd7a39's mistake.
 
 ### windows-server-2022 Windows Update round-one stall (2026-08-01)
 
