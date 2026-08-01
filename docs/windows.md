@@ -292,14 +292,12 @@ obvious candidates.
 The `ps_execute` hardening above is independent of this and is worth keeping:
 2022's `is not recognized` failure has not recurred.
 
-New evidence from the failed run, which reframes the cause: **the failure prints
-no `PROVISIONER ERROR` line.** `ps_execute` wraps the script in try/catch and
-prefixes any thrown error with that string, so its absence means the powershell
-process was *killed* rather than faulting. That is consistent with the guest
-rebooting under the provisioner and inconsistent with a script-level error —
-evidence for the Update Orchestrator hypothesis above, not against it. Confirm
-by capturing `LastBootUpTime` across the failure (see the note below); a change
-proves the reboot.
+The actual cause of the 2025 round-two failure was found separately and is the
+policy wipe documented above (`4e1e166`): the cumulative update strips
+`NoAutoUpdate`, so round two starts with the orchestrator re-armed and it reboots
+the VM mid-scan. This settle check was never going to help, because the problem
+is not that packer resumed too early — it is that the guest reboots itself
+minutes later regardless of when packer resumes.
 
 The export gate remains unexercised — no 2026-08-01 build has reached it.
 
