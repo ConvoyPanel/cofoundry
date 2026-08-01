@@ -369,6 +369,30 @@ export const buildPhase = async (
                 maxAttempts,
                 async attempt => {
                     lastAttempt = attempt
+                    // A transport death (SSH exit 255) or an external reap kills
+                    // the attempt without unwinding its cleanup, leaving the
+                    // build VM running and sometimes deleting the run-scoped tmp
+                    // dir. Packer's own -force cannot recover either: it refuses
+                    // with "found matching VM (ID: N), but it is not a template",
+                    // and a missing tmp dir fails the console-log redirect
+                    // immediately. Both were observed on 2026-08-01, where each
+                    // burned the remaining attempts in seconds after two hours of
+                    // correct work. Re-level the ground before every retry.
+                    if (attempt > 1) {
+                        const vmid = effectiveBuildVmid
+                        const dropStaleVm =
+                            vmid === undefined
+                                ? ''
+                                : `if qm config ${vmid} >/dev/null 2>&1 && ! qm config ${vmid} 2>/dev/null | grep -q '^template:'; then ` +
+                                  `qm stop ${vmid} --skiplock 1 >/dev/null 2>&1 || true; ` +
+                                  `qm unlock ${vmid} >/dev/null 2>&1 || true; ` +
+                                  `qm destroy ${vmid} --purge 1 --destroy-unreferenced-disks 1 --skiplock 1 >/dev/null 2>&1 || true; ` +
+                                  `fi; `
+                        await captureRemote(
+                            env.SSH_TARGET,
+                            `${dropStaleVm}mkdir -p ${shellQuote(remoteBuildTmpDir)} && echo ok`
+                        ).catch(() => undefined)
+                    }
                     await remoteStreamingScript(
                         env.SSH_TARGET,
                         `${watchdog}${recorder}${packerCommand}`,

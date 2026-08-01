@@ -5,7 +5,27 @@ import { redactSensitive } from '@/util.ts'
 // Keep idle SSH sessions alive — and detect a dead peer — so a long quiet remote
 // step (e.g. a multi-hundred-MB artifact upload in CF_UPLOAD_CMD) can't leave the
 // build hanging forever on a half-open connection.
-const SSH_OPTS = ['-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=6']
+//
+// The old 15x6 = 90s ceiling was far too tight for a multi-hour build over a
+// Tailscale link: on 2026-08-01 three separate Windows builds died with SSH
+// exit 255 ("Timeout, server not responding") after ~2 hours of correct work,
+// and each transport death also orphaned the build VM, which made the remaining
+// packer attempts fail in seconds. 15x20 = 5 minutes rides out those blips.
+//
+// Do not raise this past RUN_LEASE_STALE_SECS (10 min). Beyond that the lease
+// heartbeat has already declared the run lost and a sweep may reap it, so a
+// still-connected SSH session would just be waiting on work that is being torn
+// down underneath it.
+const SSH_ALIVE_COUNT_MAX = (() => {
+    const raw = Number.parseInt(process.env.CF_SSH_ALIVE_COUNT ?? '', 10)
+    return Number.isInteger(raw) && raw > 0 && raw <= 39 ? raw : 20
+})()
+const SSH_OPTS = [
+    '-o',
+    'ServerAliveInterval=15',
+    '-o',
+    `ServerAliveCountMax=${SSH_ALIVE_COUNT_MAX}`,
+]
 
 // ── SIGINT cleanup ────────────────────────────────────────────────────────────
 
