@@ -269,6 +269,38 @@ Get-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -ErrorAct
   Where-Object { $_.Profile -match "Public" } |
   Disable-NetFirewallRule -ErrorAction SilentlyContinue
 
+Write-Step "remove per-user Appx packages that block generalize"
+# sysprep /generalize aborts in pre-validation if any Appx package is registered
+# for the current user but not provisioned for all users:
+#
+#   SYSPRP Package Microsoft.MicrosoftEdge.Stable_150.0.4078.105... was installed
+#          for a user, but not provisioned for all users.
+#   SYSPRP Failed to remove apps for the current user: 0x80073cf2.
+#
+# Windows Update does exactly that to Edge mid-build, so the failure appears only
+# when a build happens to pick up an Edge update (observed 2026-07-31 on
+# windows-server-2022; 2019 is unaffected — legacy Edge is not an Appx package).
+# Removing the per-user registration is the supported fix and does not uninstall
+# Edge itself, which is a separate Win32 install. Best-effort per package: a
+# package that refuses to unregister should not fail the build here, because
+# sysprep's own pre-validation is the authority and the host-side
+# assert-generalized check is what actually gates the export.
+$provisioned = @()
+try {
+  $provisioned = @((Get-AppxProvisionedPackage -Online -ErrorAction Stop).PackageName)
+} catch {
+  Write-Step "  (could not enumerate provisioned packages: $($_.Exception.Message))"
+}
+try {
+  foreach ($pkg in Get-AppxPackage -AllUsers -ErrorAction Stop) {
+    if ($provisioned -contains $pkg.PackageFullName) { continue }
+    Write-Step "  unregistering $($pkg.PackageFullName)"
+    Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+  }
+} catch {
+  Write-Step "  (Appx enumeration unavailable: $($_.Exception.Message))"
+}
+
 Write-Step "sysprep and shutdown"
 # Pass cloudbase-init's bundled Unattend.xml so OOBE on the cloned VM auto-
 # completes (accepts EULA, skips the machine and user OOBE screens) and its
