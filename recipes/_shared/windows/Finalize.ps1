@@ -239,21 +239,10 @@ Write-Step "re-enable system-managed pagefile"
 $cs = Get-CimInstance -ClassName Win32_ComputerSystem
 Set-CimInstance -InputObject $cs -Property @{ AutomaticManagedPagefile = $true }
 
-Write-Step "remove Packer WinRM keepalive task and policy pins"
-Unregister-ScheduledTask -TaskName "PackerWinRMKeepalive" -Confirm:$false -ErrorAction SilentlyContinue
-Remove-Item "C:\Windows\System32\packer-winrm-keepalive.ps1" -Force -ErrorAction SilentlyContinue
-# Remove the Group Policy registry keys that pinned Basic auth / AllowUnencrypted
-# during the build so the sysprep'd template ships with WinRM in its secure default state.
-Remove-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service" -Force -ErrorAction SilentlyContinue
-# Must go through cmd.exe: from PowerShell the @{...} argument is parsed as a
-# hashtable and winrm.cmd receives "System.Collections.Hashtable".
-# Best-effort - the authoritative unpin is the policy-key removal.
-cmd.exe /c 'winrm set winrm/config/service @{AllowUnencrypted="false"} >nul 2>&1'
-cmd.exe /c 'winrm set winrm/config/service/auth @{Basic="false"} >nul 2>&1'
-
-# NOTE: the WinRM firewall teardown deliberately does NOT happen here. It used to,
-# and it silently truncated this entire script -- see "restore stock WinRM firewall
-# exposure" near the shutdown at the end of this file for the full explanation.
+# NOTE: the ENTIRE WinRM teardown -- keepalive task, Basic/AllowUnencrypted
+# policy unpin, and the firewall rules -- deliberately does NOT happen here. All
+# of it runs after generalize, near the shutdown at the end of this file. See
+# "tear down the build's WinRM exposure" there for why.
 
 Write-Step "remove per-user Appx packages that block generalize"
 # sysprep /generalize aborts in pre-validation if any Appx package is registered
@@ -674,20 +663,39 @@ foreach ($t in @("Reboot", "Reboot_AC", "Reboot_Battery")) {
 # disk entirely; the specialize-script deletion stays as a backstop.
 Remove-Item $unattendCopy -Force -ErrorAction SilentlyContinue
 
-Write-Step "restore stock WinRM firewall exposure"
-# MUST stay here, immediately before the shutdown. This block used to run before
-# the Appx cleanup and sysprep, and it silently killed every build: the build NIC
-# is on an unidentified (Public-profile) network, so removing these rules drops
-# packer's live WinRM session. The script kept running on the guest, but its
-# output and exit code never got back, and packer read the disconnect as success
-# -- then exported a never-generalized template. That is the 2026-07-31 "silent
-# non-generalized export", and it recurred on 2026-08-01 at 13:26Z with sysprep
-# failing invisibly behind a session that had already gone away.
+Write-Step "tear down the build's WinRM exposure"
+# EVERYTHING that can cut packer's WinRM session MUST stay here, after generalize
+# and immediately before the shutdown. Nothing above this point may touch WinRM
+# auth, its policy keys, or its firewall rules.
+#
+# This bit the build twice on 2026-08-01, the second time because only half the
+# teardown was moved:
+#   13:26Z  the firewall rules ran before sysprep. The build NIC is on an
+#           unidentified (Public-profile) network, so removing them dropped the
+#           session mid-script.
+#   21:45Z  the firewall move worked -- Finalize reached the Appx step for the
+#           first time -- but the Basic/AllowUnencrypted unpin was still up
+#           there, and packer connects with exactly Basic over unencrypted HTTP.
+#           Turning both off cut the session just as effectively.
+#
+# In both cases the script kept running on the guest while its output and exit
+# code went nowhere, and packer read the disconnect as provisioner success and
+# exported a never-generalized template. That is the 2026-07-31 silent export.
 #
 # Running it here is safe: sysprep used /quit, so the machine is still up, and
 # registry writes after generalize land in the sealed image (same reason the WU
 # policy restore above sits here). Losing the session now costs nothing, because
 # the only remaining action is the power-off.
+Unregister-ScheduledTask -TaskName "PackerWinRMKeepalive" -Confirm:$false -ErrorAction SilentlyContinue
+Remove-Item "C:\Windows\System32\packer-winrm-keepalive.ps1" -Force -ErrorAction SilentlyContinue
+# Remove the Group Policy registry keys that pinned Basic auth / AllowUnencrypted
+# during the build so the sysprep'd template ships with WinRM in its secure default state.
+Remove-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service" -Force -ErrorAction SilentlyContinue
+# Must go through cmd.exe: from PowerShell the @{...} argument is parsed as a
+# hashtable and winrm.cmd receives "System.Collections.Hashtable".
+# Best-effort - the authoritative unpin is the policy-key removal.
+cmd.exe /c 'winrm set winrm/config/service @{AllowUnencrypted="false"} >nul 2>&1'
+cmd.exe /c 'winrm set winrm/config/service/auth @{Basic="false"} >nul 2>&1'
 #
 # WinRM itself is deliberately left running: on Windows Server (unlike client
 # SKUs) the service, the HTTP listener on 5985, and the Domain/Private firewall

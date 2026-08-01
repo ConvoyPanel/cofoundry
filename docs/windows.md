@@ -255,13 +255,29 @@ exposure` and the next line is packer's `Stopping VM`, with the Appx and sysprep
 steps between them never appearing — identical across the 07-31 run and the
 08-01 13:26Z run.
 
-Fix: the firewall teardown moved to immediately before the final shutdown, after
-generalize. Sysprep uses `/quit`, so the machine is still up and registry writes
+Fix: the **entire** WinRM teardown moved to immediately before the final
+shutdown, after generalize. Sysprep uses `/quit`, so the machine is still up and registry writes
 land in the sealed image (the WU policy restore already relies on this). Losing
 the session there costs nothing, since the only remaining action is power-off.
 
 **Keep this ordering.** Anything that can sever WinRM must run after sysprep, or
 it will silently truncate the script and re-introduce a shipped broken template.
+
+**Moving only part of it is not enough (2026-08-01 21:45Z).** With the firewall
+rules moved, Finalize reached the Appx step for the first time — and truncated
+*there* instead, because the Basic/`AllowUnencrypted` policy unpin was still
+above sysprep:
+
+    ==> remove Packer WinRM keepalive task and policy pins
+    ==> remove per-user Appx packages that block generalize
+    Stopping VM                                <- silence, packer proceeds
+
+Packer connects with Basic auth over unencrypted HTTP, so
+`winrm set .../auth @{Basic="false"}` cuts its session exactly as the firewall
+rule removal did. The keepalive task, the policy-key removal, the two `winrm
+set` calls and the firewall rules now all sit together after generalize. The
+rule is simple: **nothing above sysprep may touch WinRM auth, its policy keys,
+or its firewall rules.**
 
 ### Sysprep Appx pre-validation: being provisioned does not mean safe
 
