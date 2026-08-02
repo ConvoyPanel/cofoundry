@@ -77,6 +77,20 @@ locals {
 
   ps_execute = "powershell -executionpolicy bypass \"& { $ErrorActionPreference='Stop'; $_p='{{.Path}}'; $_v='{{.Vars}}'; $_dl=[DateTime]::Now.AddSeconds(300); while ((-not (Test-Path $_p) -or -not (Test-Path $_v)) -and [DateTime]::Now -lt $_dl) { Start-Sleep 2 }; if (-not (Test-Path $_p)) { Write-Host ('PROVISIONER ERROR: script never arrived at ' + $_p + ' - the upload did not land within 300s'); exit 1 }; try { . $_v; & $_p } catch { Write-Host ('PROVISIONER ERROR: ' + $_.Exception.Message); exit 1 }; if ($LastExitCode) { exit $LastExitCode }; exit 0 }\""
 
+  # Gating on the pending-reboot flags alone is NOT enough. On 2026-08-02 a 2022
+  # build was caught rebooting TWICE after round one, 79 seconds apart, with the
+  # flags already clear the whole time:
+  #
+  #   13:21:15  BOOT TIME CHANGED 11:00:10 -> 13:20:44   (packer's restart)
+  #   13:21:29  cbsPending=False wuPending=False servicingRunning=True
+  #   13:22:27  BOOT TIME CHANGED 13:20:44 -> 13:22:03   (second, unsolicited)
+  #   13:24:48  cbsPending=False wuPending=False servicingRunning=False
+  #
+  # The flags describe work already *queued*; they say nothing about servicing
+  # still executing. TiWorker/TrustedInstaller running is the signal that another
+  # restart may still be coming, so the process check has to stay alongside them.
+  # Without it packer resumed into that window and the uploaded provisioner script
+  # was destroyed by the second reboot ("script never arrived within 300s").
   # Packer's default restart check reports "restarted" the instant WinRM answers,
   # which after a cumulative update is while Windows is still committing the
   # update (TiWorker/TrustedInstaller saturating the disk). Provisioning into
@@ -84,7 +98,7 @@ locals {
   # landed in C:\Windows\Temp yet on 2022 ("is not recognized"), and the round-two
   # update scan was killed mid-flight on 2025. Hold the restart open until
   # servicing is actually idle. See docs/windows.md#post-update-restart-settling.
-  restart_check = "powershell -Command \"& { if (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending') { exit 1 }; if (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired') { exit 1 }; if (Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue) { exit 1 }; if (((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalSeconds -lt 120) { exit 1 }; Write-Output 'restarted.' }\""
+  restart_check = "powershell -Command \"& { if (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending') { exit 1 }; if (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired') { exit 1 }; if (Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue) { exit 1 }; if (Get-Process -Name TiWorker,TrustedInstaller -ErrorAction SilentlyContinue) { exit 1 }; if (((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalSeconds -lt 180) { exit 1 }; Write-Output 'restarted.' }\""
 }
 
 source "proxmox-iso" "windows-server-2025" {

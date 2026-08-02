@@ -229,6 +229,22 @@ restarts. Neither has any authority over TrustedInstaller restarting to complete
 a servicing operation. Do not re-attempt suppression as a fix for this; the
 reboot is legitimate and must be waited out, not blocked.
 
+**Pending flags alone are insufficient (2026-08-02).** A 2022 build rebooted
+twice after round one, 79 seconds apart, with the flags clear throughout —
+captured live from the guest:
+
+    13:21:15  BOOT TIME CHANGED 11:00:10 -> 13:20:44   (packer's restart)
+    13:21:29  cbsPending=False wuPending=False servicingRunning=True
+    13:22:27  BOOT TIME CHANGED 13:20:44 -> 13:22:03   (second, unsolicited)
+    13:24:48  cbsPending=False wuPending=False servicingRunning=False
+
+The registry flags describe work already *queued*; they say nothing about
+servicing still executing. `TiWorker`/`TrustedInstaller` running is the signal
+that another restart may still be coming. With only the flag checks, packer
+resumed into that window and the second reboot destroyed the uploaded
+provisioner script (`script never arrived within 300s`). The process check must
+stay alongside the flags, and the minimum uptime went 120s -> 180s.
+
 Fix: `restart_check` gates on *pending servicing* rather than on liveness —
 `Component Based Servicing\RebootPending`, `WindowsUpdate\Auto Update\
 RebootRequired`, and `PendingFileRenameOperations`, plus a minimum uptime. Packer
