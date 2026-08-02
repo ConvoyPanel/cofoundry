@@ -396,7 +396,7 @@ Fix: skip only packages with **no per-user registration** (`PackageUserInformati
 with `InstallState = Installed`); on a failed unregister, drop the provisioned
 entry and retry; and report survivors by name instead of `SilentlyContinue`.
 
-### Clone specialize is aborted by a reboot ~11s in (OPEN)
+### Clone specialize aborted by SetHostNamePlugin's reboot (SOLVED)
 
 `allow_reboot=false` + `reset_service_password=false` **fixed the cloudbase-init
 crash** — confirmed on a clone of the 2026-08-02 22:05Z artifact, whose
@@ -428,12 +428,24 @@ Ruled out so far:
   shows a clean exit with no reboot request logged.
 - Not a one-boot hiccup: a second boot of the same clone loops identically.
 
-Next step for whoever picks this up: identify the shutdown initiator. The
-`System` event log (event 1074 names the initiating process) is the discriminator
-that settled the equivalent question during the build, but reading it offline
-needs an evtx parser — `reged`/`chntpw` cannot. Either add an evtx reader on the
-node, or seal an image with a first-boot logging task that records the initiator
-before OOBE.
+**Initiator identified 2026-08-02 from the clone's System event log:**
+
+    id=1074  C:\Program Files\Cloudbase Solutions\Cloudbase-Init\Python\python.exe
+             WIN-8OHAID6OILR | restart | "Cloudbase-Init reboot" | NT AUTHORITY\SYSTEM
+
+Cloudbase-Init reboots the machine *itself*, mid-specialize, and
+`allow_reboot=false` does not prevent it. The randomized hostname in the event
+shows `SetHostNamePlugin` had already renamed the machine — renaming is what makes
+the plugin request the reboot.
+
+Fix: the specialize-pass conf runs **MTUPlugin only**. `MTUPlugin` never requests
+a reboot. The hostname is still applied, by `SetHostNamePlugin` in the post-OOBE
+service run (`cloudbase-init.conf`), where a reboot is normal and harmless.
+
+Reading the event log is what settled this after two wrong fixes; `setupact.log`
+and CBS only ever showed TrustedInstaller *reacting* to the shutdown. Extract
+`Windows/System32/winevt/Logs/System.evtx` offline and parse it with
+`python-evtx` (a venv is required — system pip is PEP-668 managed).
 
 ### Superseded: the policy-wipe theory (correct observation, wrong conclusion)
 

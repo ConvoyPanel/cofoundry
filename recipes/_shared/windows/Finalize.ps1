@@ -256,7 +256,21 @@ logdir=C:\Program Files\Cloudbase Solutions\Cloudbase-Init\log\
 logfile=cloudbase-init-unattend.log
 default_log_levels=comtypes=INFO,suds=INFO,iso8601=WARN,requests=WARN
 metadata_services=cloudbaseinit.metadata.services.configdrive.ConfigDriveService,cloudbaseinit.metadata.services.nocloudservice.NoCloudConfigDriveService
-plugins=cloudbaseinit.plugins.common.mtu.MTUPlugin,cloudbaseinit.plugins.common.sethostname.SetHostNamePlugin
+# MTU ONLY. SetHostNamePlugin must NOT run in the specialize pass: renaming the
+# machine makes the plugin request a reboot, and cloudbase-init performs that
+# reboot itself, mid-pass. Captured from a clone's System event log (2026-08-02):
+#
+#   id=1074  C:\Program Files\Cloudbase Solutions\Cloudbase-Init\Python\python.exe
+#            WIN-8OHAID6OILR | restart | "Cloudbase-Init reboot" | NT AUTHORITY\SYSTEM
+#
+# The rename had already happened (note the randomized name), then the reboot
+# aborted specialize ~11s in, and every clone looped forever on "The computer
+# restarted unexpectedly". allow_reboot=false did not prevent this.
+#
+# The hostname is still applied: cloudbase-init.conf above runs
+# SetHostNamePlugin in the post-OOBE service run, where a reboot is normal and
+# harmless. MTUPlugin never requests one, so specialize now completes.
+plugins=cloudbaseinit.plugins.common.mtu.MTUPlugin
 
 [config_drive]
 types=vfat,iso
