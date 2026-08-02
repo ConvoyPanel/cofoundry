@@ -396,6 +396,45 @@ Fix: skip only packages with **no per-user registration** (`PackageUserInformati
 with `InstallState = Installed`); on a failed unregister, drop the provisioned
 entry and retry; and report survivors by name instead of `SilentlyContinue`.
 
+### Clone specialize is aborted by a reboot ~11s in (OPEN)
+
+`allow_reboot=false` + `reset_service_password=false` **fixed the cloudbase-init
+crash** — confirmed on a clone of the 2026-08-02 22:05Z artifact, whose
+`cloudbase-init-unattend.log` is now clean end to end:
+
+    Executing plugin 'MTUPlugin'
+    Config Drive found on D:\
+    Metadata service loaded: 'ConfigDriveService'
+    Plugins execution done
+    Stopping Cloudbase-Init service
+
+Both flags verified present in the shipped conf. But clones still loop on "The
+computer restarted unexpectedly". The failure moved:
+
+    22:07:37  setup.exe: Executing SETUPUGC.EXE specialize
+    22:07:46  remove-build-profile.ps1 -> exit 0x0
+    22:07:48  CBS: TrustedInstaller SHUTDOWN_REASON_NOTIFICATION:PRESHUTDOWN
+    22:07:50  cloudbase-init starts (i.e. during teardown)
+    22:07:51  cloudbase-init finishes cleanly
+
+A shutdown begins ~11s into the specialize pass, *before* cloudbase-init runs, so
+the pass is aborted mid-flight — which is exactly what produces that dialog.
+TrustedInstaller is reacting to the shutdown (PRESHUTDOWN notification), not
+causing it.
+
+Ruled out so far:
+- Not queued servicing in the image: `Windows\WinSxS\pending.xml` is absent.
+- Not cloudbase-init self-rebooting: `allow_reboot=false` is set and its log
+  shows a clean exit with no reboot request logged.
+- Not a one-boot hiccup: a second boot of the same clone loops identically.
+
+Next step for whoever picks this up: identify the shutdown initiator. The
+`System` event log (event 1074 names the initiating process) is the discriminator
+that settled the equivalent question during the build, but reading it offline
+needs an evtx parser — `reged`/`chntpw` cannot. Either add an evtx reader on the
+node, or seal an image with a first-boot logging task that records the initiator
+before OOBE.
+
 ### Superseded: the policy-wipe theory (correct observation, wrong conclusion)
 
 Installing a cumulative update **does** wipe the suppression — this part is real
