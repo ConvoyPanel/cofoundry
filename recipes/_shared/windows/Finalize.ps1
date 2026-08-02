@@ -200,12 +200,34 @@ locations=cdrom,hdd,partition
 # wins -- the same ordering the delayed-auto start gives Server 2019.
 # Logged to its own file so cloudbase-init.log stays the service run's record
 # (cf verify's cloudbase-init-completed parses that log).
+#
+# allow_reboot=false is LOAD-BEARING and must not be dropped. SetHostNamePlugin
+# requests a reboot after renaming the clone. With cloudbase-init's default
+# allow_reboot=true it acts on that itself: configure_host() calls
+# osutils.terminate(), which stops the cloudbase-init *service* -- but during
+# specialize this runs as a console process, so the service is not started and
+# ControlService raises (1062, 'The service has not been started.'), unhandled:
+#
+#   CRITICAL cloudbaseinit [-] Unhandled error: pywintypes.error:
+#     (1062, 'ControlService', 'The service has not been started.')
+#
+# That non-zero exit takes the `|| exit 2` branch of the RunSynchronous command,
+# SetupUGC returns 3, the specialize pass fails, and every clone loops on
+# "The computer restarted unexpectedly or encountered an unexpected error"
+# without ever reaching OOBE. Observed on a 2026-08-02 clone of an image the
+# export gate had already certified as correctly generalized and armed.
+#
+# The reboot is supposed to be the *unattend's* job: the shipped
+# RunSynchronous command is `cloudbase-init.exe ... && exit 1 || exit 2`, and
+# exit 1 is what signals WillReboot=OnRequest. cloudbase-init must exit 0 for
+# that to happen, which is exactly what allow_reboot=false produces.
 @"
 [DEFAULT]
 username=Administrator
 groups=Administrators
 inject_user_password=true
 first_logon_behaviour=no
+allow_reboot=false
 check_latest_version=false
 bsdtar_path=C:\Program Files\Cloudbase Solutions\Cloudbase-Init\bin\bsdtar.exe
 mtools_path=C:\Program Files\Cloudbase Solutions\Cloudbase-Init\bin\

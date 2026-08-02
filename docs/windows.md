@@ -279,6 +279,49 @@ set` calls and the firewall rules now all sit together after generalize. The
 rule is simple: **nothing above sysprep may touch WinRM auth, its policy keys,
 or its firewall rules.**
 
+### Clones loop on "The computer restarted unexpectedly" (allow_reboot)
+
+**Root cause found 2026-08-02, on an image the export gate had already certified
+as correctly generalized and armed.** The template was fine; every *clone*
+failed the specialize pass and looped on Setup's
+
+    The computer restarted unexpectedly or encountered an unexpected error.
+    Windows installation cannot proceed.
+
+so Cloudbase-Init never ran, the guest agent never came up, and `cf verify`
+failed with `Cloudbase-Init did not settle within 900s`. Chain, from the clone's
+own logs read offline via qemu-nbd:
+
+    Panther/setupact.log        SETUPUGC.EXE specialize -> process exit code = 3   (looping)
+    Panther/UnattendGC/…        Finished executing [cmd.exe /c ""…cloudbase-init.exe"
+                                  --config-file "…cloudbase-init-unattend.conf"
+                                  && exit 1 || exit 2"]
+                                Process returned with exit code 0x2
+    cloudbase-init-unattend.log CRITICAL Unhandled error: pywintypes.error:
+                                  (1062, 'ControlService', 'The service has not been started.')
+                                init.py:238 configure_host() -> osutils.terminate()
+                                windows.py:1289 terminate() -> stop_service(...)
+
+`SetHostNamePlugin` requests a reboot after renaming the clone. Cloudbase-Init
+defaults to `allow_reboot=true`, so it acts on that itself: `terminate()` stops
+the cloudbase-init *service* — but during specialize it runs as a console
+process, the service is not started, and `ControlService` raises 1062
+unhandled. The non-zero exit takes the `|| exit 2` branch, SetupUGC returns 3,
+and specialize fails on every boot.
+
+The reboot is the *unattend's* job: `&& exit 1` is what signals
+`WillReboot=OnRequest`, and cloudbase-init must exit 0 for that to happen.
+
+Fix: `allow_reboot=false` in the `cloudbase-init-unattend.conf` that
+`Finalize.ps1` writes. **It is load-bearing — do not drop it.** It was missing
+because that file is overwritten wholesale to restrict the specialize run to
+MTU + hostname (the password-overwrite fix), and the stock MSI copy's
+`allow_reboot=false` went with it.
+
+Note what this says about the export gate: a template can be genuinely
+generalized and armed and still produce unusable clones. The gate proves the
+image is armed; only `cf verify` proves a clone boots.
+
 ### Sysprep Appx pre-validation: being provisioned does not mean safe
 
 With the session restored, the underlying generalize failure was visible:
