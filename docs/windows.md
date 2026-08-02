@@ -322,6 +322,26 @@ Note what this says about the export gate: a template can be genuinely
 generalized and armed and still produce unusable clones. The gate proves the
 image is armed; only `cf verify` proves a clone boots.
 
+**`allow_reboot=false` alone was not enough (2026-08-02).** With it applied and
+confirmed present in the shipped image, clones still looped — the next call in
+the same family failed:
+
+    init.py configure_host() -> _reset_service_password_and_respawn(osutils)
+    -> osutils.reset_service_password() -> OpenSCManager
+    pywintypes.error: (1115, 'OpenSCManager', 'A system shutdown is in progress.')
+    SetupUGC returning with exit code [4]
+
+`configure_host()` opens by resetting the cloudbase-init *service* account
+password and respawning as that user. During specialize this is a console run,
+so the call dies and takes the `|| exit 2` branch again. Fix:
+`reset_service_password=false`.
+
+**Both flags ship in the MSI's stock `cloudbase-init-unattend.conf`** and were
+lost because `Finalize.ps1` overwrites that file wholesale. Any future rewrite of
+that block must carry them forward. The general lesson: the specialize-pass run
+is a *console* invocation, so every service-oriented code path in
+`configure_host()` has to be disabled by config.
+
 ### Sysprep Appx pre-validation: being provisioned does not mean safe
 
 With the session restored, the underlying generalize failure was visible:

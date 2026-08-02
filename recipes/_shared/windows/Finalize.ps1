@@ -221,6 +221,24 @@ locations=cdrom,hdd,partition
 # RunSynchronous command is `cloudbase-init.exe ... && exit 1 || exit 2`, and
 # exit 1 is what signals WillReboot=OnRequest. cloudbase-init must exit 0 for
 # that to happen, which is exactly what allow_reboot=false produces.
+#
+# reset_service_password=false is load-bearing for the same reason, and was the
+# *next* failure once allow_reboot was fixed (2026-08-02, clone of a gate-
+# certified image). configure_host() begins with
+# _reset_service_password_and_respawn(), which resets the cloudbase-init service
+# account's password and re-spawns as that user. During specialize this is a
+# console run, not the service, and the call dies:
+#
+#   init.py configure_host() -> _reset_service_password_and_respawn(osutils)
+#   -> osutils.reset_service_password() -> OpenSCManager
+#   pywintypes.error: (1115, 'OpenSCManager', 'A system shutdown is in progress.')
+#
+# Same consequence as before: non-zero exit -> `|| exit 2` -> SetupUGC 4 ->
+# specialize fails -> the clone loops on "The computer restarted unexpectedly".
+#
+# BOTH flags exist in the MSI's stock cloudbase-init-unattend.conf. They went
+# missing because this file is overwritten wholesale, so any future rewrite of
+# this block must carry them forward.
 @"
 [DEFAULT]
 username=Administrator
@@ -228,6 +246,7 @@ groups=Administrators
 inject_user_password=true
 first_logon_behaviour=no
 allow_reboot=false
+reset_service_password=false
 check_latest_version=false
 bsdtar_path=C:\Program Files\Cloudbase Solutions\Cloudbase-Init\bin\bsdtar.exe
 mtools_path=C:\Program Files\Cloudbase Solutions\Cloudbase-Init\bin\
