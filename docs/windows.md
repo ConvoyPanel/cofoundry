@@ -253,6 +253,26 @@ into the gap before it. A windows-server-2022 build survived exactly this reboot
 at 10:08:42 because the earlier 180s-uptime check happened to still be holding —
 which is the same mechanism, arrived at by luck rather than design.
 
+### Provisioner uploads race the post-update reboots (max_retries)
+
+Even with `restart_check` correctly holding through the double reboot (verified
+2026-08-02 16:14–16:18Z: it waited past both reboots until `servicingRunning`
+went False), a provisioner upload can still fail to land. Three separate builds
+were lost this way, each with a *different* missing file:
+
+    script-<uuid>.ps1                  "is not recognized"        (before the gate existed)
+    script-<uuid>.ps1                  "never arrived within 300s"
+    packer-ps-env-vars-<uuid>.ps1      "is not recognized"
+
+Packer's powershell provisioner uploads two files — the env-vars file and the
+script — and `ps_execute` waits for both. It now reports each by name, instead of
+falling through to `. $_v` and producing a vague "not recognized".
+
+The important change is `max_retries = 2` on every powershell provisioner. A lost
+upload used to cost the entire ~3h build; now Packer retries just that
+provisioner, which re-uploads. Treat the upload as inherently unreliable in the
+window after a cumulative update rather than something a wait can fully prevent.
+
 ### The silent non-generalized export: the WinRM firewall teardown
 
 **Root cause identified 2026-08-01 13:26Z.** `Finalize.ps1` restored the stock

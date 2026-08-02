@@ -75,7 +75,7 @@ locals {
   # local drives the guest-side partition shrink (Finalize.ps1).
   final_disk_size = "32G"
 
-  ps_execute = "powershell -executionpolicy bypass \"& { $ErrorActionPreference='Stop'; $_p='{{.Path}}'; $_v='{{.Vars}}'; $_dl=[DateTime]::Now.AddSeconds(300); while ((-not (Test-Path $_p) -or -not (Test-Path $_v)) -and [DateTime]::Now -lt $_dl) { Start-Sleep 2 }; if (-not (Test-Path $_p)) { Write-Host ('PROVISIONER ERROR: script never arrived at ' + $_p + ' - the upload did not land within 300s'); exit 1 }; try { . $_v; & $_p } catch { Write-Host ('PROVISIONER ERROR: ' + $_.Exception.Message); exit 1 }; if ($LastExitCode) { exit $LastExitCode }; exit 0 }\""
+  ps_execute = "powershell -executionpolicy bypass \"& { $ErrorActionPreference='Stop'; $_p='{{.Path}}'; $_v='{{.Vars}}'; $_dl=[DateTime]::Now.AddSeconds(300); while ((-not (Test-Path $_p) -or -not (Test-Path $_v)) -and [DateTime]::Now -lt $_dl) { Start-Sleep 2 }; if (-not (Test-Path $_p)) { Write-Host ('PROVISIONER ERROR: script never arrived at ' + $_p + ' - the upload did not land within 300s'); exit 1 }; if (-not (Test-Path $_v)) { Write-Host ('PROVISIONER ERROR: env-vars file never arrived at ' + $_v + ' - the upload did not land within 300s'); exit 1 }; try { . $_v; & $_p } catch { Write-Host ('PROVISIONER ERROR: ' + $_.Exception.Message); exit 1 }; if ($LastExitCode) { exit $LastExitCode }; exit 0 }\""
 
   # Gating on the pending-reboot flags alone is NOT enough. On 2026-08-02 a 2022
   # build was caught rebooting TWICE after round one, 79 seconds apart, with the
@@ -223,6 +223,7 @@ build {
 
   provisioner "powershell" {
     execute_command = local.ps_execute
+    max_retries     = 2
     script          = "${path.root}/_shared/windows/Install.ps1"
   }
   provisioner "windows-restart" {
@@ -233,6 +234,7 @@ build {
   provisioner "powershell" {
     pause_before    = "30s"
     execute_command = local.ps_execute
+    max_retries     = 2
     script          = "${path.root}/_shared/windows/WU.ps1"
   }
   provisioner "windows-restart" {
@@ -244,6 +246,7 @@ build {
   provisioner "powershell" {
     pause_before    = "30s"
     execute_command = local.ps_execute
+    max_retries     = 2
     script          = "${path.root}/_shared/windows/WU.ps1"
   }
   provisioner "windows-restart" {
@@ -255,6 +258,7 @@ build {
   provisioner "powershell" {
     pause_before    = "30s"
     execute_command = local.ps_execute
+    max_retries     = 2
     script          = "${path.root}/_shared/windows/PreFinalize.ps1"
   }
   provisioner "windows-restart" {
@@ -265,6 +269,7 @@ build {
   provisioner "powershell" {
     pause_before    = "30s"
     execute_command = local.ps_execute
+    max_retries     = 2
     environment_vars = [
       "CF_FINAL_DISK_SIZE=${local.final_disk_size}",
       # Seeds <AdministratorPassword> in the sysprep answer file so OOBE completes
