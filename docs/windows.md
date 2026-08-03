@@ -1421,6 +1421,26 @@ umount /tmp/vm
 | `PROVISIONER ERROR: There is not enough space on the disk.` right after the `sysprep and shutdown` step header | `Zero-FreeSpace` wrote until `ERROR_DISK_FULL` and handed the space back with a `-ErrorAction SilentlyContinue` delete; at 0 bytes free that delete can itself fail, and the silence carried a full volume into sysprep | The zero pass stops at a 1 GB reserve and throws if the fill file survives; a free-space gate before generalize lists the largest directories on C: |
 | `sysprep did not arm the image for OOBE after 2 attempts` with no further detail | The gate's message said to read `setuperr.log`, but packer deletes the VM within seconds of the provisioner erroring | `Finalize.ps1` dumps `setuperr.log`/`setupact.log` and the arming registry state to packer's stdout after each failed attempt |
 
+### 2026-08-03: windows-server-2025 verified end to end
+
+First successful 2025 build: 2h54m, `cf verify` **14 passed, 2 warned**
+(17m27s), including `cipassword-validates`, `generalization-state`,
+`winrm-not-exposed`, `hostname-applied` and `system-volume-extended`.
+
+Two things worth carrying forward:
+
+- **A 2025 clone takes far longer to settle than a 2022 one.** 2022 answered the
+  agent in ~90s; the 2025 clone spent several minutes at ~80% CPU across 4 cores
+  with steady disk I/O before Cloudbase-Init finished, and the console was a
+  blank framebuffer throughout. Before concluding a clone is wedged, sample
+  `/proc/<pid>/stat` and `/proc/<pid>/io` for the QEMU process — a working clone
+  is visibly busy. It still finished inside verify's 900s window.
+- **`rearm-headroom` warns on 2025 while passing on 2022**, and the report used
+  to print only the description, which cannot distinguish "0 rearms left" (a
+  real defect for anyone sysprepping a clone) from "could not read the count"
+  (a broken probe). `200a11d` makes verify print warning output; resolve this on
+  the next 2025 verify.
+
 ### 2026-08-03: the Appx cleanup manufactured its own generalize blocker
 
 `Finalize.ps1`'s Appx cleanup caused the failure it exists to prevent. The
