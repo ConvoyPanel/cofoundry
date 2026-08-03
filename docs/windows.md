@@ -463,6 +463,30 @@ entry and retry; and report survivors by name instead of `SilentlyContinue`.
 
 ### Clone specialize aborted by the Cloudbase-Init SERVICE (SOLVED)
 
+**VERIFIED WORKING 2026-08-03 08:36Z.** A clone of the `339eccd` artifact
+settled on its own:
+
+    AGENT UP at 90s | hostname=WIN-T0LDD15A7D4 | cloudbase-init=Stopped
+    *** CLONE SETTLED — cloudbase-init completed ***
+
+Guest agent up in 90 seconds, hostname applied, cloudbase-init ran to completion
+and stopped. The event log shows the *designed* sequence rather than an abort:
+
+    08:13:23  winlogon.exe | "Operating System: Upgrade (Planned)" | restart
+    08:13:54  boot 2
+    08:16:24  python.exe   | "Cloudbase-Init reboot"                | restart
+    08:16:48  boot 3
+
+The cloudbase-init reboot moved from ~46s to ~2.5 min after boot — the delayed
+auto-start working — and specialize now completes and hands off via winlogon's
+planned restart instead of being cut short.
+
+Note the working clone is *faster* to settle (90s) than the failing ones were to
+time out. A theory that `cf verify`'s 900s window was simply too short was
+**wrong**; the earlier failures were the real defect.
+
+
+
 `allow_reboot=false` + `reset_service_password=false` **fixed the cloudbase-init
 crash** — confirmed on a clone of the 2026-08-02 22:05Z artifact, whose
 `cloudbase-init-unattend.log` is now clean end to end:
