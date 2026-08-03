@@ -459,12 +459,47 @@ if (-not $runSync) {
   throw "sysprep unattend has no specialize RunSynchronous node to extend - did the Cloudbase-Init Unattend.xml layout change?"
 }
 
-# Take Order 1 and push the existing commands back. cloudbase-init's entry
-# declares WillReboot=OnRequest, and anything sequenced after a command that
-# requests a reboot is not guaranteed to run in the same pass.
-foreach ($existing in $runSync.SelectNodes("u:RunSynchronousCommand", $ns)) {
+# Drop cloudbase-init's own specialize entry entirely.
+#
+# The MSI ships it as `cloudbase-init.exe --config-file …-unattend.conf && exit 1
+# || exit 2`, where exit 1 means "reboot requested" (WillReboot=OnRequest). Every
+# clone failure chased on 2026-08-02 traced back to that command:
+#
+#   allow_reboot default true   -> crashed stopping its own service (1062)
+#   reset_service_password true -> crashed on OpenSCManager (1115)
+#   SetHostNamePlugin           -> renamed in specialize, and the pending reboot
+#                                  landed mid-OOBE, leaving SetupType=2 +
+#                                  OOBEInProgress=1 and setup.exe looping on
+#                                  "The computer restarted unexpectedly"
+#
+# Each was fixed and the next surfaced. With SetHostNamePlugin removed the run
+# did nothing but MTU, and the guest still rebooted ~44s into specialize with
+# cloudbase-init's log ending mid-plugin -- so the command was still derailing
+# the pass without doing anything the service run does not already do.
+#
+# Removing it is not a loss of function. The specialize run existed only to keep
+# SetUserPasswordPlugin *out* of specialize (it would consume its run-once slot
+# before oobeSystem seeds the AdministratorPassword, shipping the build's
+# throwaway password). Deleting the command achieves that outright, and the
+# post-OOBE service run still applies MTU, hostname and password in the correct
+# order. Specialize is then just our profile cleanup: one command, exit 0, no
+# reboot request, nothing that can strand OOBE.
+$removed = 0
+foreach ($existing in @($runSync.SelectNodes("u:RunSynchronousCommand", $ns))) {
+  $pathNode = $existing.SelectSingleNode("u:Path", $ns)
+  if ($pathNode -and $pathNode.InnerText -match 'cloudbase-init') {
+    $runSync.RemoveChild($existing) | Out-Null
+    $removed++
+  }
+}
+Write-Step "  removed $removed cloudbase-init specialize command(s) from the unattend"
+
+# Renumber whatever remains, then take Order 1 for the profile cleanup below.
+$order = 2
+foreach ($existing in @($runSync.SelectNodes("u:RunSynchronousCommand", $ns))) {
   $orderNode = $existing.SelectSingleNode("u:Order", $ns)
-  $orderNode.InnerText = [string]([int]$orderNode.InnerText + 1)
+  $orderNode.InnerText = [string]$order
+  $order++
 }
 
 $cmdNode = $unattendXml.CreateElement("RunSynchronousCommand", $nsUri)
