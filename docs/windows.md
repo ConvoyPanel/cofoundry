@@ -1418,6 +1418,42 @@ umount /tmp/vm
 | Clone stuck at `GeneralizationState=3`, no `C:\Windows\Panther\setupact.log`, build profile intact (Mode B) | Template exported with `SetupType=0`/empty `CmdLine` — the reseal-to-OOBE arming is missing, so windeploy never runs and the respecialize fallback fails `0x8007001f` | `Finalize.ps1` runs sysprep `/quit`, asserts `SetupType=2` + windeploy `CmdLine` + `IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE`, retries once, and fails the build if unarmed; verify templates offline via hive inspection (see the 2026-07-31 Mode-B update) |
 | Build reports success but every clone is Mode B | sysprep failed (or was cut off) and the failure never reached packer, so an ungeneralized image was exported | Host-side `assert-generalized.sh` fails the build before export; `ps_execute` propagates thrown errors. See the 2026-08-01 subsection |
 | Sysprep aborts `0x80073cf2` — `installed for a user, but not provisioned for all users` | Windows Update registered an Appx package (typically Edge) for the build user mid-build; generalize pre-validation refuses | `Finalize.ps1` unregisters per-user, non-provisioned Appx packages before sysprep |
+| `PROVISIONER ERROR: There is not enough space on the disk.` right after the `sysprep and shutdown` step header | `Zero-FreeSpace` wrote until `ERROR_DISK_FULL` and handed the space back with a `-ErrorAction SilentlyContinue` delete; at 0 bytes free that delete can itself fail, and the silence carried a full volume into sysprep | The zero pass stops at a 1 GB reserve and throws if the fill file survives; a free-space gate before generalize lists the largest directories on C: |
+| `sysprep did not arm the image for OOBE after 2 attempts` with no further detail | The gate's message said to read `setuperr.log`, but packer deletes the VM within seconds of the provisioner erroring | `Finalize.ps1` dumps `setuperr.log`/`setupact.log` and the arming registry state to packer's stdout after each failed attempt |
+
+### 2026-08-03: the 2025 finalize space failure
+
+Two consecutive `windows-server-2025` attempts died at 3h04m each and produced
+no usable diagnosis, for two separate reasons worth keeping apart:
+
+- **Attempt 1** threw `There is not enough space on the disk` — raised by
+  whichever statement after the zero pass happened to need a write first, so it
+  named neither the drive nor the consumer.
+- **Attempt 2** failed the arming gate twice. The gate's own error told the
+  reader to inspect a log on a VM that no longer existed.
+
+**`C:\Windows.old` was investigated and ruled out.** The 2025 checkpoint
+cumulative is applied as a full OS re-deploy, so the directory *is* created, and
+it looked like the obvious 2025-only space consumer (2022 does no re-deploy and
+does not fail this way). Measured on the live guest it is an empty stub — 0
+files, 0 enumeration errors, empty top level. Note that a naive
+`Get-ChildItem -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object
+Length -Sum` also returns 0 for a *populated* tree, because the ACLs stop the
+enumeration and the error is silenced; count the errors before believing the
+size. `Finalize.ps1` removes the directory anyway (takeown + icacls + `rd`),
+but it reclaims nothing on this release and is not the fix.
+
+The instrumentation matters more than either fix: a build whose failure mode is
+"3 hours, then a sentence" cannot be debugged, only guessed at.
+
+- Windows provisioner scripts are parse-checked by `tests/windows-ps-syntax.test.ts`
+  using `pwsh` (skipped when it is absent). A syntax error in `Finalize.ps1`
+  otherwise costs a full rebuild to discover, since the file only ever runs
+  three hours in, as the last provisioner before sysprep.
+- Live-guest state is reachable from the node throughout a build:
+  `qm guest exec <vmid> --timeout 60 -- powershell -NoProfile -Command '<script>'`.
+  It emits JSON with the guest's stdout in `out-data`; parse it with `python3`,
+  not `sed` — the payload contains escaped quotes and CRLFs.
 
 The intermittent `ERROR_BADDB` failure reproduced with verified install media,
 adequate free disk space, and no competing build process. Host RAM or the

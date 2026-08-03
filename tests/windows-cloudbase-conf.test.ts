@@ -110,4 +110,63 @@ describe('Finalize.ps1 ordering invariants', () => {
             sysprepAt
         )
     })
+
+    test('dumps sysprep diagnostics on a failed generalize attempt', () => {
+        // 2026-08-03: two consecutive 3h04m windows-server-2025 attempts failed
+        // to arm, and the error told the reader to check setuperr.log on a VM
+        // packer had already deleted. Nothing survives the VM except packer's
+        // stdout, so the logs have to go there.
+        const loopAt = finalize.indexOf('for ($attempt = 1;')
+        const gateThrowAt = finalize.indexOf('sysprep did not arm the image')
+        expect(loopAt).toBeGreaterThan(-1)
+        expect(gateThrowAt).toBeGreaterThan(loopAt)
+
+        expect(finalize).toContain('function Show-SysprepDiagnostics')
+        // Called from inside the retry loop, not merely after it: attempt 2
+        // overwrites Panther, so a single trailing dump loses attempt 1.
+        const callAt = finalize.indexOf('Show-SysprepDiagnostics $attempt')
+        expect(callAt).toBeGreaterThan(loopAt)
+        expect(callAt).toBeLessThan(gateThrowAt)
+        expect(finalize).toContain('Sysprep\\Panther\\setuperr.log')
+    })
+})
+
+/**
+ * The zero pass used to run the volume to 0 bytes free and hand the space back
+ * with a `-ErrorAction SilentlyContinue` delete. On 2026-08-03 finalize then
+ * died with "PROVISIONER ERROR: There is not enough space on the disk", raised
+ * by the *next* step and naming neither drive nor cause.
+ */
+describe('Zero-FreeSpace leaves the volume usable', () => {
+    const body = (): string => {
+        const at = finalize.indexOf('function Zero-FreeSpace')
+        expect(at).toBeGreaterThan(-1)
+        // Up to the next top-level function, which is enough to cover it.
+        const end = finalize.indexOf('\nWrite-Step', at)
+        return finalize.slice(at, end > at ? end : undefined)
+    }
+
+    test('stops on a free-space reserve rather than on disk-full', () => {
+        const fn = body()
+        expect(fn).toMatch(/\$reserveBytes\s*=/)
+        // The write loop must have a free-space exit. Without one the only way
+        // out is the IOException at 0 bytes free, which is the old behaviour.
+        expect(fn).toMatch(/-le \$reserveBytes\s*\)\s*\{\s*break/)
+    })
+
+    test('fails loudly if the fill file survives', () => {
+        const fn = body()
+        // A silenced delete failure is indistinguishable from success, and the
+        // build marches on to sysprep over a full disk.
+        expect(fn).toMatch(/if \(Test-Path \$target\) \{[\s\S]*?throw/)
+    })
+
+    test('asserts free space before generalize', () => {
+        const sysprepAt = finalize.indexOf('Write-Step "sysprep and shutdown"')
+        const runAt = finalize.indexOf('Sysprep.exe')
+        expect(runAt).toBeGreaterThan(sysprepAt)
+        const preamble = finalize.slice(sysprepAt, runAt)
+        expect(preamble).toMatch(/Get-PSDrive C/)
+        expect(preamble).toMatch(/throw \(?"?only \{0:N1\} GB free/)
+    })
 })

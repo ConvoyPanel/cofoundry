@@ -53,18 +53,49 @@ function Shrink-SystemPartition($FinalSize) {
   Write-Step ("C: shrunk {0:N0} -> {1:N0} bytes (final disk {2})" -f $current, $after, $FinalSize)
 }
 
+# Overwrite free space with zeros so the exported qcow2 compresses. Stops short
+# of actually filling the volume, and proves the fill file is gone afterwards.
+#
+# The first version wrote until ERROR_DISK_FULL and relied on a
+# `-ErrorAction SilentlyContinue` delete to give the space back. Both halves of
+# that are hazardous: at zero bytes free NTFS can fail the delete itself (the
+# change needs journal space), and because the failure was silenced the script
+# marched on to sysprep over a full disk. That is what "PROVISIONER ERROR: There
+# is not enough space on the disk" was on 2026-08-03 -- reported from the step
+# *after* this one, naming nothing.
 function Zero-FreeSpace($DriveLetter) {
+  # Enough that NTFS metadata operations, sysprep, and the servicing stack all
+  # still have room. The zeroing is a compression optimisation; the last GB of
+  # it is worth far less than a 3h build.
+  $reserveBytes = 1GB
   $root   = "${DriveLetter}:\"
   $target = Join-Path $root "zero.fill"
+  $free   = { (Get-PSDrive $DriveLetter).Free }
+  if ((& $free) -le $reserveBytes) {
+    Write-Step ("  only {0:N1} GB free; skipping zero pass" -f ((& $free) / 1GB))
+    return
+  }
   $buffer = New-Object byte[] (1024 * 1024)
   $stream = [System.IO.File]::Open($target, [System.IO.FileMode]::CreateNew)
   try {
-    while ($true) { $stream.Write($buffer, 0, $buffer.Length) }
+    # Re-check free space periodically rather than per-MB: Get-PSDrive is far
+    # more expensive than the write itself.
+    while ($true) {
+      for ($i = 0; $i -lt 64; $i++) { $stream.Write($buffer, 0, $buffer.Length) }
+      $stream.Flush()
+      if ((& $free) -le $reserveBytes) { break }
+    }
   } catch [System.IO.IOException] {
+    # Something else on the box consumed the reserve while we ran. Not fatal --
+    # the gate below is what decides.
   } finally {
     $stream.Close()
-    Remove-Item -Force $target -ErrorAction SilentlyContinue
   }
+  Remove-Item -Force $target -ErrorAction SilentlyContinue
+  if (Test-Path $target) {
+    throw "could not delete $target after the zero pass - C: would go into sysprep full"
+  }
+  Write-Step ("  zero pass done; {0:N1} GB free on {1}:" -f ((& $free) / 1GB), $DriveLetter)
 }
 
 Write-Step "stop Windows Update service and purge download cache"
@@ -89,6 +120,32 @@ foreach ($p in $prunePaths) {
 
 Write-Step "empty recycle bin"
 Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+
+Write-Step "remove C:\Windows.old if the WU passes left one"
+# Server 2025's checkpoint cumulative is applied as a full OS re-deploy, which
+# can park the previous OS tree here. Measured on the 2026-08-03 build: the
+# directory is present but EMPTY (0 files, 0 enumeration errors), so on this
+# release it is a stub and reclaims nothing -- it is *not* the cause of the
+# "not enough space" failure, whatever the size of C:\Windows.old suggests.
+# Removed anyway because a re-deploy that does leave a populated tree would
+# otherwise be shrunk around, zeroed around, and exported, and because an
+# unexplained C:\Windows.old in a shipped template is its own bug report.
+# The tree is owned by TrustedInstaller, so Remove-Item cannot touch it.
+if (Test-Path "C:\Windows.old") {
+  $before = (Get-PSDrive C).Free
+  & takeown.exe /f "C:\Windows.old" /a /r /d y  | Out-Null
+  & icacls.exe "C:\Windows.old" /grant "*S-1-5-32-544:F" /t /c /q | Out-Null
+  & cmd.exe /c 'rd /s /q C:\Windows.old' 2>&1 | Out-Null
+  if (Test-Path "C:\Windows.old") {
+    # Not fatal on its own: the free-space gate before sysprep decides whether
+    # what survived actually costs us the build.
+    Write-Step "  WARNING C:\Windows.old survived removal; it will be exported"
+  } else {
+    Write-Step ("  reclaimed {0:N1} GB from C:\Windows.old" -f (((Get-PSDrive C).Free - $before) / 1GB))
+  }
+} else {
+  Write-Step "  no C:\Windows.old present"
+}
 
 Write-Step "cleanup component store"
 Start-Process -FilePath "dism.exe" `
@@ -415,6 +472,25 @@ if ($blockers.Count) {
 }
 
 Write-Step "sysprep and shutdown"
+
+# Everything from here to the shutdown -- copying the answer file, rewriting it,
+# generalize itself -- needs somewhere to write. When C: is full those failures
+# surface as bare "There is not enough space on the disk" from whichever
+# statement happened to be first, naming neither the drive nor the cause. Check
+# it once, up front, and say what filled up.
+$freeGB = (Get-PSDrive C).Free / 1GB
+Write-Step ("  C: has {0:N1} GB free before generalize" -f $freeGB)
+if ($freeGB -lt 0.75) {
+  $hogs = Get-ChildItem C:\ -Force -Directory -ErrorAction SilentlyContinue |
+    ForEach-Object {
+      $b = (Get-ChildItem $_.FullName -Recurse -Force -File -ErrorAction SilentlyContinue |
+        Measure-Object Length -Sum).Sum
+      [pscustomobject]@{ Path = $_.FullName; GB = [math]::Round($b / 1GB, 1) }
+    } | Sort-Object GB -Descending | Select-Object -First 8
+  foreach ($h in $hogs) { Write-Step ("    {0,6:N1} GB  {1}" -f $h.GB, $h.Path) }
+  throw ("only {0:N1} GB free on C: - sysprep needs room to generalize. Largest directories are listed above; if this is C:\Windows.old the reclaim step above failed, otherwise raise final_disk_size." -f $freeGB)
+}
+
 # Pass cloudbase-init's bundled Unattend.xml so OOBE on the cloned VM auto-
 # completes (accepts EULA, skips the machine and user OOBE screens) and its
 # specialize pass runs cloudbase-init to set the hostname. Without this, first
@@ -742,6 +818,35 @@ function Test-GeneralizeArmed {
     ($imageState -eq "IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE")
 }
 
+# Sysprep's own account of why it refused, echoed into packer's output.
+#
+# The gate below used to fail with a message telling the reader to "check
+# C:\Windows\System32\Sysprep\Panther\setuperr.log" -- advice nobody can act on,
+# because packer runs its cleanup and deletes the VM within seconds of the
+# provisioner erroring. On 2026-08-03 that cost two consecutive 3h04m
+# windows-server-2025 attempts which both failed to arm and both produced zero
+# diagnosis; the log had to be recovered by polling the guest from the node in
+# the few minutes before the machine disappeared. The logs must come out through
+# the one channel that survives the VM: packer's stdout.
+function Show-SysprepDiagnostics($Attempt) {
+  Write-Step "  --- sysprep diagnostics (attempt $Attempt) ---"
+  $setup = Get-ItemProperty "HKLM:\SYSTEM\Setup" -ErrorAction SilentlyContinue
+  $state = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State" -ErrorAction SilentlyContinue
+  Write-Step ("    SetupType={0} CmdLine='{1}' OOBEInProgress={2} ImageState={3}" -f `
+    $setup.SetupType, $setup.CmdLine, $setup.OOBEInProgress, $state.ImageState)
+  foreach ($log in @(
+      "C:\Windows\System32\Sysprep\Panther\setuperr.log",
+      "C:\Windows\System32\Sysprep\Panther\setupact.log")) {
+    if (-not (Test-Path $log)) { Write-Step "    <missing> $log"; continue }
+    # setupact runs to megabytes and is only useful near the failure; setuperr is
+    # short and wanted whole.
+    $tail = if ($log -match "setuperr") { 200 } else { 60 }
+    Write-Step "    --- $log (last $tail lines) ---"
+    Get-Content -Tail $tail $log -ErrorAction SilentlyContinue |
+      ForEach-Object { Write-Host "      $_" }
+  }
+}
+
 $tagPath = "C:\Windows\System32\Sysprep\Sysprep_succeeded.tag"
 $gateLog = "C:\Windows\Temp\cf-sysprep-retry.log"
 $maxAttempts = 2
@@ -763,10 +868,13 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
       (Get-Date -Format s), $attempt, $p.ExitCode, (Test-Path $tagPath), $setup.SetupType, $setup.CmdLine, $armed) |
     Out-File -Append -Encoding ascii $gateLog
   if ($armed) { break }
+  # Dump per attempt, not just at the end: attempt 2 overwrites Panther, so a
+  # single dump after the loop can only ever explain the last failure.
+  Show-SysprepDiagnostics $attempt
   if ($attempt -lt $maxAttempts) { Start-Sleep 45 }
 }
 if (-not $armed) {
-  throw "sysprep did not arm the image for OOBE after $maxAttempts attempts (need SetupType=2 + windeploy CmdLine + IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE) - an unarmed template sticks every clone at GeneralizationState 3; check C:\Windows\System32\Sysprep\Panther\setuperr.log and $gateLog"
+  throw "sysprep did not arm the image for OOBE after $maxAttempts attempts (need SetupType=2 + windeploy CmdLine + IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE) - an unarmed template sticks every clone at GeneralizationState 3; sysprep's own logs are dumped above"
 }
 
 Write-Step "restore Windows Update automatic-reboot behavior"
