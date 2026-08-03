@@ -75,13 +75,17 @@ function Zero-FreeSpace($DriveLetter) {
     Write-Step ("  only {0:N1} GB free; skipping zero pass" -f ((& $free) / 1GB))
     return
   }
-  $buffer = New-Object byte[] (1024 * 1024)
-  $stream = [System.IO.File]::Open($target, [System.IO.FileMode]::CreateNew)
+  $buffer  = New-Object byte[] (1024 * 1024)
+  $written = [long]0
+  $stream  = [System.IO.File]::Open($target, [System.IO.FileMode]::CreateNew)
   try {
     # Re-check free space periodically rather than per-MB: Get-PSDrive is far
     # more expensive than the write itself.
     while ($true) {
-      for ($i = 0; $i -lt 64; $i++) { $stream.Write($buffer, 0, $buffer.Length) }
+      for ($i = 0; $i -lt 64; $i++) {
+        $stream.Write($buffer, 0, $buffer.Length)
+        $written += $buffer.Length
+      }
       $stream.Flush()
       if ((& $free) -le $reserveBytes) { break }
     }
@@ -95,7 +99,14 @@ function Zero-FreeSpace($DriveLetter) {
   if (Test-Path $target) {
     throw "could not delete $target after the zero pass - C: would go into sysprep full"
   }
-  Write-Step ("  zero pass done; {0:N1} GB free on {1}:" -f ((& $free) / 1GB), $DriveLetter)
+  # Report what was WRITTEN, not the free space afterwards. Reading free space
+  # here races NTFS's reclaim of a multi-GB delete: the same code logged "13.9 GB
+  # free" on one run and "1.0 GB free" on the next, purely on reclaim timing,
+  # while the gate before generalize measured 13.8 GB both times. Worse, the free
+  # figure never showed whether the fill actually happened -- it reads the same
+  # whether 13 GB was zeroed and released or nothing was written at all. Bytes
+  # written is the thing this function is actually responsible for.
+  Write-Step ("  zero pass done; {0:N1} GB zeroed and released on {1}:" -f ($written / 1GB), $DriveLetter)
 }
 
 Write-Step "stop Windows Update service and purge download cache"
