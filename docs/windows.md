@@ -443,6 +443,42 @@ that block must carry them forward. The general lesson: the specialize-pass run
 is a *console* invocation, so every service-oriented code path in
 `configure_host()` has to be disabled by config.
 
+### windows-server-2025: DesktopAppInstaller blocks generalize (OPEN)
+
+**2026-08-03.** 2025 cleared both WU rounds for the first time, reached Finalize
+and sysprep, and then failed to arm — correctly caught and reported rather than
+silently exported:
+
+    PROVISIONER ERROR: sysprep did not arm the image for OOBE after 2 attempts
+    SetupType=0 | ImageState=IMAGE_STATE_COMPLETE      (confirmed on the guest)
+
+Guest `Sysprep\Panther\setuperr.log`:
+
+    SYSPRP Package Microsoft.DesktopAppInstaller_1.26.510.0_x64__8wekyb3d8bbwe
+           was installed for a user, but not provisioned for all users
+    SYSPRP Failed to remove apps for the current user: 0x80073cf2
+
+Build log shows our cleanup *did* attempt it and Windows refused:
+
+    unregistering Microsoft.DesktopAppInstaller_1.26.510.0_x64__8wekyb3d8bbwe
+    error 0x80070032: AppX Deployment Remove operation on package
+      Microsoft.DesktopAppInstaller...                    (ERROR_NOT_SUPPORTED)
+    unregistering Microsoft.DesktopAppInstaller_1.29.280.0_x64__8wekyb3d8bbwe
+
+**Two versions coexist** — 1.26.510.0 (the one sysprep rejects) and 1.29.280.0.
+62 packages attempted, 0 recovered, 47 still registered. The
+deprovision-and-retry fallback added for Edge never produced a `deprovisioning`
+line here, so it is not firing on this path.
+
+Also seen: `Windows cannot remove framework Microsoft.VCLibs.140.00.UWPDesktop…`
+— framework packages cannot be removed while dependents remain, so they need
+excluding from the attempt list rather than being logged as blockers.
+
+Next step: work out why the deprovision fallback does not fire, and handle the
+two-version case (removing the *provisioned* newer version before the stale
+per-user older one). Note 2022 passes with 32 packages still registered, so
+"still registered" is not itself fatal — only packages sysprep names are.
+
 ### Sysprep Appx pre-validation: being provisioned does not mean safe
 
 With the session restored, the underlying generalize failure was visible:
