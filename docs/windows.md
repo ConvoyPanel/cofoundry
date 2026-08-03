@@ -421,7 +421,7 @@ Fix: skip only packages with **no per-user registration** (`PackageUserInformati
 with `InstallState = Installed`); on a failed unregister, drop the provisioned
 entry and retry; and report survivors by name instead of `SilentlyContinue`.
 
-### Clone specialize aborted by SetHostNamePlugin's reboot (SOLVED)
+### Clone specialize aborted by the Cloudbase-Init SERVICE (SOLVED)
 
 `allow_reboot=false` + `reset_service_password=false` **fixed the cloudbase-init
 crash** — confirmed on a clone of the 2026-08-02 22:05Z artifact, whose
@@ -462,6 +462,33 @@ Cloudbase-Init reboots the machine *itself*, mid-specialize, and
 `allow_reboot=false` does not prevent it. The randomized hostname in the event
 shows `SetHostNamePlugin` had already renamed the machine — renaming is what makes
 the plugin request the reboot.
+
+**Correction (2026-08-03): it is the *service* run, not the specialize run.**
+Two earlier readings here were wrong and cost a cycle each:
+
+1. The randomized `WIN-…` hostname in event 1074 is what **sysprep** assigns on
+   generalize. It is *not* evidence that `SetHostNamePlugin` ran. Removing that
+   plugin from the specialize conf therefore changed nothing.
+2. `allow_reboot=false` **does** work. Read from the shipped `init.py`:
+
+       if reboot_required and CONF.allow_reboot:
+           osutils.reboot()
+       else:
+           LOG.info("Plugins execution done")
+           ... LOG.info("Stopping Cloudbase-Init service")
+
+   The clone's `cloudbase-init-unattend.log` ends with exactly that else-branch,
+   so the specialize run never reboots.
+
+The reboot comes from the **cloudbase-init service**, which `Finalize.ps1` sets to
+`Automatic`. On a clone's first boot it starts while specialize/OOBE is still
+running, uses `cloudbase-init.conf` (which has `SetHostNamePlugin` and no
+`allow_reboot=false`), renames the machine and reboots mid-pass. Corroboration:
+the failed clone carries a populated `cloudbase-init.log` from that service run.
+
+Real fix: **delayed auto-start for every release**, not just 2019. The
+`BuildNumber <= 17763` gate assumed 2022/2025 reach GeneralizationState=7 only
+after OOBE completes; they do not.
 
 Fix: the specialize-pass conf runs **MTUPlugin only**. `MTUPlugin` never requests
 a reboot. The hostname is still applied, by `SetHostNamePlugin` in the post-OOBE

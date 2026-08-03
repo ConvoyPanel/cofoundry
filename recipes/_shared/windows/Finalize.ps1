@@ -130,25 +130,35 @@ if (-not $svc) { throw "cloudbase-init service not found after install" }
 Stop-Service -Name cloudbase-init -Force -ErrorAction SilentlyContinue
 Set-Service -Name cloudbase-init -StartupType Automatic -ErrorAction SilentlyContinue
 
-# Server 2019 only: make Cloudbase-Init delayed-auto-start.
+# ALL releases: make Cloudbase-Init delayed-auto-start.
 #
-# A Server 2019 clone reaches GeneralizationState=7 early -- while OOBE is still on
-# screen -- so an Automatic-start Cloudbase-Init wakes and runs its plugins before
-# the VDS, WMI-licensing, and user-profile subsystems are ready. That first run
-# fails ExtendVolumes/Licensing/CreateUser (they only recover after the hostname
-# reboot) and, worse, races the oobeSystem pass: its SetUserPassword lands before
-# oobeSystem re-seeds the AdministratorPassword, so the clone ships with the build's
-# throwaway WinRM password instead of the cloud-init one. Delaying the service to
-# auto-start (~2 min) lets OOBE finish and the box settle first, so it runs clean and
-# its password write wins -- matching how 2022/2025 already behave (they reach 7 only
-# once OOBE completes). Verified live on a clone: with delayed start the cloud-init
-# password validates, no early plugin errors, and no "Waiting for sysprep" lines.
-if ([int](Get-CimInstance Win32_OperatingSystem).BuildNumber -le 17763) {
-  Write-Step "set Cloudbase-Init to delayed auto-start (Server 2019 clone timing)"
-  # Windows PowerShell 5.1's Set-Service has no AutomaticDelayedStart; sc.exe does.
-  # The spaces after 'start=' are required by sc.exe's argument parser.
-  & sc.exe config cloudbase-init start= delayed-auto | Out-Null
-}
+# A clone reaches GeneralizationState=7 while OOBE is still on screen, so an
+# Automatic-start Cloudbase-Init wakes and runs its plugins before the VDS,
+# WMI-licensing, and user-profile subsystems are ready. That first run fails
+# ExtendVolumes/Licensing/CreateUser (they only recover after the hostname
+# reboot) and races the oobeSystem pass: its SetUserPassword lands before
+# oobeSystem re-seeds the AdministratorPassword, so the clone ships with the
+# build's throwaway WinRM password instead of the cloud-init one.
+#
+# This was gated to Server 2019 (BuildNumber <= 17763) on the belief that
+# 2022/2025 reach 7 only once OOBE completes. **That is false**, and it is why
+# every 2022 clone looped on "The computer restarted unexpectedly": the service
+# starts during the specialize pass, runs with cloudbase-init.conf (which has
+# SetHostNamePlugin and no allow_reboot=false), renames the machine, and reboots
+# the VM mid-pass. Captured from a clone's System event log 2026-08-03:
+#
+#   id=1074  ...Cloudbase-Init\Python\python.exe | restart
+#            | "Cloudbase-Init reboot" | NT AUTHORITY\SYSTEM
+#
+# It is specifically the *service* run, not the specialize run: the unattend run
+# logs "Plugins execution done" / "Stopping Cloudbase-Init service" -- init.py's
+# else-branch, i.e. no reboot -- while the clone still carries a populated
+# cloudbase-init.log from the service. Delaying the service (~2 min) lets OOBE
+# and specialize finish first.
+Write-Step "set Cloudbase-Init to delayed auto-start (clone OOBE/specialize timing)"
+# Windows PowerShell 5.1's Set-Service has no AutomaticDelayedStart; sc.exe does.
+# The spaces after 'start=' are required by sc.exe's argument parser.
+& sc.exe config cloudbase-init start= delayed-auto | Out-Null
 
 $cloudbaseConfDir = "C:\Program Files\Cloudbase Solutions\Cloudbase-Init\conf"
 New-Item -ItemType Directory -Force -Path $cloudbaseConfDir | Out-Null
