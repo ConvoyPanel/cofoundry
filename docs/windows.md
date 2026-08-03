@@ -315,6 +315,39 @@ set` calls and the firewall rules now all sit together after generalize. The
 rule is simple: **nothing above sysprep may touch WinRM auth, its policy keys,
 or its firewall rules.**
 
+### windows-server-2022 VERIFIED end to end (2026-08-03)
+
+`cf verify windows-server-2022` passed on the `124401b` artifact: **15 checks
+passed, 1 warned**, including the two that matter most —
+
+    cipassword-validates   the clone-password defect from PR #30 is fixed
+    winrm-not-exposed      the teardown really ran (what the sentinel guarantees)
+    hostname-applied       set by the post-OOBE service run, after a clean OOBE
+
+The build side reached this after five consecutive clean builds: the gate passed
+every time, upload races were absorbed by `max_retries` rather than killing a
+build, and transport blips were absorbed by the raised SSH keepalive.
+
+The clone side took five layers, each found by reading the guest's own logs
+offline (`qemu-nbd` + mount), never by guessing:
+
+    allow_reboot=true            cloudbase-init self-terminated (ControlService 1062)
+    reset_service_password=true  next call died (OpenSCManager 1115)
+    SetHostNamePlugin            renamed in specialize; reboot landed mid-OOBE
+    (still failed)               guest rebooted ~44s into specialize regardless
+    -> removed the command       specialize is now just the profile cleanup
+
+The lesson worth keeping: after three fixes to cloudbase-init's specialize entry
+each surfaced another failure, **deleting the command entirely** was what worked.
+It was never load-bearing — its only purpose was keeping SetUserPasswordPlugin
+out of specialize, which removal achieves outright. Prefer removing a fragile
+step over repairing it when the post-OOBE service run already does the work.
+
+Remaining known warning: `no-critical-service-failures` reports an Automatic
+service not yet running at post-reboot. It is a `warn`, not a failure, and the
+check already allow-lists the usual delayed starters; if it persists, widen that
+list rather than treating it as a defect.
+
 ### Guards against these classes recurring
 
 Ten of the 2026-08-01/02 fixes fell into two repeating shapes, each costing a
