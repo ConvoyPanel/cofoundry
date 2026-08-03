@@ -443,6 +443,29 @@ that block must carry them forward. The general lesson: the specialize-pass run
 is a *console* invocation, so every service-oriented code path in
 `configure_host()` has to be disabled by config.
 
+### windows-server-2025: guest C: runs out of space in Finalize (OPEN)
+
+**2026-08-03, second distinct 2025 blocker.** After the Appx warning, Finalize
+failed with:
+
+    PROVISIONER ERROR: There is not enough space on the disk.
+
+This is the **guest's C:**, not the node — the node had 400 G free at the time
+(578 G total, 28% used). `Finalize.ps1` shrinks C: to `final_disk_size` minus a
+1 G margin *before* sysprep, and 2025's `final_disk_size` is 32G, so the
+partition is ~31 G when sysprep and the Appx work run.
+
+Do **not** simply raise `final_disk_size` to make this go away. Per AGENTS.md the
+exported disk must stay as small as the measured installed image permits, and
+any increase has to be justified from vzdump sparse-data output. Measure first:
+capture `Get-PSDrive C` / `Get-PartitionSupportedSize` on the guest immediately
+before the shrink, and the vzdump sparse figure after a successful export.
+
+Plausible contributors worth checking before resizing: `C:\Windows.old` left by a
+Server 2025 checkpoint cumulative (docs note it was empty by finalization on an
+earlier build, which may no longer hold), and the `zero.fill` pass running on an
+already-tight partition.
+
 ### windows-server-2025: DesktopAppInstaller blocks generalize (OPEN)
 
 **2026-08-03.** 2025 cleared both WU rounds for the first time, reached Finalize
