@@ -138,11 +138,18 @@ qm sendkey <build-vmid> ret   # presses the focused "No"; install resumed at onc
 Progress jumped 23% → 56% within seconds of dismissal, confirming the modal
 gates the install's phase transitions.
 
-Candidate permanent fix (untested): replace `<enter>` in the boot blanket with
-a key OVMF accepts as "any key" but that cannot activate a focused button in
-the Setup GUI (e.g. `<up>`). Verify OVMF actually honors the chosen key at the
-boot prompt before committing to it — a key it ignores turns every build into
-"no bootable device".
+**Applied 2026-08-03 to windows-server-2025 only.** The blanket now types `<up>`
+instead of `<enter>`. It recurred that day as the same `Timeout waiting for WinRM`
+at 46m17s, so the race is not rare enough to ride out on retries — each attempt
+costs ~46 minutes and 2026-07-21 needed four.
+
+Deliberately NOT applied to 2019/2022 yet: 2022 is verified working end to end,
+and changing a proven recipe on an untested hypothesis is the wrong trade.
+Propagate only once 2025 completes a build with `<up>`.
+
+The risk is cheap to carry: if OVMF ever stops honouring the key, the failure is
+immediate and unmistakable ("no bootable device" within a couple of minutes),
+not a 46-minute stall.
 
 ### Windows Update automatic reboot suppression
 

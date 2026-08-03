@@ -200,8 +200,20 @@ source "proxmox-iso" "windows-server-2025" {
   # winrm_timeout (45m) expires. Blanket ~60s with a press every 2s so a slow
   # POST can't fall outside the window; stray <enter>s during WinPE load are
   # harmless (autounattend drives Setup non-interactively).
-  boot_wait    = "2s"
-  boot_command = ["<enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2><enter><wait2>"]
+  boot_wait = "2s"
+  # <up>, not <enter>. OVMF accepts any keystroke at "Press any key to boot from
+  # CD or DVD", but this blanket keeps typing for ~60s -- long after WinPE's GUI
+  # has loaded. The "Installing Windows Server" screen has a single focusable
+  # Cancel button, so a stray <enter> presses it and opens a quit-confirmation
+  # modal; if the modal opens on the burst's last keystroke nothing dismisses it
+  # and Setup sits blocked until winrm_timeout. That is the documented
+  # "Timeout waiting for WinRM" at ~46m14s (docs/windows.md), seen again
+  # 2026-08-03. <up> still satisfies OVMF but only moves focus in the GUI, so it
+  # cannot activate Cancel.
+  #
+  # If OVMF ever stops honouring it the failure is loud and immediate -- "no
+  # bootable device" within a couple of minutes -- not a 46-minute stall.
+  boot_command = ["<up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2><up><wait2>"]
 
   communicator   = "winrm"
   winrm_host     = var.build_ip
