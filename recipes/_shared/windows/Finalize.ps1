@@ -769,6 +769,28 @@ Get-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -ErrorAct
   Where-Object { $_.Profile -match "Public" } |
   Disable-NetFirewallRule -ErrorAction SilentlyContinue
 
+# Completion sentinel. THIS MUST BE THE LAST THING WRITTEN before the power-off.
+#
+# Finalize has silently truncated twice (2026-08-01/02): once when the firewall
+# teardown ran before sysprep, once when the Basic/AllowUnencrypted unpin did.
+# Both severed packer's WinRM session, so the script kept running on the guest
+# with its output and exit code going nowhere and packer read the disconnect as
+# SUCCESS. The export gate catches truncation *before* sysprep (the image is not
+# generalized), but truncation *after* it is invisible: the image generalizes
+# fine and merely ships with the build's WinRM exposure still in place.
+#
+# The sentinel closes that hole generically -- any future step that kills the
+# session, anywhere in this script, means this file never lands and
+# assert-generalized refuses the export. Do not move it earlier.
+$sentinel = "C:\Windows\Setup\cf-finalize-complete.tag"
+New-Item -ItemType Directory -Force -Path (Split-Path $sentinel) | Out-Null
+@(
+    "finalized=$([DateTime]::UtcNow.ToString('o'))"
+    "winrm_teardown=done"
+    "generalize=armed"
+) -join "`r`n" | Set-Content -Path $sentinel -Encoding ASCII
+Write-Step "wrote completion sentinel $sentinel"
+
 # Generalize is done but /quit left the machine running. Power it off so the
 # node-side vzdump captures the sealed image -- the same end state sysprep
 # /shutdown produced; packer sees a normal shutdown-disconnect here.

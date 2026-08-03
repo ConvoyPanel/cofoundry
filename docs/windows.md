@@ -315,6 +315,31 @@ set` calls and the firewall rules now all sit together after generalize. The
 rule is simple: **nothing above sysprep may touch WinRM auth, its policy keys,
 or its firewall rules.**
 
+### Guards against these classes recurring
+
+Ten of the 2026-08-01/02 fixes fell into two repeating shapes, each costing a
+~3.5h build to discover. Both now fail fast instead.
+
+**The cloudbase-init config is overwritten wholesale**, so any stock setting not
+carried forward is dropped silently. That produced three separate failures
+(`allow_reboot`, `reset_service_password`, then `SetHostNamePlugin` running in
+specialize). `tests/windows-cloudbase-conf.test.ts` asserts the specialize config
+keeps the load-bearing keys and runs no reboot-requesting plugin. Note the
+assertions are **anchored** (`/^allow_reboot=false$/m`): the config also mentions
+those keys in its own comments, and a substring check passed even with the
+setting deleted — verify any change to that test with a negative control.
+
+**Finalize.ps1 truncates silently** when a step severs packer's WinRM session:
+the script keeps running on the guest while its output and exit code go nowhere,
+and packer reads the disconnect as success. Truncation *before* sysprep is caught
+by the export gate (the image is not generalized). Truncation *after* it was
+invisible — the image generalizes fine and merely ships with the build's WinRM
+exposure intact. `Finalize.ps1` now writes
+`C:\Windows\Setup\cf-finalize-complete.tag` as its last act, after the
+teardown, and `assert-generalized.sh` refuses the export if it is missing. Any
+future step that kills the session, anywhere in that script, is now a loud gate
+failure. Do not move the sentinel earlier.
+
 ### Clones loop on "The computer restarted unexpectedly" (allow_reboot)
 
 **Root cause found 2026-08-02, on an image the export gate had already certified

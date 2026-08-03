@@ -132,8 +132,24 @@ else
   echo "assert-generalized: WARN reged (chntpw) not found — asserted the sysprep tag only"
 fi
 
+# Finalize.ps1 writes this as its very last act, after the WinRM teardown. Its
+# absence means the script stopped early even though generalize itself worked --
+# the failure mode where a teardown step severs packer's WinRM session, packer
+# reads the disconnect as success, and the template ships with the build's Basic
+# auth and open WinRM firewall rule still in place. Generalization checks alone
+# cannot see that; this can.
+SENTINEL="$MNT/Windows/Setup/cf-finalize-complete.tag"
+if [ ! -f "$SENTINEL" ]; then
+  echo "assert-generalized: FAIL Finalize.ps1 did not run to completion (no cf-finalize-complete.tag)"
+  echo "assert-generalized:      the script stopped early — most likely a step severed the WinRM session,"
+  echo "assert-generalized:      so the build's WinRM exposure was never torn down."
+  FAIL=1
+else
+  echo "assert-generalized: finalize sentinel: $(sed 's/\r//' "$SENTINEL" | tr '\n' ' ')"
+fi
+
 if [ "$FAIL" != "0" ]; then
-  echo "assert-generalized: REFUSING to export — every clone of this image would stick at GeneralizationState 3"
+  echo "assert-generalized: REFUSING to export — the image is not safe to ship"
   exit 1
 fi
 echo "assert-generalized: OK — image is generalized and armed for OOBE"
