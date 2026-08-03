@@ -132,6 +132,34 @@ describe('Finalize.ps1 ordering invariants', () => {
 })
 
 /**
+ * The Appx cleanup exists to remove packages that block generalize. On
+ * 2026-08-03 it created one instead: windows-server-2025 entered Finalize with
+ * 5 provisioned packages and left with 0, and sysprep aborted 0x80073cf2 on the
+ * one whose provisioning had just been stripped.
+ */
+describe('Appx cleanup does not manufacture generalize blockers', () => {
+    const cleanup = (): string => {
+        const at = finalize.indexOf('remove per-user Appx packages that block')
+        const end = finalize.indexOf('Write-Step "sysprep and shutdown"')
+        expect(at).toBeGreaterThan(-1)
+        expect(end).toBeGreaterThan(at)
+        return finalize.slice(at, end)
+    }
+
+    test('skips packages Windows marks non-removable', () => {
+        // Removal is refused by every route (0x80070032 / 0x80073CFA), and the
+        // failure is what drives the destructive deprovision fallback.
+        expect(cleanup()).toMatch(/if \(\$pkg\.NonRemovable\) \{ continue \}/)
+    })
+
+    test('never deprovisions the registered version itself', () => {
+        // Dropping the provisioned entry for the version that is registered is
+        // precisely the state sysprep refuses.
+        expect(cleanup()).toMatch(/\$_\.PackageName -ne \$pkg\.PackageFullName/)
+    })
+})
+
+/**
  * The zero pass used to run the volume to 0 bytes free and hand the space back
  * with a `-ErrorAction SilentlyContinue` delete. On 2026-08-03 finalize then
  * died with "PROVISIONER ERROR: There is not enough space on the disk", raised

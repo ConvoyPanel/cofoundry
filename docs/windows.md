@@ -1421,6 +1421,38 @@ umount /tmp/vm
 | `PROVISIONER ERROR: There is not enough space on the disk.` right after the `sysprep and shutdown` step header | `Zero-FreeSpace` wrote until `ERROR_DISK_FULL` and handed the space back with a `-ErrorAction SilentlyContinue` delete; at 0 bytes free that delete can itself fail, and the silence carried a full volume into sysprep | The zero pass stops at a 1 GB reserve and throws if the fill file survives; a free-space gate before generalize lists the largest directories on C: |
 | `sysprep did not arm the image for OOBE after 2 attempts` with no further detail | The gate's message said to read `setuperr.log`, but packer deletes the VM within seconds of the provisioner erroring | `Finalize.ps1` dumps `setuperr.log`/`setupact.log` and the arming registry state to packer's stdout after each failed attempt |
 
+### 2026-08-03: the Appx cleanup manufactured its own generalize blocker
+
+`Finalize.ps1`'s Appx cleanup caused the failure it exists to prevent. The
+image entered Finalize with **5 provisioned packages and left with 0**.
+
+Chain, confirmed on a live 2025 guest preserved with `qm set <vmid> --protection 1`
+before packer could delete it:
+
+1. The WU round installs KB5007651, "Update for Windows Security platform".
+   `Microsoft.SecHealthUI` becomes a **Store**-signed package, registered for the
+   build's Administrator **and correctly provisioned**. sysprep is happy.
+2. The cleanup sees it registered, so it does not skip, and calls
+   `Remove-AppxPackage -AllUsers`. Windows refuses: `0x80070032`
+   ERROR_NOT_SUPPORTED. (Per-user removal is refused too, with `0x80073CFA`;
+   `Set-NonRemovableAppsPolicy -NonRemovable 0` reports success and changes
+   nothing.) The package is simply not removable by any route.
+3. The failure drives the deprovision fallback, which **removes the provisioning
+   registration while reporting "Removal failed. Please contact your software
+   vendor."** The payload stays; the provisioning is gone.
+4. The package is now registered-but-not-provisioned — the one state generalize
+   refuses — and sysprep aborts `0x80073cf2` naming it.
+
+Fixes: skip `$pkg.NonRemovable`, and never deprovision an entry whose
+`PackageName` equals the registered `PackageFullName`.
+
+**Do not read the blocker-count warning as a severity signal.** That image
+listed 41 registered, non-provisioned packages and generalize objected to
+exactly one. The other 40 are non-removable inbox SystemApps (`SignatureKind`
+`System`), which sysprep tolerates. The single offender was the only
+`SignatureKind` `Store` entry. A long warning list is normal; the count says
+nothing about whether sysprep will pass.
+
 ### 2026-08-03: the 2025 finalize space failure
 
 Two consecutive `windows-server-2025` attempts died at 3h04m each and produced

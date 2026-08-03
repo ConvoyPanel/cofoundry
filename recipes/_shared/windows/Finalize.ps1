@@ -424,6 +424,18 @@ try {
     # inflates the blocker list. Observed on 2026-08-03 windows-server-2025.
     if ($pkg.IsFramework) { continue }
 
+    # Packages Windows marks non-removable cannot be unregistered by any route --
+    # -AllUsers returns 0x80070032 ERROR_NOT_SUPPORTED and per-user returns
+    # 0x80073CFA (both confirmed on a live 2025 guest, 2026-08-03). Attempting
+    # them is not merely noise: the failure drives the deprovision fallback
+    # below, and that is what actually broke the build. See the fallback comment.
+    #
+    # sysprep tolerates these -- the 2026-08-03 image had 41 registered,
+    # non-provisioned, non-removable inbox SystemApps and generalize objected to
+    # exactly one package, the single Store-signed one whose provisioning the
+    # fallback had just stripped.
+    if ($pkg.NonRemovable) { continue }
+
     Write-Step "  unregistering $($pkg.PackageFullName)"
     try {
       Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction Stop
@@ -437,8 +449,22 @@ try {
       # sysprep rejects, and 1.29.280.0), and removal of the stale one fails with
       # 0x80070032 ERROR_NOT_SUPPORTED until the provisioned entry goes. Use the
       # already-enumerated list so a failed/slow re-query cannot silently skip this.
+      #
+      # NEVER drop the provisioned entry for the very version that is
+      # registered. Deprovisioning it does not help the removal, and it converts
+      # a package sysprep was perfectly happy with -- registered AND provisioned
+      # -- into the one state sysprep refuses. That is not hypothetical: on
+      # 2026-08-03 windows-server-2025 entered Finalize with 5 provisioned
+      # packages and left with 0, because every deprovision here reported
+      # "Removal failed. Please contact your software vendor." while still
+      # removing the provisioning registration. Generalize then aborted
+      # 0x80073cf2 on Microsoft.SecHealthUI -- which the WU "Windows Security
+      # platform" update (KB5007651) had made a Store-signed, non-removable
+      # package that arrived correctly provisioned. The cleanup manufactured its
+      # own blocker and cost two 3h04m builds.
       $match = @($provisionedPkgs | Where-Object {
-        $_.DisplayName -eq $pkg.Name -or $_.PackageName -like "$($pkg.Name)_*"
+        ($_.DisplayName -eq $pkg.Name -or $_.PackageName -like "$($pkg.Name)_*") -and
+        $_.PackageName -ne $pkg.PackageFullName
       })
       Write-Step "    $($match.Count) provisioned entr(y/ies) match $($pkg.Name)"
       foreach ($pp in $match) {
