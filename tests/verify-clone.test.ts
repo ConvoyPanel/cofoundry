@@ -6,7 +6,7 @@ import {
     sentinelHostname,
     sentinelPassword,
 } from '@/verify/clone.ts'
-import { summarize, formatFailures } from '@/verify/report.ts'
+import { summarize, formatFailures, formatWarnings } from '@/verify/report.ts'
 import type { CheckResult } from '@/verify/guest.ts'
 
 describe('parseDiskSize', () => {
@@ -142,6 +142,33 @@ describe('report', () => {
             '\n'
         )
         const lines = formatFailures([result('x', 'fail', noisy)]).split('\n')
+        expect(lines.length).toBeLessThanOrEqual(9)
+    })
+
+    test('warnings carry the guest output too', () => {
+        // A warn-severity check still reports something the reader has to act
+        // on. `rearm-headroom` prints either a count or "could not read..." --
+        // printing the description alone makes a template with no rearms left
+        // indistinguishable from a broken probe. The 2026-08-03
+        // windows-server-2025 verify hit exactly that ambiguity.
+        const text = formatWarnings([
+            result('a', 'pass', 'ignored'),
+            result(
+                'rearm-headroom',
+                'warn',
+                'remaining Windows rearm count: 0'
+            ),
+        ])
+        expect(text).toContain('rearm-headroom')
+        expect(text).toContain('remaining Windows rearm count: 0')
+        expect(text).not.toContain('ignored')
+    })
+
+    test('warning output is truncated like failure output', () => {
+        const noisy = Array.from({ length: 40 }, (_, i) => `line ${i}`).join(
+            '\n'
+        )
+        const lines = formatWarnings([result('x', 'warn', noisy)]).split('\n')
         expect(lines.length).toBeLessThanOrEqual(9)
     })
 })
