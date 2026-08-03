@@ -325,12 +325,19 @@ Write-Step "remove per-user Appx packages that block generalize"
 # package that refuses to unregister should not fail the build here, because
 # sysprep's own pre-validation is the authority and the host-side
 # assert-generalized check is what actually gates the export.
-$provisioned = @()
+# Enumerate provisioned packages ONCE, keeping the objects (not just names) so
+# the deprovision fallback below never has to re-query. Re-querying inside the
+# catch is what made that fallback silently no-op on 2026-08-03: it returned
+# nothing (or threw) and the outer catch logged "STILL REGISTERED" without ever
+# printing a "deprovisioning" line.
+$provisionedPkgs = @()
 try {
-  $provisioned = @((Get-AppxProvisionedPackage -Online -ErrorAction Stop).PackageName)
+  $provisionedPkgs = @(Get-AppxProvisionedPackage -Online -ErrorAction Stop)
 } catch {
   Write-Step "  (could not enumerate provisioned packages: $($_.Exception.Message))"
 }
+$provisioned = @($provisionedPkgs | ForEach-Object { $_.PackageName })
+Write-Step "  $($provisionedPkgs.Count) provisioned package(s) on this image"
 # Edge resists unregistration while any of its processes are alive, and a WU
 # round that updates Edge leaves them running. Stop them before the attempt.
 Get-Process -Name msedge, msedgewebview2, MicrosoftEdgeUpdate -ErrorAction SilentlyContinue |
@@ -354,6 +361,12 @@ try {
     }
     if (($provisioned -contains $pkg.PackageFullName) -and $registered.Count -eq 0) { continue }
 
+    # Framework packages (VCLibs, .NET Native, …) cannot be removed while any
+    # dependent package remains -- Windows answers "cannot remove framework".
+    # sysprep does not object to them, so attempting them only produces noise and
+    # inflates the blocker list. Observed on 2026-08-03 windows-server-2025.
+    if ($pkg.IsFramework) { continue }
+
     Write-Step "  unregistering $($pkg.PackageFullName)"
     try {
       Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction Stop
@@ -361,18 +374,30 @@ try {
       Write-Step "    unregister failed: $($_.Exception.Message)"
       # A per-user registration that will not go usually needs its provisioned
       # entry dropped first, which also stops it re-registering at next logon.
+      #
+      # Match on the family, not DisplayName equality: 2025 ships TWO versions of
+      # Microsoft.DesktopAppInstaller (1.26.510.0 registered per-user, which
+      # sysprep rejects, and 1.29.280.0), and removal of the stale one fails with
+      # 0x80070032 ERROR_NOT_SUPPORTED until the provisioned entry goes. Use the
+      # already-enumerated list so a failed/slow re-query cannot silently skip this.
+      $match = @($provisionedPkgs | Where-Object {
+        $_.DisplayName -eq $pkg.Name -or $_.PackageName -like "$($pkg.Name)_*"
+      })
+      Write-Step "    $($match.Count) provisioned entr(y/ies) match $($pkg.Name)"
+      foreach ($pp in $match) {
+        try {
+          Write-Step "    deprovisioning $($pp.PackageName)"
+          Remove-AppxProvisionedPackage -Online -PackageName $pp.PackageName -ErrorAction Stop | Out-Null
+        } catch {
+          Write-Step "      deprovision failed: $($_.Exception.Message)"
+        }
+      }
       try {
-        Get-AppxProvisionedPackage -Online -ErrorAction Stop |
-          Where-Object { $_.DisplayName -eq $pkg.Name } |
-          ForEach-Object {
-            Write-Step "    deprovisioning $($_.PackageName)"
-            Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction Stop | Out-Null
-          }
         Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction Stop
         Write-Step "    recovered after deprovisioning"
       } catch {
         $blockers += $pkg.PackageFullName
-        Write-Step "    STILL REGISTERED after deprovision attempt: $($_.Exception.Message)"
+        Write-Step "    STILL REGISTERED: $($_.Exception.Message)"
       }
     }
   }

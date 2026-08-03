@@ -474,9 +474,15 @@ Also seen: `Windows cannot remove framework Microsoft.VCLibs.140.00.UWPDesktop�
 — framework packages cannot be removed while dependents remain, so they need
 excluding from the attempt list rather than being logged as blockers.
 
-Next step: work out why the deprovision fallback does not fire, and handle the
-two-version case (removing the *provisioned* newer version before the stale
-per-user older one). Note 2022 passes with 32 packages still registered, so
+**Fixed (untested on a build):** the fallback re-queried
+`Get-AppxProvisionedPackage` *inside* the catch, so a query that returned nothing
+or threw made the outer catch log `STILL REGISTERED` with no `deprovisioning`
+line — silently no-op. It now uses the list enumerated once up front, matches on
+the package **family** (`DisplayName -eq $pkg.Name -or PackageName -like
+"$($pkg.Name)_*"`) so both DesktopAppInstaller versions are found, deprovisions
+each match with its own error handling, and logs how many matched. Framework
+packages are skipped outright (`$pkg.IsFramework`) since they can never be
+removed while dependents remain and only inflate the blocker list. Note 2022 passes with 32 packages still registered, so
 "still registered" is not itself fatal — only packages sysprep names are.
 
 ### Sysprep Appx pre-validation: being provisioned does not mean safe
