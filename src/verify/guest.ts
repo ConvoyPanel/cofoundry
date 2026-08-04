@@ -177,12 +177,31 @@ const evaluate = (
  * Only transport errors are retried, never a real non-zero exit, and every
  * check is a read-only observation, so re-running one is free of side effects.
  */
-const TRANSPORT_ATTEMPTS = 2
-const TRANSPORT_RETRY_MS = 5_000
-// More generous than TRANSPORT_ATTEMPTS: losing the boot-id baseline aborts the
-// entire verify rather than one check, and it is read at the busiest moment in
-// the run (right after autologon is armed).
+const TRANSPORT_ATTEMPTS = 4
+// Losing the boot-id baseline aborts the entire verify rather than one check,
+// and it is read at the busiest moment in the run (right after autologon is
+// armed), so it gets the same budget.
 const BOOT_ID_ATTEMPTS = 4
+
+/**
+ * Backoff before retry `attempt` (1-based): 5s, 10s, 20s.
+ *
+ * Sized from the outages themselves rather than picked round. In run
+ * 30868276107 the windows-server-2025 leg logged `QEMU guest agent is not
+ * running` in runs of three-to-four polls spanning ~30-35s before the agent
+ * came back — e.g. 05:23:59/05:24:09/05:24:18, answering again by 05:24:31.
+ * The previous policy (two attempts, a flat 5s apart) covered ~13s, so it was
+ * structurally incapable of riding out a typical outage: the two checks that
+ * sank that run, `no-plaintext-build-password` and `shell-session-present`,
+ * each burned both attempts inside one 30s window and were reported as image
+ * defects. Three retries spanning ~35s covers the observed distribution.
+ *
+ * Only the failing path pays this, and only transport errors reach it.
+ */
+export const transportBackoffMs = (attempt: number): number =>
+    5_000 * 2 ** (attempt - 1)
+
+const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 
 export const runCheck = async (
     target: string,
@@ -203,7 +222,7 @@ export const runCheck = async (
         )
         if (!res.transportError) break
         if (attempt < TRANSPORT_ATTEMPTS)
-            await new Promise(r => setTimeout(r, TRANSPORT_RETRY_MS))
+            await sleep(transportBackoffMs(attempt))
     }
     const { ok, detail } = evaluate(check, res)
     return {
@@ -322,7 +341,7 @@ export const waitForWindowsInit = async (
         } else {
             stableBootId = ''
         }
-        await new Promise(r => setTimeout(r, intervalS * 1000))
+        await sleep(intervalS * 1000)
     }
     return false
 }
@@ -357,8 +376,7 @@ export const rebootGuest = async (
     // could not tolerate it discarded a 1h16m build's validation.
     let before = ''
     for (let attempt = 1; attempt <= BOOT_ID_ATTEMPTS && !before; attempt++) {
-        if (attempt > 1)
-            await new Promise(r => setTimeout(r, TRANSPORT_RETRY_MS))
+        if (attempt > 1) await sleep(transportBackoffMs(attempt - 1))
         before = await readBootId(target, vmid, shell)
     }
     // Without a baseline there is nothing to compare against, and "the agent
@@ -371,7 +389,7 @@ export const rebootGuest = async (
     await guestExec(target, vmid, shell, REBOOT_SCRIPT[shell], 30)
     const deadline = Date.now() + timeoutS * 1000
     while (Date.now() < deadline) {
-        await new Promise(r => setTimeout(r, intervalS * 1000))
+        await sleep(intervalS * 1000)
         const now = await readBootId(target, vmid, shell)
         if (now && now !== before) return true
     }

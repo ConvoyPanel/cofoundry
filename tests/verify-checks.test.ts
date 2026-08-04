@@ -113,6 +113,26 @@ describe('linux checks', () => {
         }
     })
 
+    test('a systemd failure reports the journal, not just the unit name', () => {
+        // "grub2-common.service loaded failed failed Record successful boot for
+        // GRUB" was the entire diagnostic run 30868276107 produced for
+        // ubuntu-26.04; the cause ("grub-editenv: error: invalid environment
+        // block") was one journal line away inside the guest. Both phases must
+        // dump it, and only on the failing path.
+        for (const id of ['systemd-healthy', 'systemd-healthy-first-boot']) {
+            const script = renderScript(
+                linuxSuite.checks.find(c => c.id === id)!,
+                ctx
+            )
+            expect(script, id).toContain('journalctl')
+            // Reached only after the poll loop gives up, so a healthy guest
+            // never pays for it.
+            expect(script.indexOf('journalctl'), id).toBeGreaterThan(
+                script.indexOf('system state:')
+            )
+        }
+    })
+
     test('sentinel values reach the scripts that assert them', () => {
         const byId = (id: string): string =>
             renderScript(linuxSuite.checks.find(c => c.id === id)!, ctx)

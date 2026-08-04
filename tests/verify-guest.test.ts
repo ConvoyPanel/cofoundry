@@ -5,6 +5,7 @@ import {
     guestExecCommand,
     parseGuestExecResult,
     runCheck,
+    transportBackoffMs,
 } from '@/verify/guest.ts'
 
 describe('guest script encoding', () => {
@@ -150,7 +151,26 @@ describe('transport-error retry', () => {
         )
         expect(result.status).toBe('fail')
         expect(result.detail).toContain('guest agent')
-        // Two attempts separated by the backoff, rather than one and done.
-        expect(Date.now() - started).toBeGreaterThanOrEqual(5_000)
+        // Every attempt separated by its backoff, rather than one and done.
+        // Asserting the full sum (not just the first gap) is what makes this a
+        // regression guard: run 30868276107 lost a 3h windows-server-2025 build
+        // to a retry budget that expired inside a single ~30s agent outage.
+        expect(Date.now() - started).toBeGreaterThanOrEqual(
+            transportBackoffMs(1) +
+                transportBackoffMs(2) +
+                transportBackoffMs(3)
+        )
     }, 120_000)
+
+    test('backoff grows so the budget outlasts a typical agent outage', () => {
+        expect([1, 2, 3].map(transportBackoffMs)).toEqual([
+            5_000, 10_000, 20_000,
+        ])
+        // Agent outages on a loaded node ran ~30-35s in run 30868276107.
+        const total = [1, 2, 3].reduce(
+            (sum, n) => sum + transportBackoffMs(n),
+            0
+        )
+        expect(total).toBeGreaterThanOrEqual(35_000)
+    })
 })

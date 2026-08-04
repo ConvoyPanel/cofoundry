@@ -219,4 +219,39 @@ describe('recipe consistency', () => {
         }
         expect(violations).toEqual([])
     })
+
+    test('Ubuntu autoinstall serializes the two grubenv writers', () => {
+        // 26.04 renamed grub-common.service to grub2-common.service without
+        // updating grub-initrd-fallback.service's `After=`, so the two units
+        // that both rewrite /boot/grub/grubenv stopped being ordered and raced
+        // (measured 25/200 concurrent grub-editenv pairs failing with "invalid
+        // environment block", 0/400 sequential). A losing race leaves the guest
+        // `degraded`, which is what sank ubuntu-26.04 in run 30868276107.
+        //
+        // The drop-in must name *both* spellings: the Ubuntu family shares one
+        // byte-identical payload, and whichever unit name a release does not
+        // use makes its line inert.
+        const violations: string[] = []
+        const members = recipes.filter(recipe => groupOf(recipe) === 'ubuntu')
+        expect(members.length).toBeGreaterThan(0)
+        for (const recipe of members) {
+            const path = join(recipesDir, recipe.name, 'http', 'user-data')
+            const content = existsSync(path) ? readFileSync(path, 'utf8') : ''
+            const dropIn = content.includes(
+                '/etc/systemd/system/grub-initrd-fallback.service.d'
+            )
+            if (!dropIn) {
+                violations.push(
+                    `${recipe.name}: no grub-initrd-fallback.service drop-in`
+                )
+                continue
+            }
+            for (const unit of ['grub-common.service', 'grub2-common.service'])
+                if (!content.includes(`After=${unit}`))
+                    violations.push(
+                        `${recipe.name}: drop-in does not order after ${unit}`
+                    )
+        }
+        expect(violations).toEqual([])
+    })
 })

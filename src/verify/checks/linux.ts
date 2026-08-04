@@ -9,6 +9,40 @@ export const sshKeyBody = (publicKey: string): string =>
     publicKey.trim().split(/\s+/)[1] ?? publicKey.trim()
 
 /**
+ * Poll `systemctl is-system-running` until it settles, then report.
+ *
+ * `--wait` is not usable: it is a no-op on systemd 239 (el8), which is why this
+ * polls instead — see docs/check-upstream-handoff.md #4.
+ *
+ * On failure it prints the journal for each failed unit, not just the
+ * `systemctl --failed` one-liner. A unit name and the word "failed" is not a
+ * diagnostic: the 2026-08-04 ubuntu-26.04 failure reported exactly
+ * `grub2-common.service loaded failed failed Record successful boot for GRUB`,
+ * and identifying the cause needed one line the guest already had —
+ * `grub-editenv: error: invalid environment block`. Printing it costs nothing
+ * on the passing path, which returns before ever reaching this.
+ */
+const systemdHealthyScript = `i=0
+while :; do
+  state=$(systemctl is-system-running 2>/dev/null || true)
+  case "$state" in
+    running) exit 0 ;;
+    initializing|starting|'') ;;
+    *) break ;;
+  esac
+  i=$((i + 1)); [ "$i" -ge 60 ] && break
+  sleep 3
+done
+echo "system state: $state"
+systemctl --failed --no-pager --no-legend
+for u in $(systemctl --failed --no-pager --no-legend --plain 2>/dev/null | awk '{print $1}'); do
+  echo "--- journal: $u ---"
+  journalctl -b -u "$u" --no-pager -n 20 2>/dev/null ||
+    echo '(journal unavailable)'
+done
+exit 1`
+
+/**
  * Checks that apply to every Linux recipe (Debian, Ubuntu, AlmaLinux, Rocky).
  * Anything distro-specific belongs in a per-recipe suite, not here.
  *
@@ -263,20 +297,7 @@ exit 1`,
             // that was merely still booting.
             id: 'systemd-healthy-first-boot',
             description: 'system reached a running state on first boot',
-            script: `i=0
-while :; do
-  state=$(systemctl is-system-running 2>/dev/null || true)
-  case "$state" in
-    running) exit 0 ;;
-    initializing|starting|'') ;;
-    *) break ;;
-  esac
-  i=$((i + 1)); [ "$i" -ge 60 ] && break
-  sleep 3
-done
-echo "system state: $state"
-systemctl --failed --no-pager --no-legend
-exit 1`,
+            script: systemdHealthyScript,
             severity: 'warn',
             phase: 'first-boot',
             timeoutS: 240,
@@ -284,20 +305,7 @@ exit 1`,
         {
             id: 'systemd-healthy',
             description: 'no failed units after a clean reboot',
-            script: `i=0
-while :; do
-  state=$(systemctl is-system-running 2>/dev/null || true)
-  case "$state" in
-    running) exit 0 ;;
-    initializing|starting|'') ;;
-    *) break ;;
-  esac
-  i=$((i + 1)); [ "$i" -ge 60 ] && break
-  sleep 3
-done
-echo "system state: $state"
-systemctl --failed --no-pager --no-legend
-exit 1`,
+            script: systemdHealthyScript,
             severity: 'fail',
             phase: 'post-reboot',
             timeoutS: 240,

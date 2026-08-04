@@ -43,6 +43,24 @@ autoinstall:
   late-commands:
     - curtin in-target -- bash -c "echo 'GRUB_CMDLINE_LINUX=\"console=tty0 console=ttyS0,115200\"' > /etc/default/grub.d/50-cofoundry.cfg"
     - curtin in-target -- update-grub
+    # Serialize the two units that mutate /boot/grub/grubenv.
+    #
+    # 26.04 renamed grub-common.service to grub2-common.service but left
+    # grub-initrd-fallback.service ordered `After=grub-common.service`. An
+    # After= naming a unit that does not exist is silently no ordering at all,
+    # so on 26.04 both units run at boot-complete.target concurrently — and
+    # both call grub-editenv, which rewrites the block via fopen(..., "wb").
+    # The truncate window makes a concurrent reader see a short block and die
+    # with "invalid environment block"; the guest then boots `degraded`.
+    # Measured in the shipped 26.04 image: 25/200 concurrent pairs failed,
+    # 0/400 sequential.
+    #
+    # Both spellings are listed because the family shares one payload: on
+    # releases still using the old name the grub2- line is inert, and on 26.04
+    # the grub- line is. That inertness is exactly the bug's mechanism, used
+    # here in the other direction. See docs/recipes.md#ubuntu-grubenv-race.
+    - curtin in-target -- mkdir -p /etc/systemd/system/grub-initrd-fallback.service.d
+    - curtin in-target -- bash -c "printf '[Unit]\\nAfter=grub-common.service\\nAfter=grub2-common.service\\n' > /etc/systemd/system/grub-initrd-fallback.service.d/10-cofoundry-grubenv-race.conf"
     - curtin in-target -- bash -c "mkdir -p /etc/ssh/sshd_config.d && printf 'PermitRootLogin yes\\nPasswordAuthentication yes\\n' > /etc/ssh/sshd_config.d/10-cofoundry.conf"
     # Subiquity defers the identity user to cloud-init's first boot, so `packer`
     # does not yet exist in the target when these late-commands run — confirmed

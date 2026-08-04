@@ -154,6 +154,19 @@ Two real examples, both of which produced confident wrong conclusions:
 Before trusting a probe, ask: *what would this print in the failure case?* If the
 answer is "the same thing", it is not a probe.
 
+The same trap has a scheduling flavour: **"the check failed" and "the check
+never ran" are different states, and a retry budget is what keeps them apart.**
+`src/verify/guest.ts` retries only transport errors (the agent never answered),
+never a real non-zero exit — but a budget too short to outlast the outage
+collapses the two states anyway. Run `30868276107` lost a 3h
+windows-server-2025 build that way: `QEMU guest agent is not running` came in
+runs of ~30-35s under concurrent-build load, and the then-current policy of two
+attempts a flat 5s apart covered ~13s, so `no-plaintext-build-password` and
+`shell-session-present` burned both attempts inside one outage and were reported
+as image defects. Size a retry budget from the measured outage, not from a round
+number — the backoff is now 5s/10s/20s, and `transportBackoffMs` is asserted
+against that reasoning in `tests/verify-guest.test.ts`.
+
 ## 8. Guard every fix, and negative-control every guard
 
 A guard that cannot fail is worse than none — it produces false confidence. One
