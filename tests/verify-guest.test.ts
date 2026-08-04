@@ -1,11 +1,16 @@
 import { describe, expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import {
+    describeGuestOutage,
     elideEncodedPayload,
     encodeGuestScript,
+    guestExec,
     guestExecCommand,
     parseGuestExecResult,
     runCheck,
     transportBackoffMs,
+    waitNote,
 } from '@/verify/guest.ts'
 
 describe('guest script encoding', () => {
@@ -114,6 +119,73 @@ describe('elideEncodedPayload', () => {
     test('leaves an ordinary message untouched', () => {
         const plain = 'QEMU guest agent is not running'
         expect(elideEncodedPayload(plain)).toBe(plain)
+    })
+})
+
+describe('waiting is reported as waiting, not as failure', () => {
+    // The two lines below are verbatim `qm` output. They are what a rebooting
+    // guest looks like from the node, and they used to reach the terminal raw —
+    // a CI log where the only visible lines during a 15-minute Cloudbase-Init
+    // wait read "failed" and "is not running", none of which meant anything was
+    // wrong.
+    const QM_TIMEOUT =
+        "VM 9500 qga command 'guest-exec-status' failed - got timeout"
+    const QM_NOT_RUNNING = 'QEMU guest agent is not running'
+
+    test('qm outage wording is restated as an expected wait', () => {
+        expect(describeGuestOutage(QM_NOT_RUNNING)).toEqual({
+            phrase: 'guest agent down',
+            expected: true,
+        })
+        expect(describeGuestOutage(QM_TIMEOUT)).toEqual({
+            phrase: 'guest agent not answering yet',
+            expected: true,
+        })
+        for (const raw of [QM_TIMEOUT, QM_NOT_RUNNING])
+            expect(describeGuestOutage(raw).phrase).not.toMatch(
+                /fail|not running/i
+            )
+    })
+
+    test('a dead node is not dressed up as a guest that is coming back', () => {
+        // Two ways to get this wrong at once. The transport error carries the
+        // whole failed command line, which always contains `--timeout <n>`, so
+        // a loose match on "timeout" calls an unreachable node a busy agent;
+        // and marking it expected would attach the loop's reassurance
+        // ("Cloudbase-Init reboots the guest once") to an outage that no amount
+        // of waiting on the guest will fix.
+        const unreachable =
+            "Command failed with exit code 255: ssh host 'qm guest exec 9500 --timeout 30 -- /bin/sh'\n" +
+            'ssh: Could not resolve hostname host: No address associated with hostname'
+        expect(describeGuestOutage(unreachable)).toEqual({
+            phrase: 'node unreachable over ssh',
+            expected: false,
+        })
+    })
+
+    test('every note carries elapsed time against the budget', () => {
+        const note = waitNote('guest agent down', Date.now() - 80_000, 900)
+        expect(note).toBe('guest agent down (1m20s of 15m00s)')
+    })
+
+    test('guest-exec stderr lands in the result, not on the terminal', async () => {
+        // Unroutable target: ssh writes its diagnosis to stderr and exits 255.
+        // Capturing it is what keeps the node's chatter out of the renderer's
+        // output, and it is also the only way the failure explains itself —
+        // with stderr inherited the error read "Command failed with exit
+        // code 255" and nothing more.
+        const res = await guestExec('cf-invalid.invalid', 9999, 'sh', 'true', 5)
+        expect(res.transportError).toContain('Could not resolve hostname')
+    }, 60_000)
+
+    test('the guest-exec path asks for captured stderr', () => {
+        // Static guard: captureRemote inherits stderr by default, so a future
+        // edit that drops this option silently restores the raw noise.
+        const src = readFileSync(
+            fileURLToPath(new URL('../src/verify/guest.ts', import.meta.url)),
+            'utf8'
+        )
+        expect(src).toMatch(/captureStderr:\s*true/)
     })
 })
 

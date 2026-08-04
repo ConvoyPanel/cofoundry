@@ -345,6 +345,11 @@ const runVerifyLocked = async (
                 `${r.status === 'pass' ? '✓' : r.status === 'warn' ? '!' : '✗'} ${r.id}`
             )
         }
+        // Waits are reported as progress, not as phases or logs: a rebooting
+        // guest refusing commands for minutes is the expected shape of this
+        // run, and `qm`'s own wording for it ("QEMU guest agent is not
+        // running") reads as a fault when it lands raw in the log.
+        const waiting = (note: string): void => task.setProgress(dim(note))
 
         if (isWindows) {
             task.setPhase(
@@ -355,7 +360,8 @@ const runVerifyLocked = async (
                     env.SSH_TARGET,
                     vmid,
                     ctx.hostname,
-                    WINDOWS_INIT_TIMEOUT_S
+                    WINDOWS_INIT_TIMEOUT_S,
+                    { onWait: waiting }
                 ))
             ) {
                 throw new Error(
@@ -373,7 +379,8 @@ const runVerifyLocked = async (
                 suite,
                 'first-boot',
                 ctx,
-                record
+                record,
+                waiting
             ))
         )
         lastPhase = 'first-boot'
@@ -384,7 +391,8 @@ const runVerifyLocked = async (
                 env.SSH_TARGET,
                 vmid,
                 suite.shell,
-                REBOOT_TIMEOUT_S
+                REBOOT_TIMEOUT_S,
+                { onWait: waiting }
             ))
         ) {
             throw new Error(
@@ -400,7 +408,8 @@ const runVerifyLocked = async (
                 suite,
                 'post-reboot',
                 ctx,
-                record
+                record,
+                waiting
             ))
         )
         lastPhase = 'post-reboot'
@@ -421,7 +430,8 @@ const runVerifyLocked = async (
                     env.SSH_TARGET,
                     vmid,
                     suite.shell,
-                    REBOOT_TIMEOUT_S
+                    REBOOT_TIMEOUT_S,
+                    { onWait: waiting }
                 ))
             ) {
                 throw new Error('guest did not come back from the logon reboot')
@@ -437,7 +447,8 @@ const runVerifyLocked = async (
                     suite,
                     'post-logon',
                     ctx,
-                    record
+                    record,
+                    waiting
                 ))
             )
             lastPhase = 'post-logon'

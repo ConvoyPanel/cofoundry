@@ -73,9 +73,25 @@ export const installRemoteSignalHandlers = (): (() => void) => {
     }
 }
 
+export interface CaptureRemoteOptions {
+    /**
+     * Fold the remote command's stderr into the thrown error instead of letting
+     * it through to this process's stderr.
+     *
+     * Callers that poll — verify's guest-exec loops above all — want this: an
+     * expected failure mid-poll would otherwise print raw node diagnostics
+     * ("QEMU guest agent is not running") between the renderer's own lines,
+     * where they read as errors rather than as the wait they are. Piping also
+     * makes those lines part of `err.message`, so the one attempt that does end
+     * the loop reports *why* rather than just "exit 255".
+     */
+    captureStderr?: boolean
+}
+
 export const captureRemote = async (
     target: string,
-    cmd: string
+    cmd: string,
+    opts: CaptureRemoteOptions = {}
 ): Promise<string> => {
     try {
         // stdin: 'ignore' (≈ ssh -n), never 'inherit'. Concurrent ssh calls that
@@ -84,7 +100,7 @@ export const captureRemote = async (
         // (mkdir/file-check) for later recipes while an earlier build streams.
         const { stdout } = await execa('ssh', [...SSH_OPTS, target, cmd], {
             stdin: 'ignore',
-            stderr: 'inherit',
+            stderr: opts.captureStderr ? 'pipe' : 'inherit',
         })
         return stdout
     } catch (err) {

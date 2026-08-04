@@ -126,6 +126,21 @@ after the loop loses attempt 1, because attempt 2 overwrites `Panther`).
 
 When a step retries, dump on **each** failure, not once at the end.
 
+The inverse also has to hold: **a message that reaches the reader must belong to
+the thing that failed.** `captureRemote` inherits stderr by default, so verify's
+guest-exec loops used to let `qm`'s own diagnosis — `QEMU guest agent is not
+running`, `VM 9500 qga command 'guest-exec-status' failed - got timeout` — land
+raw in the log, on no particular line, while the message attached to the failing
+check said only "Command failed with exit code 255". Both halves were wrong: the
+reader saw failure wording for the ordinary case (a guest that reboots during
+Cloudbase-Init) and no wording at all for the real one. Guest exec now passes
+`captureStderr: true`, which folds those lines into the transport error where
+the check reports them, and the wait loops restate the same condition as
+progress (`guest agent down — Cloudbase-Init reboots the guest once (2m10s of
+15m00s)`). Match the patterns against wording only `qm` can emit: the transport
+error carries the whole failed command line, and every guest-exec command line
+contains `--timeout <n>`.
+
 ## 6. Silence must never be a valid state
 
 If "working normally" and "died" look the same, you cannot tell them apart under

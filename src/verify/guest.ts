@@ -1,3 +1,4 @@
+import { fmtElapsed } from '@cofoundry/ui'
 import { redactSensitive } from '@/util.ts'
 import { captureRemote } from '@/build/remote.ts'
 import type {
@@ -106,7 +107,12 @@ export const guestExec = async (
         // thing.
         const raw = await captureRemote(
             target,
-            guestExecCommand(vmid, shell, script, timeoutS)
+            guestExecCommand(vmid, shell, script, timeoutS),
+            // An unreachable agent is the normal state during a reboot, and
+            // every loop below expects it. Keep `qm`'s stderr out of the
+            // terminal and inside the transport error, where the retry logic —
+            // and, if the loop gives up, the failure message — can use it.
+            { captureStderr: true }
         )
         return parseGuestExecResult(raw)
     } catch (err) {
@@ -138,6 +144,61 @@ export const elideEncodedPayload = (message: string): string =>
             '-EncodedCommand <elided>'
         )
         .replace(/echo\s+[A-Za-z0-9+/=]{64,}\s*\|/g, 'echo <elided> |')
+
+/**
+ * Called by the loops below every time they poll, so a wait that legitimately
+ * runs for minutes reads as deliberate progress. Callers wire it to the
+ * renderer's progress line; leaving it unset keeps the loop silent.
+ */
+export type WaitReporter = (note: string) => void
+
+export interface WaitOptions {
+    /** Seconds between polls. */
+    intervalS?: number
+    onWait?: WaitReporter
+}
+
+export interface GuestOutage {
+    /** How to say it to someone watching a wait rather than reading a stack. */
+    phrase: string
+    /**
+     * The guest is busy or restarting — the case every loop here is built to
+     * ride out. False means the node or the link is the problem, which no
+     * amount of waiting on the guest fixes and which must not be dressed up
+     * with reassurance about the guest.
+     */
+    expected: boolean
+}
+
+/**
+ * `qm` describes the two ordinary outages in its own vocabulary — a stopped
+ * agent ("QEMU guest agent is not running") and one too busy to answer in time
+ * ("VM 9500 qga command 'guest-exec-status' failed - got timeout"). Printed raw
+ * they look like faults; to anyone watching a reboot they both mean the same
+ * unremarkable thing, which is what these render instead.
+ *
+ * Each pattern must be one only `qm` can produce. The error carries the whole
+ * failed command line, which itself contains `--timeout <n>` — so a loose match
+ * on "timeout" labels every outage, including an unreachable node, as a busy
+ * agent.
+ */
+export const describeGuestOutage = (transportError: string): GuestOutage => {
+    if (/guest agent is not running/i.test(transportError))
+        return { phrase: 'guest agent down', expected: true }
+    if (/failed\s*-\s*got timeout/i.test(transportError))
+        return { phrase: 'guest agent not answering yet', expected: true }
+    if (/^ssh:/m.test(transportError))
+        return { phrase: 'node unreachable over ssh', expected: false }
+    return { phrase: 'guest unreachable', expected: false }
+}
+
+/** `<detail> (1m20s of 15m00s)` — every note carries how much budget is left. */
+export const waitNote = (
+    detail: string,
+    startedMs: number,
+    timeoutS: number
+): string =>
+    `${detail} (${fmtElapsed(Date.now() - startedMs)} of ${fmtElapsed(timeoutS * 1000)})`
 
 export type CheckStatus = 'pass' | 'fail' | 'warn'
 
@@ -208,7 +269,8 @@ export const runCheck = async (
     vmid: number,
     suite: CheckSuite,
     check: GuestCheck,
-    ctx: CheckContext
+    ctx: CheckContext,
+    onWait?: WaitReporter
 ): Promise<CheckResult> => {
     const started = Date.now()
     let res: GuestExecResult = { exitCode: null, stdout: '', stderr: '' }
@@ -221,8 +283,15 @@ export const runCheck = async (
             check.timeoutS ?? 60
         )
         if (!res.transportError) break
-        if (attempt < TRANSPORT_ATTEMPTS)
-            await sleep(transportBackoffMs(attempt))
+        if (attempt < TRANSPORT_ATTEMPTS) {
+            const backoff = transportBackoffMs(attempt)
+            onWait?.(
+                `${check.id}: ${describeGuestOutage(res.transportError).phrase}, ` +
+                    `retrying in ${Math.round(backoff / 1000)}s ` +
+                    `(attempt ${attempt + 1} of ${TRANSPORT_ATTEMPTS})`
+            )
+            await sleep(backoff)
+        }
     }
     const { ok, detail } = evaluate(check, res)
     return {
@@ -243,11 +312,12 @@ export const runPhase = async (
     suite: CheckSuite,
     phase: CheckPhase,
     ctx: CheckContext,
-    onResult?: (result: CheckResult) => void
+    onResult?: (result: CheckResult) => void,
+    onWait?: WaitReporter
 ): Promise<CheckResult[]> => {
     const results: CheckResult[] = []
     for (const check of checksForPhase(suite, phase)) {
-        const result = await runCheck(target, vmid, suite, check, ctx)
+        const result = await runCheck(target, vmid, suite, check, ctx, onWait)
         onResult?.(result)
         results.push(result)
     }
@@ -326,9 +396,10 @@ export const waitForWindowsInit = async (
     vmid: number,
     hostname: string,
     timeoutS: number,
-    intervalS = 10
+    { intervalS = 10, onWait }: WaitOptions = {}
 ): Promise<boolean> => {
-    const deadline = Date.now() + timeoutS * 1000
+    const started = Date.now()
+    const deadline = started + timeoutS * 1000
     // Windows applies at most the 15-character NetBIOS prefix of a longer name.
     const idleScript = cloudbaseIdleScript(hostname.slice(0, 15))
     let stableBootId = ''
@@ -341,9 +412,27 @@ export const waitForWindowsInit = async (
         } else {
             stableBootId = ''
         }
+        onWait?.(waitNote(initWaitDetail(res), started, timeoutS))
         await sleep(intervalS * 1000)
     }
     return false
+}
+
+/**
+ * Why this poll didn't end the wait, in the terms the reader cares about. The
+ * idle script already answers in prose ("still running", "hostname not applied
+ * yet (WIN-…)"), so its stdout is the detail whenever it managed to run.
+ */
+const initWaitDetail = (res: GuestExecResult): string => {
+    if (res.transportError) {
+        const outage = describeGuestOutage(res.transportError)
+        return outage.expected
+            ? `${outage.phrase} — Cloudbase-Init reboots the guest once`
+            : outage.phrase
+    }
+    if (res.exitCode === 0)
+        return 'Cloudbase-Init idle, confirming the guest has settled'
+    return `Cloudbase-Init: ${redactSensitive(res.stdout) || `exit ${res.exitCode ?? 'unknown'}`}`
 }
 
 export const readBootId = async (
@@ -365,7 +454,7 @@ export const rebootGuest = async (
     vmid: number,
     shell: GuestShell,
     timeoutS: number,
-    intervalS = 5
+    { intervalS = 5, onWait }: WaitOptions = {}
 ): Promise<boolean> => {
     // Retry the baseline the way runCheck retries a check. A single empty reply
     // here used to abort the whole verify: on 2026-08-04 a windows-server-2019
@@ -376,7 +465,15 @@ export const rebootGuest = async (
     // could not tolerate it discarded a 1h16m build's validation.
     let before = ''
     for (let attempt = 1; attempt <= BOOT_ID_ATTEMPTS && !before; attempt++) {
-        if (attempt > 1) await sleep(transportBackoffMs(attempt - 1))
+        if (attempt > 1) {
+            // readBootId collapses "the agent never answered" and "it answered
+            // with nothing" into an empty string, so say only what was seen.
+            onWait?.(
+                `no boot id yet, retrying before the reboot ` +
+                    `(attempt ${attempt} of ${BOOT_ID_ATTEMPTS})`
+            )
+            await sleep(transportBackoffMs(attempt - 1))
+        }
         before = await readBootId(target, vmid, shell)
     }
     // Without a baseline there is nothing to compare against, and "the agent
@@ -387,11 +484,21 @@ export const rebootGuest = async (
         )
     // The reboot races the reply; a transport error here is expected, not fatal.
     await guestExec(target, vmid, shell, REBOOT_SCRIPT[shell], 30)
-    const deadline = Date.now() + timeoutS * 1000
+    const started = Date.now()
+    const deadline = started + timeoutS * 1000
     while (Date.now() < deadline) {
         await sleep(intervalS * 1000)
         const now = await readBootId(target, vmid, shell)
         if (now && now !== before) return true
+        onWait?.(
+            waitNote(
+                now
+                    ? 'guest still on the old boot, waiting for it to go down'
+                    : 'guest down, waiting for it to come back',
+                started,
+                timeoutS
+            )
+        )
     }
     return false
 }
