@@ -289,11 +289,28 @@ if ($c.Size -lt $want) { exit 1 }`,
             phase: 'post-reboot',
         },
         {
+            // Win32_Service, not Get-Service. PowerShell 5.1's Get-Service
+            // reports `StartType = Automatic` for delayed-auto services too —
+            // it cannot tell the two apart — so this check used to flag every
+            // delayed service that had simply not started yet and needed a
+            // hand-maintained denylist to stay quiet. That list never kept up:
+            // as of 2026-08-04 all three Windows recipes warn here on every run
+            // (CDPSvc, DPS, MSDTC, UALSVC, UsoSvc, cloudbase-init), all benign.
+            // A warning that always fires trains the reader to ignore the check.
+            // Win32_Service exposes a real DelayedAutoStart boolean (Server 2012+,
+            // so every release we build), which removes the guesswork.
+            //
+            // cloudbase-init is excluded by name as well as by the delayed flag:
+            // it is delayed-auto today, but it also *stops itself* once its
+            // plugins finish, so "not running" is its correct end state on a
+            // healthy clone no matter how it is configured. Whether it actually
+            // ran is asserted by cloudbase-init-completed, which is severity
+            // fail — so nothing is lost by keeping it out of this check.
             id: 'no-critical-service-failures',
             description: 'no automatic-start service failed to start',
-            script: `$bad = Get-Service | Where-Object { $_.StartType -eq 'Automatic' -and $_.Status -ne 'Running' }
-# DelayedAutoStart services are legitimately not running yet at this point.
-$bad = $bad | Where-Object { $_.Name -notin @('gpsvc','sppsvc','MapsBroker','WbioSrvc','tiledatamodelsvc','RemoteRegistry','edgeupdate') }
+            script: `$bad = Get-CimInstance Win32_Service |
+  Where-Object { $_.StartMode -eq 'Auto' -and $_.State -ne 'Running' -and -not $_.DelayedAutoStart }
+$bad = $bad | Where-Object { $_.Name -notin @('gpsvc','sppsvc','MapsBroker','WbioSrvc','tiledatamodelsvc','RemoteRegistry','edgeupdate','cloudbase-init') }
 if ($bad) {
   $bad | ForEach-Object { Write-Output "not running: $($_.Name) ($($_.DisplayName))" }
   exit 1
