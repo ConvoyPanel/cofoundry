@@ -10,6 +10,20 @@
 - Before committing, run `bun run prettier --write src/ tests/`, `bun test`, and
   `bun run typecheck`.
 
+## Debugging a build
+
+- Read `docs/debugging.md` **before** starting a debugging session on a build
+  failure. A Windows build costs 1-3h and its provisioners run only at the end,
+  so the default loop is one hypothesis per three hours; that document is how to
+  avoid paying it.
+- Two things there are worth knowing before you need them: `qm set <vmid>
+  --protection 1` preserves a failing build VM from packer's cleanup, and `pwsh`
+  runs on Linux so `recipes/_shared/windows/*.ps1` can be parse-checked in
+  milliseconds instead of a rebuild.
+- Anything that fails inside a guest must report through packer's stdout. An
+  error telling the reader to inspect a log on a VM that packer deletes seconds
+  later is not a diagnostic.
+
 ## Recipe changes
 
 - Read `docs/recipes.md` before changing or adding a recipe.

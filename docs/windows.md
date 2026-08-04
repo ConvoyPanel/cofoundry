@@ -1360,6 +1360,13 @@ prior build. Confirm the log contains both `throughput mode enabled` and
 
 ## Debugging workflow
 
+> **See [debugging.md](debugging.md) first.** It covers the techniques that
+> decide how long a session takes — preserving the failing VM with
+> `qm set <vmid> --protection 1`, querying the live guest, parse-checking
+> PowerShell locally with `pwsh`, and choosing the cheapest test that can
+> falsify the hypothesis. This section is the Windows-specific triage that runs
+> on top of it.
+
 Before changing HCL, an answer file, or a provisioner:
 
 1. Search this document for the symptom or error code.
@@ -1429,10 +1436,49 @@ umount /tmp/vm
 | windows-server-2022 | —     | 15 passed, 1 warned |
 | windows-server-2025 | 2h54m | 14 passed, 2 warned (17m27s) |
 
-The single shared warning is `no-critical-service-failures`, and its output (now
-printed, see below) shows why it is benign: `cloudbase-init` has completed and
-stopped, and CDPSvc/DPS/MSDTC/UALSVC/UsoSvc are delayed- or demand-start
-services that are simply not up moments after first logon.
+#### The two verify warnings, and why they are warnings
+
+Both are `severity: 'warn'`, so neither fails a build. Neither indicates a
+defect in the shipped template.
+
+**`no-critical-service-failures` — fires on all three releases.** The check
+lists services with `StartType = Automatic` that are not `Running` shortly after
+first logon, minus a hard-coded exclusion list. On 2019 it reported:
+
+```
+not running: CDPSvc (Connected Devices Platform Service)
+not running: cloudbase-init (cloudbase-init)
+not running: DPS (Diagnostic Policy Service)
+not running: MSDTC (Distributed Transaction Coordinator)
+not running: UALSVC (User Access Logging Service)
+not running: UsoSvc (Update Orchestrator Service)
+```
+
+All six are expected. `cloudbase-init` is **deliberately** delayed-auto-start
+(see the clone-specialize fix) and has already run to completion and stopped —
+a stopped cloudbase-init at this point is the success condition, not a failure.
+The other five are delayed-auto or trigger-start services that are simply not up
+yet.
+
+The real problem is the check's method: PowerShell's `Get-Service` does not
+expose `DelayedAutoStart`, so the check maintains a *name* allowlist
+(`gpsvc`, `sppsvc`, `MapsBroker`, …) which cannot keep up with what each release
+ships. It therefore warns on every single build, which trains readers to ignore
+warnings. Reading `HKLM\SYSTEM\CurrentControlSet\Services\<name>\DelayedAutostart`
+(or `sc.exe qc`) would classify these properly instead of by name.
+
+**`rearm-headroom` — fires on 2025 only, passes on 2019 and 2022.** It reports
+either `remaining Windows rearm count: N` or `could not read the rearm count
+from slmgr /dlv`, and warns on both. Those mean very different things: a
+template with no rearms left cannot be sysprepped by whoever deploys it, whereas
+an unreadable count is a probe that does not match this release. The 2025 verify
+predated `200a11d` (which makes verify print warning output), so the report
+showed only the description and could not distinguish them.
+
+All three builds ran sysprep exactly once, and 2019/2022 pass the same check —
+so the probe failing to match 2025's `slmgr /dlv` output is much the likelier
+explanation. **Resolve it on the next 2025 verify**, which will now print which
+case it is.
 
 **2019's first run failed on its last step, not on the image.** It reached the
 final phase with 12 checks passed and 1 warned, then threw "could not read a
