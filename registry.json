@@ -2,7 +2,7 @@
   "schema_version": "1",
   "name": "Cofoundry Templates",
   "description": "Proxmox VM templates built with Cofoundry",
-  "generated_at": "2026-08-04T05:55:49.968Z",
+  "generated_at": "2026-08-04T17:14:54.314Z",
   "groups": [
     {
       "id": "almalinux",
@@ -154,10 +154,10 @@
           "name": "ubuntu-26.04-amd64",
           "display": "Ubuntu 26.04 LTS (Resolute Raccoon)",
           "arch": "amd64",
-          "sha256": "b3e87c08637ddf84c92160247f4fec35b2d77c3374c1eb214eac4ba8f7ccf7be",
-          "size": 1560806528,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/ubuntu/ubuntu-26.04-amd64/b3e87c08637ddf84c92160247f4fec35b2d77c3374c1eb214eac4ba8f7ccf7be.vma.zst",
-          "built_at": "2026-08-04T02:16:36Z",
+          "sha256": "61241db528e75c3a0fd5fd99a42bd540d01110cf7c590f85b397a542aa597ced",
+          "size": 1561135312,
+          "url": "https://cofoundry.cdn.convoypanel.com/templates/ubuntu/ubuntu-26.04-amd64/61241db528e75c3a0fd5fd99a42bd540d01110cf7c590f85b397a542aa597ced.vma.zst",
+          "built_at": "2026-08-04T17:11:27Z",
           "suggested_vmid": 1005
         }
       ]
