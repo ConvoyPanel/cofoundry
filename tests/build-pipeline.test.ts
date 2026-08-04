@@ -240,6 +240,50 @@ describe('runPipeline', () => {
         ).toBe('download 11%')
     })
 
+    test('sees past packer’s color codes and keeps them', () => {
+        // Packer colors its output even when redirected to a file, so the SGR
+        // escape — not `==>` — starts the line. Bytes copied from CI run
+        // 30868276107, job 91866880126.
+        expect(
+            stripPackerBuildPrefix(
+                '\u001b[1;32m==> proxmox-iso.rocky-linux-10: Waiting 15s for boot\u001b[0m',
+                'rocky-linux-10'
+            )
+        ).toBe('\u001b[1;32m==> Waiting 15s for boot\u001b[0m')
+        // Sub-output: no step marker, and the indent sits inside the escape.
+        expect(
+            stripPackerBuildPrefix(
+                '\u001b[1;32m    proxmox-iso.rocky-linux-10: status: disabled\u001b[0m',
+                'rocky-linux-10'
+            )
+        ).toBe('\u001b[1;32mstatus: disabled\u001b[0m')
+    })
+
+    test('collapses a provisioner step marker onto packer’s', () => {
+        // `recipes/_shared/**` scripts echo their own `==> `; once the builder
+        // prefix between the two markers is gone they would read `==> ==> x`.
+        expect(
+            stripPackerBuildPrefix(
+                '==> proxmox-iso.rocky-linux-10: ==> Updating packages',
+                'rocky-linux-10'
+            )
+        ).toBe('==> Updating packages')
+        // A marker inside the message, not at the front, is left alone.
+        expect(
+            stripPackerBuildPrefix(
+                '==> proxmox-iso.rocky-linux-10: done ==> next',
+                'rocky-linux-10'
+            )
+        ).toBe('==> done ==> next')
+        // Same collapse when the pair is behind a color escape.
+        expect(
+            stripPackerBuildPrefix(
+                '\u001b[1;32m==> proxmox-iso.rocky-linux-10: ==> Updating packages\u001b[0m',
+                'rocky-linux-10'
+            )
+        ).toBe('\u001b[1;32m==> Updating packages\u001b[0m')
+    })
+
     test('leaves other builder-shaped text untouched', () => {
         // A different source name must not be stripped.
         expect(

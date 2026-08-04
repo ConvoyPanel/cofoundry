@@ -47,14 +47,39 @@ export type PipelineResult = {
 // line reads `[windows-server-2019] ==> downloading …` instead of doubling the
 // name. Only strips when the source segment matches this recipe, leaving any
 // other `word.word:`-shaped text in genuine build output untouched.
+//
+// This affects the rendered stream only. Packer's unmodified output — builder
+// prefix and all — is what lands in the node-side console log and the
+// diagnostics bundle, so reading a log directly still shows the original lines.
+//
+// Packer colors its output even when writing to a file, so the prefix does not
+// start the line — a real one is `\x1b[1;32m==> proxmox-iso.rocky-linux-10: …`
+// with the SGR escape ahead of the step marker. Everything below therefore
+// matches (and re-emits) leading escapes rather than anchoring on `==>`.
+const SGR = String.raw`(?:\u001b\[[0-9;]*m)*`
+
 export const stripPackerBuildPrefix = (
     line: string,
     recipeName: string
 ): string => {
     const escaped = recipeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    return line.replace(
-        new RegExp(`^(==> )?[a-z0-9-]+\\.${escaped}:\\s*`),
-        (_all, arrow: string | undefined) => arrow ?? ''
+    return (
+        line
+            .replace(
+                new RegExp(
+                    `^(${SGR})\\s*(==> )?\\s*(${SGR})\\s*[a-z0-9-]+\\.${escaped}:\\s*`
+                ),
+                (
+                    _all,
+                    lead: string,
+                    arrow: string | undefined,
+                    inner: string
+                ) => `${lead}${inner}${arrow ?? ''}`
+            )
+            // Our provisioner scripts echo their own `==> ` step marker, which
+            // sits directly behind Packer's once the builder prefix between them
+            // is gone (`==> ==> Updating packages`). Collapse the run to one.
+            .replace(new RegExp(`^(${SGR})(?:==> ){2,}`), '$1==> ')
     )
 }
 
