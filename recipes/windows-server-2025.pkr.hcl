@@ -278,10 +278,18 @@ build {
     restart_timeout       = "30m"
   }
 
+  # Finalize is the one provisioner with NO max_retries, unlike every provisioner
+  # above it. It runs sysprep /generalize, and its own arming gate already
+  # retries that once (maxAttempts=2 in Finalize.ps1). A max_retries here
+  # MULTIPLIES with that loop -- packer's `2` means two *retries*, so three runs
+  # of the script and up to SIX generalizes. Each generalize consumes a licensing
+  # rearm, and cf verify's rearm-headroom check already warns on 2025. A retry
+  # would also re-run `dism /ResetBase` and reinstall the Cloudbase-Init MSI over
+  # an already-generalized image, which nothing here is designed for. Retrying
+  # the whole build is CF_BUILD_ATTEMPTS' job, not this provisioner's.
   provisioner "powershell" {
     pause_before    = "30s"
     execute_command = local.ps_execute
-    max_retries     = 2
     environment_vars = [
       "CF_FINAL_DISK_SIZE=${local.final_disk_size}",
       # Seeds <AdministratorPassword> in the sysprep answer file so OOBE completes
