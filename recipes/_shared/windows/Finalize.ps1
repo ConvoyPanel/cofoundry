@@ -508,6 +508,36 @@ if ($blockers.Count) {
   foreach ($b in $blockers) { Write-Step "    $b" }
 }
 
+# Report what the cleanup COST the template, not just what it failed to fix.
+#
+# The deprovision fallback above strips provisioning from other versions in a
+# blocking package's family. Provisioning is what auto-registers an app for each
+# NEW user profile -- and remove-build-profile.ps1 deletes the build profile, so
+# every clone's first logon creates a fresh one. An app that loses its
+# provisioning here is therefore absent on every clone, silently.
+#
+# That is not hypothetical: on 2026-08-03 windows-server-2025 entered Finalize
+# with 5 provisioned packages and left with 0, and the only way anyone learned
+# that was preserving the VM with `qm set <vmid> --protection 1` and inspecting
+# it by hand before packer deleted it. The build log said nothing. On 2025 the
+# package most likely to go is Microsoft.DesktopAppInstaller -- winget, which is
+# inbox on that release and ships two coexisting versions.
+#
+# Three lines in packer's stdout make that visible at build time instead.
+$provisionedAfter = @()
+try {
+  $provisionedAfter = @(Get-AppxProvisionedPackage -Online -ErrorAction Stop)
+} catch {
+  Write-Step "  (could not re-enumerate provisioned packages: $($_.Exception.Message))"
+}
+$afterNames = @($provisionedAfter | ForEach-Object { $_.PackageName })
+$dropped = @($provisioned | Where-Object { $afterNames -notcontains $_ })
+Write-Step ("  provisioned packages: {0} -> {1}" -f $provisionedPkgs.Count, $provisionedAfter.Count)
+if ($dropped.Count) {
+  Write-Step "  WARNING the cleanup dropped provisioning for $($dropped.Count) package(s); these will be ABSENT on every clone:"
+  foreach ($d in $dropped) { Write-Step "    $d" }
+}
+
 Write-Step "sysprep and shutdown"
 
 # Everything from here to the shutdown -- copying the answer file, rewriting it,
@@ -597,31 +627,55 @@ if (-not $runSync) {
   throw "sysprep unattend has no specialize RunSynchronous node to extend - did the Cloudbase-Init Unattend.xml layout change?"
 }
 
-# Drop cloudbase-init's own specialize entry entirely.
+# Drop cloudbase-init's RunSynchronous COMMAND from the specialize pass.
 #
-# The MSI ships it as `cloudbase-init.exe --config-file …-unattend.conf && exit 1
+# TERMINOLOGY -- four different things get called "specialize" around here, and
+# conflating them has confused every reader of this block so far:
+#
+#   1. the specialize PASS      Windows boot phase. Generates the new SID and
+#                               machine identity. Always runs on a generalized
+#                               image; nothing in this file touches it.
+#   2. the RunSynchronous LIST  commands the answer file asks that pass to run.
+#   3. cloudbase-init's COMMAND one entry in that list. <-- this is what the
+#                               loop below deletes, and the ONLY thing removed.
+#   4. cloudbase-init-unattend.conf   the config file that command ran with.
+#                               Unused by our clones once (3) is gone, but still
+#                               live for anyone re-sysprepping with the vendor's
+#                               untouched conf\Unattend.xml. See that block above.
+#
+# The pass keeps running and still carries one command of ours (the profile
+# cleanup added below). "Removed the specialize command" never meant the pass.
+#
+# The MSI ships (3) as `cloudbase-init.exe --config-file …-unattend.conf && exit 1
 # || exit 2`, where exit 1 means "reboot requested" (WillReboot=OnRequest). Every
 # clone failure chased on 2026-08-02 traced back to that command:
 #
 #   allow_reboot default true   -> crashed stopping its own service (1062)
 #   reset_service_password true -> crashed on OpenSCManager (1115)
-#   SetHostNamePlugin           -> renamed in specialize, and the pending reboot
-#                                  landed mid-OOBE, leaving SetupType=2 +
-#                                  OOBEInProgress=1 and setup.exe looping on
-#                                  "The computer restarted unexpectedly"
+#   SetHostNamePlugin           -> renamed the machine during the pass, and the
+#                                  pending reboot landed mid-OOBE, leaving
+#                                  SetupType=2 + OOBEInProgress=1 and setup.exe
+#                                  looping on "The computer restarted unexpectedly"
 #
-# Each was fixed and the next surfaced. With SetHostNamePlugin removed the run
-# did nothing but MTU, and the guest still rebooted ~44s into specialize with
+# Each was fixed and the next surfaced. With SetHostNamePlugin removed the command
+# did nothing but MTU, and the guest still rebooted ~44s into the pass with
 # cloudbase-init's log ending mid-plugin -- so the command was still derailing
-# the pass without doing anything the service run does not already do.
+# the pass without doing anything the post-OOBE service run does not already do.
 #
-# Removing it is not a loss of function. The specialize run existed only to keep
-# SetUserPasswordPlugin *out* of specialize (it would consume its run-once slot
-# before oobeSystem seeds the AdministratorPassword, shipping the build's
-# throwaway password). Deleting the command achieves that outright, and the
-# post-OOBE service run still applies MTU, hostname and password in the correct
-# order. Specialize is then just our profile cleanup: one command, exit 0, no
-# reboot request, nothing that can strand OOBE.
+# Removing it is not a loss of function. The command existed only to keep
+# SetUserPasswordPlugin *out* of the specialize pass (it would consume its
+# run-once slot before oobeSystem seeds the AdministratorPassword, shipping the
+# build's throwaway password). Deleting the command achieves that outright, and
+# the post-OOBE service run still applies MTU, hostname and password in the
+# correct order.
+#
+# What this costs: the hostname now lands AFTER OOBE rather than during the pass,
+# so a clone is briefly reachable under the random WIN-XXXXXXX name sysprep gave
+# it before cloudbase-init renames it and reboots (~2 min). That is why
+# cf verify's hostname-applied check runs in the post-reboot phase.
+#
+# The pass is then just our profile cleanup: one command, exit 0, no reboot
+# request, nothing that can strand OOBE.
 $removed = 0
 foreach ($existing in @($runSync.SelectNodes("u:RunSynchronousCommand", $ns))) {
   $pathNode = $existing.SelectSingleNode("u:Path", $ns)
@@ -631,6 +685,15 @@ foreach ($existing in @($runSync.SelectNodes("u:RunSynchronousCommand", $ns))) {
   }
 }
 Write-Step "  removed $removed cloudbase-init specialize command(s) from the unattend"
+# Fail loudly if the match found nothing. The removal is keyed on the literal
+# string 'cloudbase-init' appearing in the command's Path; a future MSI that
+# spells that path differently silently leaves the command in place, and every
+# clone then loops on "The computer restarted unexpectedly" -- the exact failure
+# this removal exists to prevent, rediscovered at 3h per build. The layout checks
+# on either side of this block already throw for the same class of drift.
+if ($removed -lt 1) {
+  throw "no cloudbase-init command found in the unattend's specialize RunSynchronous block - the MSI's Unattend.xml layout changed, and leaving that command in place strands every clone before OOBE"
+}
 
 # Renumber whatever remains, then take Order 1 for the profile cleanup below.
 $order = 2
@@ -700,12 +763,16 @@ foreach ($key in $oobeSettings.Keys) {
 # control and remains a known fallback if Cloudbase-Init's password injection
 # fails (e.g. a cloud-init password that violates the guest password policy).
 #
-# Exposure: Windows is expected to scrub password fields to
-# *SENSITIVE*DATA*DELETED* in the copy it caches at C:\Windows\Panther, but that
-# has NOT been verified on this image -- do not rely on it alone. The specialize
-# script above deletes the C:\Windows\Temp copy, which nothing else cleans up.
-# Both still sit in the exported template disk until a clone first boots, so
-# treat the template artifact as holding the build's WinRM password.
+# Exposure: two copies of this plaintext value exist after generalize.
+#   C:\Windows\Temp\cb-sysprep-unattend.xml -- deleted below, right after the
+#     arming gate passes, so it never reaches the exported disk. The specialize
+#     script above deletes it too, as a backstop for a Finalize that stops early.
+#   C:\Windows\Panther\unattend.xml -- sysprep's own cached copy. Windows is
+#     expected to scrub password fields here to *SENSITIVE*DATA*DELETED*, but
+#     that has NOT been verified on this image, so assume it is not scrubbed.
+# The Panther copy therefore ships in the template artifact; treat the artifact
+# as holding the build's WinRM password. cf verify's no-plaintext-build-password
+# check greps both paths on a booted clone.
 if (-not $env:CF_ADMIN_PASSWORD) {
   throw "CF_ADMIN_PASSWORD is not set - the recipe must pass it to Finalize.ps1 via environment_vars"
 }
