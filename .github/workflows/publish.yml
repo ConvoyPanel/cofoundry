@@ -1,4 +1,6 @@
-name: Publish registry
+# `workflow_call` only — see the note in build-one.yml. Called by build.yml and
+# check-upstream.yml.
+name: "[internal] Publish registry"
 
 on:
   workflow_call:

@@ -1,4 +1,8 @@
-name: Build one template
+# `workflow_call` only: this is never an entry point, so the `[internal]` tag
+# marks it as such in the Actions sidebar, which lists every workflow file and
+# cannot hide callees. Callers resolve it by path (`uses:`), so this name is
+# cosmetic and safe to change. Called by build.yml and check-upstream.yml.
+name: "[internal] Build one template"
 
 on:
   workflow_call:

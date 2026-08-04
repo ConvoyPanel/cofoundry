@@ -306,14 +306,32 @@ For installing templates from a published registry onto any Proxmox node, see
 
 ## GitHub Actions
 
-- **`check-upstream.yml`** — checks weekly, runs changed recipes in a parallel
-  matrix, then publishes once. Publishing and the checksum commit tolerate a
-  partial failure: successful recipes are published and get their checksums
-  advanced, while a failed recipe keeps its old checksum and is retried next run.
-- **`build.yml`** — reusable/manual one-recipe entry point.
-- **`build-one.yml`** — parallel-safe build and smoke-test worker.
+Only two of these are things you start. The rest are `workflow_call`-only
+callees, named `[internal] …` so the Actions sidebar — which lists every
+workflow file and cannot hide a callee — does not imply four buttons that do
+not exist. Their runs are nested under whichever workflow called them, which is
+also why they show no run history of their own.
+
+Entry points:
+
+- **`check-upstream.yml`** ("Check upstream images") — scheduled weekly, also
+  dispatchable. Runs changed recipes in a parallel matrix, then publishes once.
+  Publishing and the checksum commit tolerate a partial failure: successful
+  recipes are published and get their checksums advanced, while a failed recipe
+  keeps its old checksum and is retried next run.
+- **`build.yml`** ("Build template") — manual one-recipe entry point. A thin
+  orchestrator: calls `build-one.yml`, then `publish.yml` and `prune-node.yml`.
+
+Called, never dispatched:
+
+- **`build-one.yml`** — parallel-safe build and smoke-test worker; where a
+  recipe is actually built and verified. Called by `build.yml` (once) and
+  `check-upstream.yml` (once per changed recipe).
 - **`publish.yml`** — globally serialized registry writer and R2 finalizer.
 - **`prune-node.yml`** — lease-aware node maintenance after a workflow finishes.
+
+Callers resolve these by path (`uses: ./.github/workflows/<file>.yml`), so the
+`[internal]` display names are cosmetic; renaming one cannot break a caller.
 
 CI reads the same committed `cofoundry.toml`; it supplies only the secrets and
 the `${VAR}` coordinates. See [Setup](setup.md).
