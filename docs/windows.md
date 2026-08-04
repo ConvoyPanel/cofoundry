@@ -87,6 +87,31 @@ Do not add CompactOS commands to `windowsPE` or `specialize`. The attempted
 variants either crashed early WinPE, were ineffective, or triggered the same
 DISM filesystem-limitation failure against the staged image.
 
+## Terminology: the four things called "specialize"
+
+Most of this document is about what happens on a clone's first boot, and four
+distinct things there get called "specialize". Conflating them has confused every
+reader of `Finalize.ps1`'s unattend-rewriting block, including its authors — the
+commit that did the work is even titled "drop cloudbase-init's specialize command
+entirely", which reads as though the pass itself was removed. It was not.
+
+| # | Thing | What it is | Do we touch it? |
+| - | ----- | ---------- | --------------- |
+| 1 | the specialize **pass** | Windows boot phase on a generalized image. Generates the new SID and machine identity, re-enumerates drivers. Launched by `windeploy.exe`, which `SetupType=2` + `CmdLine` arm. | **No.** Never. It is what the export gate certifies is armed. |
+| 2 | the `RunSynchronous` **list** | Commands the answer file asks that pass to run. | Yes — we rewrite its contents. |
+| 3 | cloudbase-init's **command** | One entry in that list, shipped by the MSI. | **Deleted** (`3208b0c`), and replaced with our own profile-cleanup command. |
+| 4 | `cloudbase-init-unattend.conf` | The config file entry 3 ran with. | Still written. Unused by our clones once 3 is gone, but live for anyone re-sysprepping with the vendor's untouched `conf\Unattend.xml`. |
+
+So the pass still runs, still generates machine identity, and still carries
+exactly one command of ours. What changed is only *when the hostname lands*: the
+post-OOBE Cloudbase-Init service run applies it now, so a clone is briefly
+reachable under the random `WIN-XXXXXXX` name sysprep gave it before being
+renamed (~2 min, with a reboot). That is why `cf verify`'s `hostname-applied`
+check runs in the `post-reboot` phase rather than `first-boot`.
+
+The same four-term key is repeated inline at the top of the deletion block in
+`recipes/_shared/windows/Finalize.ps1`.
+
 ## Build flow
 
 1. `autounattend.xml` loads the release-matched VirtIO storage and network
@@ -1113,6 +1138,23 @@ and were fixed in the same session:
   the one red check in an otherwise green battery. `cf verify` no longer seeds
   SSH keys for Windows clones (fixes verification of already-built templates),
   and `Finalize.ps1` drops the plugin from the shipped conf.
+
+  **Consequence for consumers, and how to reverse it.** Dropping the plugin is a
+  capability removal, not just a verify fix: `--sshkeys` is now inert on Windows
+  clones, and it stays inert even if the operator installs OpenSSH on the clone
+  afterwards, because nothing in the image writes `authorized_keys` any more.
+
+  If SSH-key injection is wanted back, fix the cause rather than re-adding the
+  plugin alone — the plugin fails precisely *because* there is no OpenSSH to
+  write into. Add the inbox capability in `Install.ps1` (no download required):
+
+      Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+
+  then restore `cloudbaseinit.plugins.common.sshpublickeys.SetUserSSHPublicKeysPlugin`
+  to the `plugins=` line of `cloudbase-init.conf` in `Finalize.ps1`, and drop the
+  `remoteKeyPath` omission in `src/verify/clone.ts` so verify exercises it again.
+  Costs a ~3h revalidation per recipe plus a slightly larger image, and opens
+  port 22 on the template — decide whether that is wanted before doing it.
 - **`waitForWindowsInit` could declare done before SetHostName's rename
   reboot** ("Plugins execution done" lands pre-reboot), so the check phase
   raced the reboot and the harness's own reboot step failed with "could not
