@@ -1421,6 +1421,35 @@ umount /tmp/vm
 | `PROVISIONER ERROR: There is not enough space on the disk.` right after the `sysprep and shutdown` step header | `Zero-FreeSpace` wrote until `ERROR_DISK_FULL` and handed the space back with a `-ErrorAction SilentlyContinue` delete; at 0 bytes free that delete can itself fail, and the silence carried a full volume into sysprep | The zero pass stops at a 1 GB reserve and throws if the fill file survives; a free-space gate before generalize lists the largest directories on C: |
 | `sysprep did not arm the image for OOBE after 2 attempts` with no further detail | The gate's message said to read `setuperr.log`, but packer deletes the VM within seconds of the provisioner erroring | `Finalize.ps1` dumps `setuperr.log`/`setupact.log` and the arming registry state to packer's stdout after each failed attempt |
 
+### 2026-08-04: all three Windows recipes build and verify
+
+| Recipe | Build | `cf verify` |
+| ------ | ----- | ----------- |
+| windows-server-2019 | 1h16m | 15 passed, 1 warned (13m27s) |
+| windows-server-2022 | —     | 15 passed, 1 warned |
+| windows-server-2025 | 2h54m | 14 passed, 2 warned (17m27s) |
+
+The single shared warning is `no-critical-service-failures`, and its output (now
+printed, see below) shows why it is benign: `cloudbase-init` has completed and
+stopped, and CDPSvc/DPS/MSDTC/UALSVC/UsoSvc are delayed- or demand-start
+services that are simply not up moments after first logon.
+
+**2019's first run failed on its last step, not on the image.** It reached the
+final phase with 12 checks passed and 1 warned, then threw "could not read a
+boot id before rebooting the guest": `readBootId` was a single `guestExec` with
+no retry, and one agent timeout while the guest was arming autologon discarded
+the whole run. Every other phase of `src/verify/guest.ts` already assumes
+Windows guest agents go unresponsive under load. Fixed in `e6e1a57`; the re-run
+passed the same step cleanly.
+
+**Two boot-command variants are in use and that is deliberate.** 2025 types
+`<up>` in the boot blanket (`84a2bc7`) because a stray `<enter>` can press
+Setup's Cancel and open a quit modal; 2019 and 2022 still type `<enter>` and
+both build reliably. 2019 was deliberately NOT switched at the same time as its
+first build across ~30 commits of shared changes -- one variable at a time.
+Propagating `<up>` to 2019/2022 is reasonable hardening but costs a ~3h
+revalidation each, so it is a follow-up, not a fix.
+
 ### 2026-08-03: windows-server-2025 verified end to end
 
 First successful 2025 build: 2h54m, `cf verify` **14 passed, 2 warned**
