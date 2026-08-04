@@ -289,30 +289,53 @@ if ($c.Size -lt $want) { exit 1 }`,
             phase: 'post-reboot',
         },
         {
-            // Win32_Service, not Get-Service. PowerShell 5.1's Get-Service
-            // reports `StartType = Automatic` for delayed-auto services too —
-            // it cannot tell the two apart — so this check used to flag every
-            // delayed service that had simply not started yet and needed a
-            // hand-maintained denylist to stay quiet. That list never kept up:
-            // as of 2026-08-04 all three Windows recipes warn here on every run
-            // (CDPSvc, DPS, MSDTC, UALSVC, UsoSvc, cloudbase-init), all benign.
-            // A warning that always fires trains the reader to ignore the check.
-            // Win32_Service exposes a real DelayedAutoStart boolean (Server 2012+,
-            // so every release we build), which removes the guesswork.
+            // "Automatic and not running" is NOT evidence that a service failed
+            // to start, which is what this check claims to assert. Many stock
+            // Windows services are Automatic and either self-stop when idle or
+            // wait on a start trigger, so the old Get-Service query warned on
+            // every run of all three recipes and needed a hand-maintained
+            // denylist to stay even partly quiet. A warning that always fires
+            // trains the reader to ignore the check.
             //
-            // cloudbase-init is excluded by name as well as by the delayed flag:
-            // it is delayed-auto today, but it also *stops itself* once its
-            // plugins finish, so "not running" is its correct end state on a
-            // healthy clone no matter how it is configured. Whether it actually
-            // ran is asserted by cloudbase-init-completed, which is severity
-            // fail — so nothing is lost by keeping it out of this check.
+            // Measured 2026-08-04 (jobs 91871497339 / 91872787400), the flagged
+            // set was CDPSvc, DPS, MSDTC, StorSvc, UALSVC, UsoSvc and
+            // cloudbase-init — all benign. Reading their config offline from a
+            // clone disk shows no start-type property separates them from a
+            // real failure:
+            //
+            //   service         Start  DelayedAutostart  TriggerInfo
+            //   CDPSvc          Auto   -                 yes
+            //   DPS             Auto   -                 -
+            //   MSDTC           Auto   1                 -
+            //   StorSvc         Auto   1                 yes
+            //   UALSVC          Auto   -                 -
+            //   UsoSvc          Auto   -                 -
+            //   cloudbase-init  Auto   -                 -
+            //
+            // Filtering on DelayedAutoStart silences only MSDTC and StorSvc;
+            // adding trigger-start adds CDPSvc. DPS/UALSVC/UsoSvc are plain
+            // Automatic services that simply are not running, and no amount of
+            // start-type inspection makes them distinguishable from a failure.
+            //
+            // So ask the question directly. Win32_Service.ExitCode is the
+            // service's own last exit status: 0 means it ran and stopped
+            // cleanly, 1077 (ERROR_SERVICE_NEVER_STARTED) means it has not been
+            // started this boot, and anything else is a genuine start failure.
+            // That is the signal the description promises, and it needs no
+            // denylist — every name above reports 0 or 1077.
+            //
+            // NOT yet observed on a live clone: ExitCode is runtime state, so it
+            // cannot be read offline the way the table above was. Severity stays
+            // warn, so the cost of being wrong is noise rather than a failed
+            // build, and any survivor is named with its exit code.
             id: 'no-critical-service-failures',
             description: 'no automatic-start service failed to start',
-            script: `$bad = Get-CimInstance Win32_Service |
-  Where-Object { $_.StartMode -eq 'Auto' -and $_.State -ne 'Running' -and -not $_.DelayedAutoStart }
-$bad = $bad | Where-Object { $_.Name -notin @('gpsvc','sppsvc','MapsBroker','WbioSrvc','tiledatamodelsvc','RemoteRegistry','edgeupdate','cloudbase-init') }
+            script: `$bad = Get-CimInstance Win32_Service | Where-Object {
+  $_.StartMode -eq 'Auto' -and $_.State -ne 'Running' -and
+  $_.ExitCode -ne 0 -and $_.ExitCode -ne 1077
+}
 if ($bad) {
-  $bad | ForEach-Object { Write-Output "not running: $($_.Name) ($($_.DisplayName))" }
+  $bad | ForEach-Object { Write-Output "failed to start: $($_.Name) ($($_.DisplayName)) exitCode=$($_.ExitCode)" }
   exit 1
 }`,
             severity: 'warn',
