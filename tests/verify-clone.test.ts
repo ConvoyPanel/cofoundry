@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import {
     autologonScript,
     cloudInitSetCommand,
@@ -170,5 +172,28 @@ describe('report', () => {
         )
         const lines = formatWarnings([result('x', 'warn', noisy)]).split('\n')
         expect(lines.length).toBeLessThanOrEqual(9)
+    })
+})
+
+describe('rebootGuest boot-id baseline', () => {
+    // A static guard, not a behavioural one: rebootGuest calls guestExec through
+    // module scope, so exercising the retry would mean restructuring for
+    // injection. What must not silently regress is that the baseline read is
+    // retried at all.
+    //
+    // 2026-08-04: a windows-server-2019 verify reached its final phase with 12
+    // checks passed and 1 warned, then threw "could not read a boot id before
+    // rebooting the guest" because a single guest-exec timed out while the guest
+    // was busy arming autologon. One transient agent timeout discarded the
+    // validation of a 1h16m build.
+    const guest = readFileSync(
+        fileURLToPath(new URL('../src/verify/guest.ts', import.meta.url)),
+        'utf8'
+    )
+
+    test('retries the baseline read instead of failing on one timeout', () => {
+        expect(guest).toMatch(/BOOT_ID_ATTEMPTS\s*=\s*[2-9]/)
+        const fn = guest.slice(guest.indexOf('export const rebootGuest'))
+        expect(fn).toMatch(/attempt <= BOOT_ID_ATTEMPTS/)
     })
 })

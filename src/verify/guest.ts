@@ -179,6 +179,10 @@ const evaluate = (
  */
 const TRANSPORT_ATTEMPTS = 2
 const TRANSPORT_RETRY_MS = 5_000
+// More generous than TRANSPORT_ATTEMPTS: losing the boot-id baseline aborts the
+// entire verify rather than one check, and it is read at the busiest moment in
+// the run (right after autologon is armed).
+const BOOT_ID_ATTEMPTS = 4
 
 export const runCheck = async (
     target: string,
@@ -344,11 +348,25 @@ export const rebootGuest = async (
     timeoutS: number,
     intervalS = 5
 ): Promise<boolean> => {
-    const before = await readBootId(target, vmid, shell)
+    // Retry the baseline the way runCheck retries a check. A single empty reply
+    // here used to abort the whole verify: on 2026-08-04 a windows-server-2019
+    // run reached the last phase with 12 checks passed and 1 warned, then threw
+    // because one guest-exec timed out while the guest was busy arming
+    // autologon. Windows guest agents go unresponsive under load constantly --
+    // every phase of this file already assumes that -- so the one call that
+    // could not tolerate it discarded a 1h16m build's validation.
+    let before = ''
+    for (let attempt = 1; attempt <= BOOT_ID_ATTEMPTS && !before; attempt++) {
+        if (attempt > 1)
+            await new Promise(r => setTimeout(r, TRANSPORT_RETRY_MS))
+        before = await readBootId(target, vmid, shell)
+    }
     // Without a baseline there is nothing to compare against, and "the agent
     // answers" would pass on the boot we are already on. Fail loudly instead.
     if (!before)
-        throw new Error('could not read a boot id before rebooting the guest')
+        throw new Error(
+            `could not read a boot id before rebooting the guest (${BOOT_ID_ATTEMPTS} attempts)`
+        )
     // The reboot races the reply; a transport error here is expected, not fatal.
     await guestExec(target, vmid, shell, REBOOT_SCRIPT[shell], 30)
     const deadline = Date.now() + timeoutS * 1000
