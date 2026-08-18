@@ -1000,6 +1000,36 @@ foreach ($t in @("Reboot", "Reboot_AC", "Reboot_Battery")) {
 # disk entirely; the specialize-script deletion stays as a backstop.
 Remove-Item $unattendCopy -Force -ErrorAction SilentlyContinue
 
+Write-Step "enable Remote Desktop on the shipped template"
+# Windows Server ships with RDP off (fDenyTSConnections=1) and nothing else in
+# the build turns it on, so a clone's only first contact was the noVNC console.
+# That path breaks in practice: the console types against the guest's en-US
+# layout, so a --cipassword containing symbols typed on a non-US client
+# keyboard arrives as different characters (observed live 2026-08-18: '=' from
+# a Swedish layout; the Security log filled with 0xC000006A while the same
+# string passed an in-guest LogonUser). Convoy hands out clones with only
+# --cipassword, so RDP is the expected first door in.
+#
+# This sits after generalize with the other shipped-template policy on purpose:
+# registry writes after /quit land in the sealed image (same reason the WU
+# restore above is here), and the Remote Desktop firewall group is disjoint
+# from the WinRM rules the teardown below removes, so packer's session is
+# untouched. The inbox rules cover every profile including Public --
+# deliberate, clones land directly on public networks. NLA stays at its Server
+# default (required), so nothing is reachable pre-auth. Verified live on a 2025
+# clone before being baked in: the listener came up instantly, no TermService
+# restart needed (docs/windows.md).
+Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0 -Type DWord
+# The group id, not DisplayGroup "Remote Desktop": the id is locale-independent
+# so this does not quietly no-op on non-en-US media.
+Enable-NetFirewallRule -Group "@FirewallAPI.dll,-28752" -ErrorAction SilentlyContinue
+$rdpRules = @(Get-NetFirewallRule -Group "@FirewallAPI.dll,-28752" -ErrorAction SilentlyContinue |
+  Where-Object { $_.Enabled -eq "True" })
+Write-Step "  $($rdpRules.Count) Remote Desktop firewall rule(s) enabled"
+if (-not $rdpRules.Count) {
+  throw "no Remote Desktop firewall rules could be enabled - every clone would ship unreachable over RDP"
+}
+
 Write-Step "tear down the build's WinRM exposure"
 # EVERYTHING that can cut packer's WinRM session MUST stay here, after generalize
 # and immediately before the shutdown. Nothing above this point may touch WinRM

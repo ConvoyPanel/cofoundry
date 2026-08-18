@@ -347,6 +347,41 @@ set` calls and the firewall rules now all sit together after generalize. The
 rule is simple: **nothing above sysprep may touch WinRM auth, its policy keys,
 or its firewall rules.**
 
+### Shipped templates enable RDP (2026-08-19)
+
+Windows Server ships with RDP off, and until now nothing in the build changed
+that — a clone's only first contact was the noVNC console. That path breaks in
+practice: the console types against the guest's en-US layout, so a
+`--cipassword` containing symbols typed on a non-US client keyboard arrives as
+different characters. Observed live 2026-08-18 on a 2025 clone: `=` typed on a
+Swedish layout never matched; the Security log filled with `0xC000006A` (wrong
+password) while the very same string passed an in-guest `LogonUser` type 2.
+Convoy provisions clones with only `--cipassword`, so RDP is the expected first
+door in.
+
+`Finalize.ps1` now sets `fDenyTSConnections=0` and enables the inbox Remote
+Desktop firewall group in the post-generalize block — the same slot as the
+WU-policy restore, for the same reason: registry writes after `/quit` land in
+the sealed image, and the Remote Desktop rules are disjoint from the WinRM
+rules the teardown removes, so packer's session survives. The group is matched
+by its locale-independent id (`@FirewallAPI.dll,-28752`), not the DisplayGroup
+string. NLA stays at its Server default (required), so nothing is reachable
+pre-auth. The `rdp-enabled` verify check asserts all three properties on every
+clone: enabled, listening on 3389, NLA on.
+
+The tradeoff is deliberate: every clone now exposes 3389 on whatever network it
+lands on, including public ones, guarded by NLA plus the strength of
+`--cipassword`. The alternative — keeping console-only first contact — locked
+out any operator whose keyboard layout disagrees with the image about symbol
+placement.
+
+**Verified live on a clone, untested on a full build as of 2026-08-19.** The
+2025 clone test enabled RDP at runtime with exactly these two operations: the
+listener came up instantly with no TermService restart, an external TCP connect
+to 3389 succeeded, and `fw-rules-enabled=3` matched the group. The Finalize-time
+write is the same registry value in the same post-generalize slot the WU restore
+already uses, so it ships in the sealed image the same way.
+
 ### windows-server-2022 VERIFIED end to end (2026-08-03)
 
 `cf verify windows-server-2022` passed on the `124401b` artifact: **15 checks

@@ -117,6 +117,31 @@ if ($bad) {
             timeoutS: 120,
         },
         {
+            // Finalize.ps1 enables RDP for the shipped template: Server's
+            // default is off, Convoy hands out clones with only --cipassword,
+            // and the noVNC console garbles symbol passwords typed on non-US
+            // keyboards against the guest's en-US layout. NLA staying at its
+            // required default is asserted alongside — RDP on a public network
+            // without it would expose the logon surface pre-auth.
+            id: 'rdp-enabled',
+            description: 'RDP is enabled, listening on 3389, and requires NLA',
+            script: `$ts = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'
+Write-Output "fDenyTSConnections=$($ts.fDenyTSConnections)"
+if ($ts.fDenyTSConnections -ne 0) { exit 1 }
+$nla = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp').UserAuthentication
+Write-Output "NLA=$nla"
+if ($nla -ne 1) {
+  Write-Output 'NLA is off - the logon surface would be reachable pre-auth'
+  exit 1
+}
+$l = Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue
+if (-not $l) { Write-Output 'no listener on 3389'; exit 1 }
+Write-Output 'RDP listening on 3389'`,
+            severity: 'fail',
+            phase: 'first-boot',
+            timeoutS: 120,
+        },
+        {
             // These templates publish to a public CDN, so a build password left
             // in an answer file ships to everyone. When verify recovered the
             // build password from the node it greps for that exact value;
