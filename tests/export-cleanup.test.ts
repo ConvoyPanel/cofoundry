@@ -77,7 +77,8 @@ cat "$src" >> "$dst"
 
 const run = (
     node: Awaited<ReturnType<typeof makeNode>>,
-    env: Record<string, string>
+    env: Record<string, string>,
+    opts: { reject?: boolean; all?: boolean } = {}
 ) =>
     execa('bash', [resolve('recipes/_shared/post/export-and-cleanup.sh')], {
         env: {
@@ -88,6 +89,7 @@ const run = (
             CF_ARCH: 'amd64',
             ...env,
         },
+        ...opts,
     })
 
 const LINUX_CONFIG = `agent: 1
@@ -264,6 +266,41 @@ describe('export post-processor', () => {
         expect(
             sidecar.disks.some((d: { slot: string }) => d.slot === 'tpmstate0')
         ).toBe(false)
+    })
+
+    test('stages the varstore before the multi-minute system-disk conversion', async () => {
+        const node = await ovmfFixture()
+        const { all } = await run(node, OVMF_ENV, { all: true })
+
+        // `pvesm path` only constructs a path, so the varstore's bytes are not
+        // safe until they are copied. Converting the system disk first leaves
+        // minutes between resolving the varstore and reading it — a window a
+        // real build lost it in.
+        const efi = all!.indexOf('copying EFI varstore')
+        const system = all!.indexOf('converting')
+        expect(efi).toBeGreaterThan(-1)
+        expect(system).toBeGreaterThan(-1)
+        expect(efi).toBeLessThan(system)
+    })
+
+    test('reports the image directory when a config names a missing volume', async () => {
+        const node = await ovmfFixture()
+        // The exact shape of the 2026-08-25 windows-server-2025 failure: the
+        // config still names the varstore, but the file is gone.
+        await rm(join(node.images, 'base-2002-disk-0.raw'))
+
+        const result = await run(node, OVMF_ENV, { reject: false, all: true })
+
+        expect(result.exitCode).not.toBe(0)
+        expect(result.all).toContain('does not exist')
+        // A bare "cp: cannot stat" says nothing about why. The listing and the
+        // live config are what make the next occurrence diagnosable from
+        // packer's stdout instead of needing another multi-hour rebuild.
+        expect(result.all).toContain('contents of its image directory')
+        expect(result.all).toContain('base-2002-disk-1.qcow2')
+        expect(result.all).toContain('current VM config')
+        // It must fail before writing a sidecar that advertises a missing image.
+        expect(await readdir(node.out)).not.toContain('ovmf-guest-amd64.json')
     })
 
     test('normalizes the pinned machine version and drops build identity', async () => {
