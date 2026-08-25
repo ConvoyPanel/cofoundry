@@ -9,12 +9,33 @@ depends on — re-read "Verified Proxmox behaviour" before changing any of it.
 `src/upload/`), `coport`, `cf verify`, `cf prune --r2`, and the optional
 cluster-distribution hook (`scripts/cf-cluster-templates.sh`).
 
-**Exercised end to end on Linux.** `cf build debian-12` (14m29s) produced a
-623.1 MB compressed qcow2 plus a schema-2 sidecar, and `cf verify debian-12`
-rebuilt a VM from that sidecar through `qm create --import-from` and passed all
-17 in-guest checks, including `disk-fully-partitioned` after the post-import
-resize. The OVMF path — `efidisk0` export and the two-image sidecar — has still
-never run: only a `windows-server-*` build exercises it.
+**Exercised end to end, 14 of 16 recipes.** Every Linux recipe and
+`windows-server-2025` were built through the new export path and then rebuilt
+from their published sidecars via `qm create --import-from` and booted:
+
+|                                | build       | verify                          |
+| ------------------------------ | ----------- | ------------------------------- |
+| 13 Linux recipes               | ✅          | ✅ 17/17 in-guest checks each   |
+| `windows-server-2025`          | ✅          | ✅ 15 passed, 1 warned (17m38s) |
+| `windows-server-2019`, `-2022` | outstanding | outstanding                     |
+
+The OVMF round-trip is the one that mattered: the 540,672-byte varstore was
+exported, published as a second `disks[]` entry with its own hash, imported back
+through `--efidisk0 …,import-from=`, and **OVMF booted from it** — finding the
+boot entry Windows Setup wrote. `system-volume-extended` then confirmed the
+post-import resize grew C:. The single warning is `rearm-headroom` (0 licensing
+rearms left on 2025), which predates this work and is unrelated to disk images.
+
+Measured artifact sizes against the `.vma.zst` each replaces:
+
+| recipe                | old `.vma.zst` | new qcow2 | delta  |
+| --------------------- | -------------- | --------- | ------ |
+| `debian-12`           | 536.1 MB       | 623.1 MB  | +16.2% |
+| `windows-server-2025` | 9.49 GB        | 10.49 GB  | +10.6% |
+
+zstd over a vzdump stream beats qcow2's per-cluster zlib and the import path
+cannot take a `.zst` wrapper, so the penalty is permanent — but it shrinks with
+image size, and Windows is where the absolute numbers matter.
 
 ## Why
 
