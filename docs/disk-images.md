@@ -384,8 +384,12 @@ Linux batch drew slot 05 and deleted the live build's disks between the config
 read and the varstore copy. It is a pre-existing race, not specific to disk
 images, but the longer the export the wider the window.
 
-Until `slot_mac_running` also consults the run lease that owns the VMID, run
-Windows builds with nothing else in flight.
+**Fixed** in `src/build/netslot.ts`: the reclaim now also consults the run
+lease that owns the VMID (`vmid_leased`), which is heartbeated by the owning
+`cf` process and therefore answers "is this build alive" regardless of power
+state. Eviction gained a second guard — it refuses to destroy anything that is
+not a `packer-*` build VM, so an installed template wearing a stale build MAC
+is reported and left alone rather than deleted.
 
 ## Open questions
 
