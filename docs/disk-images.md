@@ -367,6 +367,26 @@ the real `windows-server-2025` varstore and destroying it again.
 2. **`machine: q35` on a generalized Windows image** — Proxmox pins the version
    per node at create time (see above), so the bare type is correct to publish.
 
+## Do not run other builds during a Windows export
+
+A build VM is stopped for the entire export — packer shuts it down and converts
+it to a template before the post-processor runs, and a 32 G qcow2 conversion
+takes minutes. `src/build/netslot.ts` reclaims a slot when no _running_ VM
+carries its MAC (`slot_mac_running`), so an exporting VM is indistinguishable
+from an abandoned one, and the reclaim then **destroys** it:
+
+```
+evicting orphan VM 200205 on node us-southwest-2 squatting netslot 05
+```
+
+That is what killed the first windows-server-2025 build 3h26m in: a concurrent
+Linux batch drew slot 05 and deleted the live build's disks between the config
+read and the varstore copy. It is a pre-existing race, not specific to disk
+images, but the longer the export the wider the window.
+
+Until `slot_mac_running` also consults the run lease that owns the VMID, run
+Windows builds with nothing else in flight.
+
 ## Open questions
 
 1. **Full copy per VM.** `import-from` copies; there are no linked clones. For

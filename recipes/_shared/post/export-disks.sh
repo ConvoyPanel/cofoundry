@@ -50,12 +50,19 @@ _fetch() {
 # VM's image directory when it fails, so the next occurrence is diagnosable from
 # packer's stdout instead of needing another multi-hour build to reproduce.
 #
-# This is not hypothetical: a windows-server-2025 build on 2026-08-25 reached
+# This is not hypothetical. A windows-server-2025 build on 2026-08-25 reached
 # the export with `efidisk0: local:200205/base-200205-disk-0.raw` in its config
-# and no such file on disk. Four targeted probes failed to reproduce it —
-# template conversion, packer's post-template ISO delete + cloudinit add, and
-# the shrink's `qm rescan` all preserve the varstore — so the cause is still
-# unknown and the directory listing is how we catch it next time.
+# and no such file on disk, because a CONCURRENT build reclaimed its netslot and
+# destroyed the VM mid-export:
+#
+#   evicting orphan VM 200205 on node us-southwest-2 squatting netslot 05
+#
+# Packer stops the VM and templates it before this post-processor runs, so the
+# whole export happens with the build VM stopped. netslot.ts's reclaim treats a
+# slot as orphaned when no *running* VM carries its MAC (slot_mac_running), and
+# a legitimately-stopped exporting VM looks exactly like that. Any build racing
+# the tail of another can therefore delete it out from under this script.
+#
 # Every diagnostic here goes to STDERR on purpose: this function is called as
 # `path=$(_volid_path ...)`, so anything on stdout is captured into the caller's
 # variable instead of reaching packer's log — which would make the failure
