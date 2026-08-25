@@ -9,10 +9,12 @@ depends on — re-read "Verified Proxmox behaviour" before changing any of it.
 `src/upload/`), `coport`, `cf verify`, `cf prune --r2`, and the optional
 cluster-distribution hook (`scripts/cf-cluster-templates.sh`).
 
-**Not yet exercised end to end.** No build has run since the cutover, so no
-artifact in this format has been produced, published, or booted. The unit
-suites cover the pieces; the first real `cf build` is what will validate them
-together.
+**Exercised end to end on Linux.** `cf build debian-12` (14m29s) produced a
+623.1 MB compressed qcow2 plus a schema-2 sidecar, and `cf verify debian-12`
+rebuilt a VM from that sidecar through `qm create --import-from` and passed all
+17 in-guest checks, including `disk-fully-partitioned` after the post-import
+resize. The OVMF path — `efidisk0` export and the two-image sidecar — has still
+never run: only a `windows-server-*` build exercises it.
 
 ## Why
 
@@ -220,6 +222,26 @@ Capture is a denylist over `qm config`. Two categories come out.
 `net0` `macaddr` (that is `build_mac` from the NAT slot), and the `ide*`
 CD-ROM mounts for the boot ISO, virtio ISO, and answer-file ISO.
 
+Dropping the macaddr is not hygiene, it is a bug fix. `coport` used to install
+with `qmrestore` and **without** `--unique`, so every template it installed kept
+the build VM's MAC. Build MACs are deterministic per netslot, and the netslot
+allocator evicts any VM carrying the MAC of the slot it is claiming — the
+comment at `src/build/netslot.ts:224` assumes such a VM "can only be an orphan
+from a previous build", which was never true of a restored template.
+
+Observed live: `cf build debian-12` took netslot 05 (MAC `…:00:9c`) and evicted
+six installed templates that shared it —
+
+```
+evicting orphan VM 1003 on node us-southwest-2 squatting netslot 05
+evicting orphan VM 2001 …  2002 …  4000 …  4001 …  5002 …
+```
+
+The ten survivors carried `…:9d`, `…:9e`, `…:9f` — other slots — so the set
+destroyed was decided purely by which slot the build drew. A schema-2 template
+cannot hit this: the profile records only `net_model`, and `qm create` assigns
+a fresh MAC per VM.
+
 `memory` and `cores` come out too: `8192`/`4` on Windows is servicing headroom
 for the `WU.ps1` rounds, not a runtime requirement. Publishing it would floor
 every consumer plan at 8 GB. The hand-authored `minimum` block replaces it.
@@ -351,8 +373,13 @@ the real `windows-server-2025` varstore and destroying it again.
    multi-tenant use this is arguably correct — a linked clone can never have
    its base deleted or updated — but provisioning latency and space use change,
    and that should be measured before cutover.
-2. **Artifact size.** Compressed-cluster qcow2 versus `.vma.zst` is expected to
-   be comparable but has not been measured.
+2. **Artifact size — measured, ~16% larger.** The first real build of
+   `debian-12` produced a 623.1 MB compressed qcow2 against the 536.1 MB
+   `.vma.zst` it replaced (+87.0 MB, +16.2%). zstd on a vzdump stream beats
+   qcow2's per-cluster zlib, and the import path cannot take a `.zst` wrapper.
+   Comparable rather than equal, and the cost is paid per download. Worth
+   re-measuring on a Windows recipe, where the absolute numbers are ~50x
+   larger, before deciding whether it matters.
 3. **Imported format follows the target storage, not the source.** A compressed
    qcow2 imported onto dir storage lands as `raw`. It is sparse, so the cost is
    bounded, but a `coport`-installed template no longer gets qcow2's linked-clone
