@@ -1,7 +1,7 @@
 import type { RecipeInfo } from '@/config.ts'
 import type { CheckSuite, GuestCheck } from '@/verify/checks/types.ts'
 import { linuxSuite } from '@/verify/checks/linux.ts'
-import { windowsSuite } from '@/verify/checks/windows.ts'
+import { windowsSuite, wingetPresentCheck } from '@/verify/checks/windows.ts'
 
 export const isWindowsRecipe = (name: string): boolean =>
     name.startsWith('windows-')
@@ -14,7 +14,12 @@ export const isWindowsRecipe = (name: string): boolean =>
  * Keep this empty unless a recipe genuinely differs — a check that belongs to
  * every Linux image belongs in `linuxSuite`, not repeated here.
  */
-const RECIPE_OVERRIDES: Record<string, GuestCheck[]> = {}
+const RECIPE_OVERRIDES: Record<string, GuestCheck[]> = {
+    // Winget is inbox on 2025 only, so `winget-present` cannot live in the
+    // shared Windows suite — it would fail 2019 and 2022 for behaving
+    // correctly. See wingetPresentCheck in ./windows.ts (#32).
+    'windows-server-2025': [wingetPresentCheck],
+}
 
 export const mergeChecks = (
     base: GuestCheck[],

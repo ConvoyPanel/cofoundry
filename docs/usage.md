@@ -93,7 +93,7 @@ user's clone is exercised, rather than merely booting it:
    empty, so nothing cloud-init is supposed to apply gets exercised at all.
 2. **A battery of in-guest checks runs over `qm guest exec`**, in phases: on the
    first boot, again after a clean reboot, and — on Windows — after an autologon
-   has painted a desktop. The guest agent answering is the *entry condition* for
+   has painted a desktop. The guest agent answering is the _entry condition_ for
    these checks, not the result: it starts early and is independent of nearly
    everything a template promises.
 3. **The console framebuffer is sampled.** This needs nothing from the guest, so
@@ -327,7 +327,17 @@ Called, never dispatched:
 - **`build-one.yml`** — parallel-safe build and smoke-test worker; where a
   recipe is actually built and verified. Called by `build.yml` (once) and
   `check-upstream.yml` (once per changed recipe).
-- **`publish.yml`** — globally serialized registry writer and R2 finalizer.
+
+    It builds with `--skip-upload`, then verifies, then uploads. That order is
+    load-bearing: the upload is normally a side effect of the build itself (the
+    node-side post-processor runs `CF_UPLOAD_CMD` as soon as the artifact is
+    hashed), which is _before_ the smoke test. A recipe that built but failed
+    verify used to publish anyway, and since `cf publish --r2` advertises the
+    newest sidecar per template, a failed artifact could supersede a good one.
+
+- **`publish.yml`** — globally serialized registry writer and R2 finalizer. It
+  aggregates whatever sidecars are already in R2; it has no idea which ones
+  passed their smoke test, which is why the gate has to sit in `build-one.yml`.
 - **`prune-node.yml`** — lease-aware node maintenance after a workflow finishes.
 
 Callers resolve these by path (`uses: ./.github/workflows/<file>.yml`), so the

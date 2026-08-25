@@ -1,4 +1,4 @@
-import type { CheckSuite } from '@/verify/checks/types.ts'
+import type { CheckSuite, GuestCheck } from '@/verify/checks/types.ts'
 
 /**
  * Shell surfaces whose crash is the "boots fine, desktop is unusable" signature
@@ -26,6 +26,46 @@ const SECRET_BEARING_PATHS = [
 const psQuote = (s: string): string => `'${s.replace(/'/g, "''")}'`
 
 const psList = (items: string[]): string => items.map(psQuote).join(',')
+
+/**
+ * windows-server-2025 only. Winget is inbox on 2025 (and ships two coexisting
+ * DesktopAppInstaller versions, which is what makes it fragile there); 2019 and
+ * 2022 do not carry it, so asserting its presence on those legs would fail a
+ * template that is behaving correctly.
+ */
+export const wingetPresentCheck: GuestCheck = {
+    // Winget went missing from shipped 2025 templates (#32) and nobody
+    // noticed until someone looked inside a clone by hand. It is not a
+    // build-time property: Finalize's Appx cleanup can strip the
+    // provisioning that registers it into new profiles, and the damage
+    // only shows up in a profile created AFTER generalize -- which is
+    // exactly what this clone is.
+    //
+    // Asserting the command resolves is the point. Checking the
+    // provisioned-package list would pass on a template where
+    // provisioning survived but the app never registered for the user,
+    // which is the same defect from the clone's point of view.
+    //
+    // 2019 has no inbox winget at all, so the suite that carries this
+    // check is per-recipe (see index.ts) rather than every Windows leg.
+    id: 'winget-present',
+    description: 'winget resolves for a freshly created user profile',
+    script: `$cmd = Get-Command winget.exe -ErrorAction SilentlyContinue
+if (-not $cmd) {
+  Write-Output 'winget.exe not on PATH for this profile'
+  $pkg = Get-AppxPackage -Name Microsoft.DesktopAppInstaller -ErrorAction SilentlyContinue
+  if ($pkg) {
+    Write-Output "DesktopAppInstaller registered ($($pkg.Version)) but winget.exe did not resolve"
+  } else {
+    Write-Output 'DesktopAppInstaller is not registered for this user - provisioning was lost before generalize'
+  }
+  exit 1
+}
+Write-Output "winget at $($cmd.Source)"`,
+    severity: 'fail',
+    phase: 'post-reboot',
+    timeoutS: 120,
+}
 
 export const windowsSuite: CheckSuite = {
     shell: 'powershell',
@@ -112,6 +152,31 @@ if ($bad) {
   $bad | ForEach-Object { Write-Output "open: $($_.DisplayName) [$($_.Profile)]" }
   exit 1
 }`,
+            severity: 'fail',
+            phase: 'first-boot',
+            timeoutS: 120,
+        },
+        {
+            // Finalize.ps1 enables RDP for the shipped template: Server's
+            // default is off, Convoy hands out clones with only --cipassword,
+            // and the noVNC console garbles symbol passwords typed on non-US
+            // keyboards against the guest's en-US layout. NLA staying at its
+            // required default is asserted alongside — RDP on a public network
+            // without it would expose the logon surface pre-auth.
+            id: 'rdp-enabled',
+            description: 'RDP is enabled, listening on 3389, and requires NLA',
+            script: `$ts = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'
+Write-Output "fDenyTSConnections=$($ts.fDenyTSConnections)"
+if ($ts.fDenyTSConnections -ne 0) { exit 1 }
+$nla = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp').UserAuthentication
+Write-Output "NLA=$nla"
+if ($nla -ne 1) {
+  Write-Output 'NLA is off - the logon surface would be reachable pre-auth'
+  exit 1
+}
+$l = Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue
+if (-not $l) { Write-Output 'no listener on 3389'; exit 1 }
+Write-Output 'RDP listening on 3389'`,
             severity: 'fail',
             phase: 'first-boot',
             timeoutS: 120,

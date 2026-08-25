@@ -347,6 +347,41 @@ set` calls and the firewall rules now all sit together after generalize. The
 rule is simple: **nothing above sysprep may touch WinRM auth, its policy keys,
 or its firewall rules.**
 
+### Shipped templates enable RDP (2026-08-19)
+
+Windows Server ships with RDP off, and until now nothing in the build changed
+that — a clone's only first contact was the noVNC console. That path breaks in
+practice: the console types against the guest's en-US layout, so a
+`--cipassword` containing symbols typed on a non-US client keyboard arrives as
+different characters. Observed live 2026-08-18 on a 2025 clone: `=` typed on a
+Swedish layout never matched; the Security log filled with `0xC000006A` (wrong
+password) while the very same string passed an in-guest `LogonUser` type 2.
+Convoy provisions clones with only `--cipassword`, so RDP is the expected first
+door in.
+
+`Finalize.ps1` now sets `fDenyTSConnections=0` and enables the inbox Remote
+Desktop firewall group in the post-generalize block — the same slot as the
+WU-policy restore, for the same reason: registry writes after `/quit` land in
+the sealed image, and the Remote Desktop rules are disjoint from the WinRM
+rules the teardown removes, so packer's session survives. The group is matched
+by its locale-independent id (`@FirewallAPI.dll,-28752`), not the DisplayGroup
+string. NLA stays at its Server default (required), so nothing is reachable
+pre-auth. The `rdp-enabled` verify check asserts all three properties on every
+clone: enabled, listening on 3389, NLA on.
+
+The tradeoff is deliberate: every clone now exposes 3389 on whatever network it
+lands on, including public ones, guarded by NLA plus the strength of
+`--cipassword`. The alternative — keeping console-only first contact — locked
+out any operator whose keyboard layout disagrees with the image about symbol
+placement.
+
+**Verified live on a clone, untested on a full build as of 2026-08-19.** The
+2025 clone test enabled RDP at runtime with exactly these two operations: the
+listener came up instantly with no TermService restart, an external TCP connect
+to 3389 succeeded, and `fw-rules-enabled=3` matched the group. The Finalize-time
+write is the same registry value in the same post-generalize slot the WU restore
+already uses, so it ships in the sealed image the same way.
+
 ### windows-server-2022 VERIFIED end to end (2026-08-03)
 
 `cf verify windows-server-2022` passed on the `124401b` artifact: **15 checks
@@ -532,6 +567,43 @@ each match with its own error handling, and logs how many matched. Framework
 packages are skipped outright (`$pkg.IsFramework`) since they can never be
 removed while dependents remain and only inflate the blocker list. Note 2022 passes with 32 packages still registered, so
 "still registered" is not itself fatal — only packages sysprep names are.
+
+### winget missing from shipped 2025 templates (#32)
+
+**2026-08-25.** `Microsoft.DesktopAppInstaller` — winget — was absent from clones
+of windows-server-2025. Not a build failure: every build passed, and the loss was
+only visible by preserving a VM and looking inside.
+
+Cause is the deprovision-and-retry fallback in the Appx cleanup. 2025 ships two
+coexisting DesktopAppInstaller versions; sysprep rejects the per-user-registered
+one, and removing it fails `0x80070032 ERROR_NOT_SUPPORTED` until the *sibling*
+version's provisioned entry is dropped. Provisioning is what registers an app
+into each new user profile, and `remove-build-profile.ps1` deletes the build
+profile — so every clone's first logon creates a fresh profile with no winget.
+
+The `provisioned packages: N -> M` reporting added earlier made the loss visible;
+it did not stop it happening.
+
+**Fix (untested on a build).** After the removal loop, Finalize re-provisions
+every family whose provisioning the cleanup dropped, from the payload Server
+keeps on disk (`C:\Windows\InboxApps`, then `%ProgramFiles%\WindowsApps`) — no
+network. It runs after the blocking version is gone, so re-provisioning the
+sibling cannot resurrect what sysprep objected to. Failures are logged, never
+fatal: a template without winget is a defect, one that never generalizes is
+useless. It then re-enumerates and names anything still absent.
+
+Deliberately generic rather than winget-specific — anything the cleanup drops is
+something a clone was supposed to have.
+
+A `winget-present` verify check asserts `winget.exe` resolves on the clone, and
+distinguishes "registered but unresolved" from "provisioning was lost". It is a
+**2025-only** override (`RECIPE_OVERRIDES` in `src/verify/checks/index.ts`):
+winget is not inbox on 2019 or 2022, so asserting it there would fail templates
+that are behaving correctly.
+
+Asserting the command resolves, rather than reading the provisioned-package list,
+is the point: a template whose provisioning survived but never registered for the
+user is the same defect from the clone's point of view.
 
 ### Sysprep Appx pre-validation: being provisioned does not mean safe
 

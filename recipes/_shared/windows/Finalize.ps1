@@ -538,6 +538,74 @@ if ($dropped.Count) {
   foreach ($d in $dropped) { Write-Step "    $d" }
 }
 
+# Put back what the cleanup took (#32).
+#
+# Reporting the loss was not enough: winget went missing from shipped 2025
+# templates exactly this way. Microsoft.DesktopAppInstaller is inbox on 2025 and
+# ships two coexisting versions; sysprep rejects the per-user-registered one, the
+# deprovision-and-retry fallback above strips the SIBLING version's provisioning
+# to unstick the removal, and provisioning is what registers an app into each new
+# user profile. remove-build-profile.ps1 deletes the build profile, so every
+# clone's first logon builds a fresh one -- with no winget in it.
+#
+# Server keeps the payloads for inbox provisioned apps on disk, so this does not
+# need the network: find the bundle for each dropped family and provision it
+# again. Deliberately generic rather than winget-specific -- anything the
+# cleanup dropped is something a clone was supposed to have.
+#
+# Ordering matters: this runs AFTER the removal loop, so the blocking version is
+# already gone and re-provisioning the sibling cannot resurrect the package
+# sysprep objected to. Failures here are logged, never fatal -- a template
+# missing winget is a defect, but a template that never generalizes is useless,
+# and assert-generalized still gates the export either way.
+if ($dropped.Count) {
+  $bundleRoots = @(
+    'C:\Windows\InboxApps',
+    "$env:ProgramFiles\WindowsApps"
+  ) | Where-Object { Test-Path $_ }
+
+  foreach ($d in $dropped) {
+    # PackageName is <family>_<version>_<arch>__<publisher>; the family alone is
+    # what the on-disk bundle is named after.
+    $family = ($d -split '_')[0]
+    if (-not $family) { continue }
+
+    $bundle = $null
+    foreach ($root in $bundleRoots) {
+      $bundle = Get-ChildItem -Path $root -Recurse -ErrorAction SilentlyContinue `
+        -Include "$family*.appxbundle", "$family*.msixbundle", "$family*.appx", "$family*.msix" |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+      if ($bundle) { break }
+    }
+
+    if (-not $bundle) {
+      Write-Step "  could not re-provision $family : no package payload found under $($bundleRoots -join ', ')"
+      continue
+    }
+
+    try {
+      Add-AppxProvisionedPackage -Online -PackagePath $bundle.FullName -SkipLicense -ErrorAction Stop | Out-Null
+      Write-Step "  re-provisioned $family from $($bundle.Name)"
+    } catch {
+      Write-Step "  re-provision of $family failed: $($_.Exception.Message)"
+    }
+  }
+
+  # Say what actually stuck, so the build log answers "does this template ship
+  # winget" without anyone preserving the VM to find out.
+  try {
+    $finalNames = @(Get-AppxProvisionedPackage -Online -ErrorAction Stop | ForEach-Object { $_.PackageName })
+    $stillMissing = @($dropped | Where-Object { $finalNames -notcontains $_ })
+    Write-Step ("  provisioned packages after recovery: {0}" -f $finalNames.Count)
+    if ($stillMissing.Count) {
+      Write-Step "  WARNING still ABSENT on every clone:"
+      foreach ($m in $stillMissing) { Write-Step "    $m" }
+    }
+  } catch {
+    Write-Step "  (could not confirm re-provisioning: $($_.Exception.Message))"
+  }
+}
+
 Write-Step "sysprep and shutdown"
 
 # Everything from here to the shutdown -- copying the answer file, rewriting it,
@@ -999,6 +1067,36 @@ foreach ($t in @("Reboot", "Reboot_AC", "Reboot_Battery")) {
 # here (instead of only at clone specialize) keeps it out of the exported template
 # disk entirely; the specialize-script deletion stays as a backstop.
 Remove-Item $unattendCopy -Force -ErrorAction SilentlyContinue
+
+Write-Step "enable Remote Desktop on the shipped template"
+# Windows Server ships with RDP off (fDenyTSConnections=1) and nothing else in
+# the build turns it on, so a clone's only first contact was the noVNC console.
+# That path breaks in practice: the console types against the guest's en-US
+# layout, so a --cipassword containing symbols typed on a non-US client
+# keyboard arrives as different characters (observed live 2026-08-18: '=' from
+# a Swedish layout; the Security log filled with 0xC000006A while the same
+# string passed an in-guest LogonUser). Convoy hands out clones with only
+# --cipassword, so RDP is the expected first door in.
+#
+# This sits after generalize with the other shipped-template policy on purpose:
+# registry writes after /quit land in the sealed image (same reason the WU
+# restore above is here), and the Remote Desktop firewall group is disjoint
+# from the WinRM rules the teardown below removes, so packer's session is
+# untouched. The inbox rules cover every profile including Public --
+# deliberate, clones land directly on public networks. NLA stays at its Server
+# default (required), so nothing is reachable pre-auth. Verified live on a 2025
+# clone before being baked in: the listener came up instantly, no TermService
+# restart needed (docs/windows.md).
+Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0 -Type DWord
+# The group id, not DisplayGroup "Remote Desktop": the id is locale-independent
+# so this does not quietly no-op on non-en-US media.
+Enable-NetFirewallRule -Group "@FirewallAPI.dll,-28752" -ErrorAction SilentlyContinue
+$rdpRules = @(Get-NetFirewallRule -Group "@FirewallAPI.dll,-28752" -ErrorAction SilentlyContinue |
+  Where-Object { $_.Enabled -eq "True" })
+Write-Step "  $($rdpRules.Count) Remote Desktop firewall rule(s) enabled"
+if (-not $rdpRules.Count) {
+  throw "no Remote Desktop firewall rules could be enabled - every clone would ship unreachable over RDP"
+}
 
 Write-Step "tear down the build's WinRM exposure"
 # EVERYTHING that can cut packer's WinRM session MUST stay here, after generalize
