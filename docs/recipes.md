@@ -1,9 +1,10 @@
 # Recipes
 
 All current recipes perform an unattended ISO installation on Proxmox and then
-export a vzdump artifact. The `# build_vmid` in each HCL file is a stable recipe
-base ID. During `cf build`, networked installers use
-`base_build_vmid * 100 + slot_index` so parallel builds do not share VM state.
+export importable disk images (see [Disk images](disk-images.md)). The
+`# build_vmid` in each HCL file is a stable recipe base ID. During `cf build`,
+networked installers use `base_build_vmid * 100 + slot_index` so parallel builds
+do not share VM state.
 
 ## Supported recipes
 
@@ -34,23 +35,28 @@ host shrink steps reduce it to `# final_disk_size` before export.
 Copy the nearest recipe in the same OS family, then update every piece of
 release identity together:
 
-- header metadata: `display`, `group`, `build_vmid`, `iso_url`,
-  `iso_target_path`, checksum URL, and filename pattern where present;
+- header metadata: `display`, `group`, `build_vmid`, `min_cores`, `min_memory`,
+  `iso_url`, `iso_target_path`, checksum URL, and filename pattern where
+  present;
 - the `build_vmid` default and recipe locals;
 - source name, ISO filename, checksum, and unattended-install paths;
 - image/edition name and release-specific drivers;
 - CPU and memory if the installer genuinely requires different resources.
+
+`# min_cores` and `# min_memory` (MiB) are the **runtime floor** published in
+the sidecar's `minimum` block, not the build's shape. They are hand-authored
+precisely because the HCL `cores`/`memory` are servicing headroom — Windows
+builds at 4/8192 for the `WU.ps1` rounds — and publishing that would floor every
+consumer's plan at the build's size. There is deliberately no minimum disk size;
+see [Disk images](disk-images.md#why-minimum-has-no-disk).
 
 Choose a unique base VMID in the family's existing range. Do not choose a live
 slot-derived ID directly.
 
 Keep disks small. The Linux installers currently fit in 5G. For Windows, retain
 the temporary build/final shrink design and change the final size only after
-checking the installed minimum and the vzdump sparse-data report:
-
-```text
-INFO: backup is sparse: X GiB (Y%) total zero data
-```
+checking the installed minimum with `qemu-img info --output=json` on the
+exported image, comparing `actual-size` against `virtual-size`.
 
 Run a full build after recipe changes. HCL syntax alone cannot validate an ISO's
 image names, boot sequence, driver directories, or unattended installer schema.
@@ -63,7 +69,7 @@ when required by that installer.
 
 The build's ephemeral SSH key is installed for the `packer` user in a
 `late-command`, **not** through the autoinstall `ssh:` section. Subiquity's
-`ssh.authorized-keys` registers the key as an *instance* public key, and
+`ssh.authorized-keys` registers the key as an _instance_ public key, and
 cloud-init then also plants it in `/root/.ssh/authorized_keys` as a neutered
 `disable_root` forced-command stub (`command="…Please login as the user…exit
 142"`) — the build key leaking into the shipped template, which the
@@ -78,7 +84,7 @@ it enables `ssh.service` via the systemd preset) and the existing
 
 **The `identity` user does not exist in the target when `late-commands` run.**
 Confirmed on a live 22.04 build (and reproduced for 25.10): Subiquity defers
-`identity`-user creation to cloud-init's *first boot* of the installed system,
+`identity`-user creation to cloud-init's _first boot_ of the installed system,
 so at `curtin in-target` time there is no `packer` user or group. The original
 `install -d -m 700 -o packer -g packer /home/packer/.ssh` therefore failed with
 `install: invalid user 'packer'`, and a failed late-command **aborts the entire
@@ -89,7 +95,7 @@ both surface as a 30-minute SSH timeout; tell them apart from the serial console
 — an aborted install shows `An error occurred. Press enter to start a shell`.)
 
 The recipe now creates the group and user in-target (`groupadd`/`useradd`,
-guarded so they no-op where a Subiquity version already made them) *before* the
+guarded so they no-op where a Subiquity version already made them) _before_ the
 key-install commands. cloud-init reconciles the pre-existing `packer` user
 idempotently on first boot, so its locked password, sudo group, and home are
 still applied. Re-run the `no-foreign-authorized-keys` check to confirm root is

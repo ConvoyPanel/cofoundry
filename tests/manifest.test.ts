@@ -21,10 +21,20 @@ const sc = (
         display: name,
         arch: 'amd64',
         group: name.split('-')[0]!,
-        sha256: lastModified.replace(/\D/g, ''),
-        size: 100,
-        url: `https://example.com/${name}.vma.zst`,
         built_at: lastModified,
+        disks: [
+            {
+                slot: 'scsi0',
+                role: 'system',
+                format: 'qcow2',
+                file: `${name}.qcow2`,
+                url: `https://example.com/${name}.qcow2`,
+                sha256: lastModified.replace(/\D/g, ''),
+                size: 100,
+                virtual_size: '5G',
+            },
+        ],
+        hardware: { ostype: 'l26', bios: 'seabios', machine: 'q35' },
         ...extra,
     } as R2Sidecar['sidecar'],
 })
@@ -48,12 +58,12 @@ describe('buildManifest', () => {
         outPath = join(sourceDir, 'registry.json')
     })
 
-    test('writes registry.json with schema_version "1" and a generated_at timestamp', async () => {
+    test('writes registry.json with schema_version "2" and a generated_at timestamp', async () => {
         const path = await buildManifest(sourceDir, outPath)
         expect(path).toBe(outPath)
 
         const manifest = JSON.parse(await readFile(path, 'utf8'))
-        expect(manifest.schema_version).toBe('1')
+        expect(manifest.schema_version).toBe('2')
         expect(typeof manifest.generated_at).toBe('string')
         expect(() =>
             new Date(manifest.generated_at).toISOString()
@@ -86,7 +96,7 @@ describe('buildManifest', () => {
         expect(alma?.display_name).toBe('AlmaLinux')
     })
 
-    test('preserves sidecar fields verbatim', async () => {
+    test('carries the disk set and hardware profile through verbatim', async () => {
         await buildManifest(sourceDir, outPath)
         const manifest = JSON.parse(await readFile(outPath, 'utf8'))
         const allTemplates = manifest.groups.flatMap((g: any) => g.templates)
@@ -96,12 +106,37 @@ describe('buildManifest', () => {
         expect(debian).toMatchObject({
             display: 'Debian 12 (Bookworm)',
             arch: 'amd64',
+            suggested_vmid: 4001,
+            built_at: '2026-05-18T12:00:00Z',
+            minimum: { cores: 1, memory: 1024 },
+        })
+        // The hardware profile is what a consumer rebuilds the VM from, so it
+        // has to survive aggregation intact rather than being summarized.
+        expect(debian.hardware).toEqual({
+            ostype: 'l26',
+            bios: 'seabios',
+            machine: 'q35',
+            scsihw: 'virtio-scsi-single',
+            cpu: 'host',
+            agent: 1,
+            net_model: 'virtio',
+            serial0: 'socket',
+            ciuser: 'root',
+        })
+        expect(debian.disks).toHaveLength(1)
+        expect(debian.disks[0]).toMatchObject({
+            slot: 'scsi0',
+            role: 'system',
+            format: 'qcow2',
             sha256: 'aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa7777bbbb8888',
             size: 1572864000,
-            suggested_vmid: 4001,
-            url: 'https://example.com/debian-12.vma.zst',
-            built_at: '2026-05-18T12:00:00Z',
+            virtual_size: '5G',
         })
+
+        // `group` identifies the sidecar, not the template: it becomes the
+        // enclosing Group and must not be duplicated onto the entry.
+        expect(debian).not.toHaveProperty('group')
+        expect(debian).not.toHaveProperty('schema_version')
     })
 
     test('does not include a pre-existing registry.json as a template', async () => {

@@ -1,6 +1,8 @@
 # display: Windows Server 2019 Datacenter
 # group: windows-server
 # build_vmid: 2000
+# min_cores: 2
+# min_memory: 4096
 # final_disk_size: 30G
 # iso_url: https://software-static.download.prss.microsoft.com/pr/download/17763.737.190906-2324.rs5_release_svc_refresh_SERVER_EVAL_x64FRE_en-us_1.iso
 # iso_target_path: /var/lib/vz/template/iso/packer-windows-server-2019-eval.iso
@@ -287,6 +289,6 @@ build {
       "CF_RECIPE_NAME=${local.recipe_name}",
       "CF_RECIPE_DISPLAY=${local.recipe_display}",
     ]
-    script = "${path.root}/_shared/post/vzdump-and-cleanup.sh"
+    script = "${path.root}/_shared/post/export-and-cleanup.sh"
   }
 }

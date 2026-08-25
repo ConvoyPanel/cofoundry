@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # assert-generalized.sh — host-side proof that a Windows build actually sysprep'd.
 #
-# Sourced by vzdump-and-cleanup.sh, so it reuses that scope's _pve() dispatch
+# Sourced by export-and-cleanup.sh, so it reuses that scope's _pve() dispatch
 # (local bash vs. ssh to the node) and CF_* environment.
 #
 # Why this has to be host-side: a guest-side assertion cannot be trusted here.

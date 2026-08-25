@@ -1,6 +1,8 @@
 # display: Windows Server 2022 Datacenter
 # group: windows-server
 # build_vmid: 2001
+# min_cores: 2
+# min_memory: 4096
 # final_disk_size: 30G
 # iso_url: https://software-download.microsoft.com/download/sg/20348.169.210806-2348.fe_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso
 # iso_target_path: /var/lib/vz/template/iso/packer-windows-server-2022-eval.iso
@@ -292,6 +294,6 @@ build {
       "CF_RECIPE_NAME=${local.recipe_name}",
       "CF_RECIPE_DISPLAY=${local.recipe_display}",
     ]
-    script = "${path.root}/_shared/post/vzdump-and-cleanup.sh"
+    script = "${path.root}/_shared/post/export-and-cleanup.sh"
   }
 }

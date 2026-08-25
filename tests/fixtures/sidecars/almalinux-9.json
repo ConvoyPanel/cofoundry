@@ -1,11 +1,34 @@
 {
+    "schema_version": "2",
     "name": "almalinux-9-amd64",
     "display": "AlmaLinux 9",
     "arch": "amd64",
     "group": "almalinux",
-    "sha256": "9999aaaa8888bbbb7777cccc6666dddd5555eeee4444ffff3333000022221111",
-    "size": 2147483648,
     "suggested_vmid": 6001,
-    "url": "https://example.com/almalinux-9.vma.zst",
-    "built_at": "2026-05-18T13:00:00Z"
+    "built_at": "2026-05-18T13:00:00Z",
+    "disks": [
+        {
+            "slot": "scsi0",
+            "role": "system",
+            "format": "qcow2",
+            "file": "almalinux-9-amd64-9999aaaa8888bbbb7777cccc6666dddd5555eeee4444ffff3333000022221111.qcow2",
+            "url": "https://example.com/almalinux-9-amd64-9999aaaa8888bbbb7777cccc6666dddd5555eeee4444ffff3333000022221111.qcow2",
+            "sha256": "9999aaaa8888bbbb7777cccc6666dddd5555eeee4444ffff3333000022221111",
+            "size": 2147483648,
+            "virtual_size": "5G",
+            "options": { "discard": "on", "ssd": 1 }
+        }
+    ],
+    "hardware": {
+        "ostype": "l26",
+        "bios": "seabios",
+        "machine": "q35",
+        "scsihw": "virtio-scsi-single",
+        "cpu": "host",
+        "agent": 1,
+        "net_model": "virtio",
+        "serial0": "socket",
+        "ciuser": "root"
+    },
+    "minimum": { "cores": 1, "memory": 2048 }
 }

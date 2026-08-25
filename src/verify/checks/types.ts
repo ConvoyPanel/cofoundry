@@ -13,7 +13,7 @@ export type CheckSeverity = 'fail' | 'warn'
 /**
  * Which boot a check runs on.
  *
- * - `first-boot`   — the boot straight out of qmrestore. The only chance to
+ * - `first-boot`   — the first boot of the imported VM. The only chance to
  *                    observe first-boot-only state (regenerated SSH host keys,
  *                    the build's Windows profile before a logon recreates it).
  * - `post-reboot`  — after a clean reboot. Catches "worked once" state that a

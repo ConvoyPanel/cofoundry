@@ -9,7 +9,7 @@ import { shellQuote } from '@/util.ts'
  * can hold the file-backed qcow2 that the disk-shrink post-processor
  * (recipes/_shared/post/shrink-disk.sh) resizes with `qemu-img resize --shrink`.
  * Block/dataset backends (zfspool, lvmthin, rbd, ...) make that script refuse —
- * hours into the build, inside vzdump-and-cleanup.sh's `set -e` — so they must
+ * hours into the build, inside export-and-cleanup.sh's `set -e` — so they must
  * be rejected before Packer ever starts.
  *
  * `glusterfs` is deliberately absent: although the volume is qcow2 on a FUSE

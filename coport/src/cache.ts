@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
-import type { Template } from '@/registry/schema.ts'
+import { systemDisk, type Template } from '@/registry/schema.ts'
 
 // Persistent record of what coport has installed on this node, so `--upgrade`
 // can reinstall only changed templates and reuse the VMID the user picked last
@@ -65,9 +65,17 @@ export const writeCache = async (cache: Cache): Promise<void> => {
     await writeFile(CACHE_PATH, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
 }
 
-/** True when the registry template differs from what the cache last installed. */
+/**
+ * True when the registry template differs from what the cache last installed.
+ *
+ * Identity is the SYSTEM disk's hash: a template is several images now, but the
+ * varstore is tiny and derived, so the system disk changing is what makes an
+ * install stale. `built_at` still catches a rebuild that produced identical
+ * bytes.
+ */
 export const isStale = (record: CacheRecord, template: Template): boolean =>
-    record.sha256 !== template.sha256 || record.builtAt !== template.built_at
+    record.sha256 !== systemDisk(template).sha256 ||
+    record.builtAt !== template.built_at
 
 export const recordFor = (
     template: Template,
@@ -78,7 +86,7 @@ export const recordFor = (
     display: template.display,
     vmid,
     storage,
-    sha256: template.sha256,
+    sha256: systemDisk(template).sha256,
     builtAt: template.built_at,
     installedAt: new Date().toISOString(),
 })

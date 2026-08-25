@@ -1,14 +1,4 @@
-export type Sidecar = {
-    name: string
-    display: string
-    arch: string
-    group: string
-    sha256: string
-    size: number
-    suggested_vmid?: number
-    url: string
-    built_at: string
-}
+export type { Sidecar } from '@/registry/schema.ts'
 
 export type UploadOptions = {
     sourceDir?: string

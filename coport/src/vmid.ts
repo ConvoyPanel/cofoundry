@@ -3,7 +3,7 @@ import type { Template } from '@/registry/schema.ts'
 
 // VMIDs are cluster-global, but /etc/pve/qemu-server and /etc/pve/lxc are
 // symlinks to the LOCAL node's directory only. Detection must cover every
-// node, or we hand out a "free" VMID that qmrestore later rejects — after
+// node, or we hand out a "free" VMID that `qm create` later rejects — after
 // the multi-GB artifact has already been downloaded.
 const PVE_DIR = '/etc/pve'
 

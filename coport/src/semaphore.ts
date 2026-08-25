@@ -1,6 +1,6 @@
 // A minimal counting semaphore used to bound concurrent downloads and restores
 // independently (a `coport <all>` run otherwise launches one fetch + one
-// qmrestore per template all at once against a single node).
+// import per template all at once against a single node).
 //
 // Race-free because JS is single-threaded with no preemption: the
 // check-and-decrement below runs to completion before any other `run` call can

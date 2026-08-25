@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shrink-disk.sh — shrink the OS (scsi0) disk to CF_FINAL_DISK_SIZE before vzdump.
 #
-# Sourced by vzdump-and-cleanup.sh, so it reuses that scope's _pve() dispatch
+# Sourced by export-and-cleanup.sh, so it reuses that scope's _pve() dispatch
 # (local bash vs. ssh to the node), CF_BUILT_VMID, and CF_FINAL_DISK_SIZE.
 # Only invoked when CF_FINAL_DISK_SIZE is set.
 #

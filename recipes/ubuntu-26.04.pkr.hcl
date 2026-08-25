@@ -1,6 +1,8 @@
 # display: Ubuntu 26.04 LTS (Resolute Raccoon)
 # group: ubuntu
 # build_vmid: 1005
+# min_cores: 1
+# min_memory: 1024
 # iso_url: https://releases.ubuntu.com/26.04/ubuntu-26.04-live-server-amd64.iso
 # iso_target_path: ${var.iso_cache_dir}/packer-ubuntu-26.04-live-server-amd64.iso
 # iso_checksum_url: https://releases.ubuntu.com/26.04/SHA256SUMS
@@ -233,6 +235,6 @@ build {
       "CF_RECIPE_NAME=${local.recipe_name}",
       "CF_RECIPE_DISPLAY=${local.recipe_display}",
     ]
-    script = "${path.root}/_shared/post/vzdump-and-cleanup.sh"
+    script = "${path.root}/_shared/post/export-and-cleanup.sh"
   }
 }

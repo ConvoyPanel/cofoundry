@@ -32,10 +32,23 @@ export interface RecipeInfo {
     /**
      * Final exported disk size from `# final_disk_size: <size>` (e.g. "32G").
      * When set, the recipe's HCL `disk_size` is the larger *build-time* disk and
-     * the post-processor shrinks the disk to this size before vzdump. Absent =
-     * no shrink (build disk == final disk), preserving existing behavior.
+     * the post-processor shrinks the disk to this size before the export. Absent
+     * = no shrink (build disk == final disk), preserving existing behavior.
      */
     finalDiskSize?: string
+    /**
+     * Runtime floor published in the sidecar's `minimum` block, from
+     * `# min_cores:` / `# min_memory:` (MiB). Deliberately hand-authored rather
+     * than captured: `buildCores`/`buildMemoryMb` are servicing headroom (8192
+     * MiB on Windows for the WU rounds), not a requirement, and publishing them
+     * would floor every consumer plan at the build's shape.
+     *
+     * There is no matching disk floor — `import-from` gives the imported disk
+     * the source's virtual size and `qm disk resize` cannot shrink, so
+     * `disks[0].virtual_size` already enforces it. See docs/disk-images.md.
+     */
+    minCores?: number
+    minMemoryMb?: number
 }
 
 const parseMeta = (raw: string, key: string): string | undefined => {
@@ -115,6 +128,8 @@ export const loadRecipe = async (
         arch: parseMeta(raw, 'arch') ?? 'amd64',
         group: parseMeta(raw, 'group'),
         finalDiskSize: parseMeta(raw, 'final_disk_size'),
+        minCores: parseMetaInt(raw, 'min_cores'),
+        minMemoryMb: parseMetaInt(raw, 'min_memory'),
     }
 }
 

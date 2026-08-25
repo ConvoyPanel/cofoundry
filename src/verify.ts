@@ -1,14 +1,16 @@
 import { execa } from 'execa'
 import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { basename, join } from 'node:path'
+import { join } from 'node:path'
 import { createRenderer, title, accent, dim } from '@cofoundry/ui'
 import type { Env } from '@/env.ts'
 import type { RecipeInfo } from '@/config.ts'
 import { shellQuote } from '@/util.ts'
 import { buildRemoteOutDir } from '@/build/paths.ts'
+import { createArgs, DEFAULT_BRIDGE } from '@/registry/create.ts'
+import type { DiskImage, Template } from '@/registry/schema.ts'
 import { acquireRunLease } from '@/build/lease.ts'
-import { registerCleanup } from '@/build/remote.ts'
+import { captureRemote, registerCleanup } from '@/build/remote.ts'
 import { destroyVmCommand } from '@/build/vm.ts'
 import { acquireRemoteMaintenanceLock } from '@/build/maintenance.ts'
 import { diagnosticsRunDirName } from '@/build/diagnostics/paths.ts'
@@ -149,10 +151,16 @@ const pingGuest = async (
 }
 
 /**
- * Smoke-test the locally-built artifact by qmrestore-ing it on the PVE node and
- * exercising it the way a user's clone is exercised: cloud-init parameters
+ * Smoke-test the locally-built artifact by rebuilding a VM from it on the PVE
+ * node — the same `qm create --import-from` path `coport` installs through —
+ * and exercising it the way a user's clone is exercised: cloud-init parameters
  * injected and asserted, a battery of in-guest checks over `qm guest exec`, a
  * reboot round-trip, and a look at the actual console framebuffer.
+ *
+ * Going through the published sidecar rather than the build VM is deliberate:
+ * it puts the hardware profile itself under test on every run, so a profile
+ * that no longer describes what its images need fails here instead of in a
+ * consumer's install.
  *
  * The guest agent answering is the weakest signal in the stack — it starts early
  * and is independent of nearly everything a template promises — so it is the
@@ -182,45 +190,43 @@ const runVerifyLocked = async (
     recipe: RecipeInfo,
     options: VerifyOptions
 ): Promise<void> => {
-    const artifactName = `${recipe.name}-${recipe.arch}.vma.zst`
-    const local = join(env.CF_OUT_DIR, artifactName)
-    const remoteBuildFile = `${buildRemoteOutDir(env)}/${artifactName}`
-    // Scratch dir lives under PVE_DUMP_DIR so hard-linking the artifact into
-    // it always works (same filesystem). /var/tmp on the node may be on a
-    // different mount.
+    const sidecarName = `${recipe.name}-${recipe.arch}.json`
+    const localSidecar = join(env.CF_OUT_DIR, sidecarName)
+    const remoteOutDir = buildRemoteOutDir(env)
     const owner = randomUUID()
     const remoteTmp = `${env.PVE_DUMP_DIR}/cofoundry-verify-${owner}`
     const reservation = `${VERIFY_STATE_DIR}/${owner}`
 
-    // Prefer the artifact already on the PVE node from the build step
-    // (CI sets CF_SKIP_ARTIFACT_SYNC=1, so it never lands locally). Fall back to
-    // uploading the local file when running outside CI.
+    // Prefer the artifacts already on the PVE node from the build step
+    // (CI sets CF_SKIP_ARTIFACT_SYNC=1, so they never land locally). Fall back
+    // to uploading the local files when running outside CI.
     const remoteHasBuildArtifact = await sshOk(
         env.SSH_TARGET,
-        `test -f ${shellQuote(remoteBuildFile)}`
+        `test -f ${shellQuote(`${remoteOutDir}/${sidecarName}`)}`
     )
-    const localExists = await Bun.file(local).exists()
+    const localExists = await Bun.file(localSidecar).exists()
     if (!remoteHasBuildArtifact && !localExists) {
         throw new Error(
-            `artifact not found locally (${local}) or on ${env.SSH_TARGET} (${remoteBuildFile})`
+            `sidecar not found locally (${localSidecar}) or on ${env.SSH_TARGET} (${remoteOutDir}/${sidecarName})`
         )
     }
 
-    const sourceFile = remoteHasBuildArtifact
-        ? remoteBuildFile
-        : `${remoteTmp}/${basename(local)}`
-    // qmrestore parses the basename to extract VMID/type and rejects anything
-    // that doesn't match Proxmox's vzdump regex:
-    //   /vzdump-(qemu|lxc|openvz)-(\d+)-(\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2})\.…/
-    // (date/time separator is a dash, not an underscore.) It also resolves
-    // realpath() before parsing, so a symlink won't help — we need a hard
-    // link with the right name. Hard linking requires the same filesystem,
-    // hence remoteTmp under PVE_DUMP_DIR.
-    const d = new Date()
-    const pad = (n: number): string => String(n).padStart(2, '0')
-    const ts =
-        `${d.getUTCFullYear()}_${pad(d.getUTCMonth() + 1)}_${pad(d.getUTCDate())}` +
-        `-${pad(d.getUTCHours())}_${pad(d.getUTCMinutes())}_${pad(d.getUTCSeconds())}`
+    // The sidecar names the images and carries the hardware profile the VM is
+    // rebuilt from — verify reads the published artifact rather than the build
+    // VM, so the profile itself is under test.
+    const template: Template = JSON.parse(
+        remoteHasBuildArtifact
+            ? await captureRemote(
+                  env.SSH_TARGET,
+                  `cat ${shellQuote(`${remoteOutDir}/${sidecarName}`)}`
+              )
+            : await Bun.file(localSidecar).text()
+    )
+
+    // Local files are `<name><ext>`; published ones carry the hash. See
+    // localArtifactName in src/upload/template.ts.
+    const localImage = (disk: DiskImage): string =>
+        disk.file.replace(`${template.name}-${disk.sha256}`, template.name)
 
     const lease = await acquireRunLease(env, 'verify', recipe, remoteTmp)
     const renderer = createRenderer({
@@ -249,52 +255,56 @@ const runVerifyLocked = async (
     })
 
     try {
+        await ssh(env.SSH_TARGET, `mkdir -p ${shellQuote(remoteTmp)}`)
+        // Where each image sits on the node, keyed by the slot it imports into.
+        // `import-from` takes an absolute path, so nothing has to be staged
+        // into an import-content storage first.
+        const files = new Map<string, string>()
         if (remoteHasBuildArtifact) {
-            task.setPhase(`using remote artifact ${dim(remoteBuildFile)}`)
-            await ssh(env.SSH_TARGET, `mkdir -p ${shellQuote(remoteTmp)}`)
+            task.setPhase(`using remote images ${dim(remoteOutDir)}`)
+            for (const disk of template.disks)
+                files.set(disk.slot, `${remoteOutDir}/${localImage(disk)}`)
         } else {
-            task.setPhase(`uploading artifact ${dim('→')} ${env.SSH_TARGET}`)
-            await ssh(env.SSH_TARGET, `mkdir -p ${shellQuote(remoteTmp)}`)
-            await execa('scp', [local, `${env.SSH_TARGET}:${sourceFile}`], {
-                stdin: 'inherit',
-                stderr: 'inherit',
-            })
+            task.setPhase(`uploading images ${dim('→')} ${env.SSH_TARGET}`)
+            for (const disk of template.disks) {
+                const name = localImage(disk)
+                const dest = `${remoteTmp}/${name}`
+                await execa(
+                    'scp',
+                    [join(env.CF_OUT_DIR, name), `${env.SSH_TARGET}:${dest}`],
+                    { stdin: 'inherit', stderr: 'inherit' }
+                )
+                files.set(disk.slot, dest)
+            }
         }
 
         task.setPhase('allocating VMID')
         vmid = await reserveScratchVmid(env.SSH_TARGET, owner)
         await lease.setVmid(vmid)
 
-        const restoreFile = `${remoteTmp}/vzdump-qemu-${vmid}-${ts}.vma.zst`
+        // Built through the SAME builder coport installs with, so the published
+        // hardware profile is exercised on every verify run instead of being
+        // metadata nothing ever reads. Unlike the old qmrestore path this
+        // produces a plain VM, so there is no template flag to clear and no
+        // immutable attr to strip off base-<vmid> disks before booting.
+        //
+        // Verify boots at the BUILD shape, not the profile's `minimum`: the
+        // floor is what a consumer may configure, while these checks want the
+        // resources the recipe was exercised with.
+        task.setPhase(`qm create ${dim('→')} VMID ${accent(String(vmid))}`)
         await ssh(
             env.SSH_TARGET,
-            `ln -f ${shellQuote(sourceFile)} ${shellQuote(restoreFile)}`
-        )
-
-        task.setPhase(`qmrestore ${dim('→')} VMID ${accent(String(vmid))}`)
-        await ssh(
-            env.SSH_TARGET,
-            `qmrestore ${shellQuote(restoreFile)} ${vmid} --storage ${shellQuote(env.CF_STORAGE)} --unique 1`
-        )
-        // vzdump-of-a-template restores as a template: (1) the config has
-        // `template: 1`, blocking `qm start`; and (2) on dir/file storage,
-        // each disk has the immutable attr (chattr +i) set and a base-<vmid>
-        // filename prefix, so KVM can't open them ("Operation not permitted").
-        // Strip both so we can boot the restored VM.
-        await ssh(
-            env.SSH_TARGET,
-            // (1) Clear template flag in both API and on-disk config.
-            `qm set ${vmid} --template 0 >/dev/null 2>&1 || true; ` +
-                `sed -i '/^template:/d' /etc/pve/qemu-server/${vmid}.conf; ` +
-                // (2) Clear immutable attr on all disk files for this VMID
-                // across whatever storages were used. Resolve each disk volid
-                // through `pvesm path` so this works regardless of CF_STORAGE.
-                `qm config ${vmid} | ` +
-                `sed -nE 's/^(scsi|sata|ide|virtio|efidisk|tpmstate)[0-9]+: ([^,]+).*/\\2/p' | ` +
-                `while read vol; do ` +
-                `  p=$(pvesm path "$vol" 2>/dev/null) || continue; ` +
-                `  [ -n "$p" ] && [ -f "$p" ] && chattr -i "$p" 2>/dev/null || true; ` +
-                `done`
+            createArgs(template, {
+                vmid,
+                storage: env.CF_STORAGE,
+                bridge: env.CF_BUILD_BRIDGE || DEFAULT_BRIDGE,
+                files,
+                cores: recipe.buildCores,
+                memory: recipe.buildMemoryMb,
+                name: `cofoundry-verify-${recipe.name}`,
+            })
+                .map(shellQuote)
+                .join(' ')
         )
 
         const isWindows = isWindowsRecipe(recipe.name)
