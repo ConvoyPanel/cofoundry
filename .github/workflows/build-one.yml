@@ -73,13 +73,28 @@ jobs:
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
+      # --skip-upload is what keeps a bad template out of R2. The upload is
+      # otherwise a side effect of the build itself: the node-side
+      # post-processor runs CF_UPLOAD_CMD as soon as the artifact is hashed,
+      # which is BEFORE the smoke test below has run. A recipe that built but
+      # failed verify therefore published anyway, and `cf publish --r2` — which
+      # advertises the newest sidecar per template — would pick it up. That is
+      # how a bucket ends up holding two windows-server-2025 templates when only
+      # one run ever passed (#31).
       - name: Build template
-        run: bun run cf build "$CF_RECIPE" --ci --verbose
+        run: bun run cf build "$CF_RECIPE" --ci --verbose --skip-upload
         env:
           CF_SKIP_ARTIFACT_SYNC: '1'
 
       - name: Smoke-test artifact
         run: bun run cf verify "$CF_RECIPE"
+
+      # Only now, with the artifact proven bootable, does it become publishable.
+      # --remote uploads straight from the node's output dir, so nothing has to
+      # cross the runner (CF_SKIP_ARTIFACT_SYNC=1 means it was never here).
+      # Steps stop on first failure, so reaching this line IS the verify pass.
+      - name: Upload verified artifact
+        run: bun run cf upload "$CF_RECIPE" --remote
 
       # Runs only after build+verify succeed (steps stop on first failure), so
       # this marker's existence is the per-recipe success signal that

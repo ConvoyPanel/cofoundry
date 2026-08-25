@@ -568,6 +568,43 @@ packages are skipped outright (`$pkg.IsFramework`) since they can never be
 removed while dependents remain and only inflate the blocker list. Note 2022 passes with 32 packages still registered, so
 "still registered" is not itself fatal — only packages sysprep names are.
 
+### winget missing from shipped 2025 templates (#32)
+
+**2026-08-25.** `Microsoft.DesktopAppInstaller` — winget — was absent from clones
+of windows-server-2025. Not a build failure: every build passed, and the loss was
+only visible by preserving a VM and looking inside.
+
+Cause is the deprovision-and-retry fallback in the Appx cleanup. 2025 ships two
+coexisting DesktopAppInstaller versions; sysprep rejects the per-user-registered
+one, and removing it fails `0x80070032 ERROR_NOT_SUPPORTED` until the *sibling*
+version's provisioned entry is dropped. Provisioning is what registers an app
+into each new user profile, and `remove-build-profile.ps1` deletes the build
+profile — so every clone's first logon creates a fresh profile with no winget.
+
+The `provisioned packages: N -> M` reporting added earlier made the loss visible;
+it did not stop it happening.
+
+**Fix (untested on a build).** After the removal loop, Finalize re-provisions
+every family whose provisioning the cleanup dropped, from the payload Server
+keeps on disk (`C:\Windows\InboxApps`, then `%ProgramFiles%\WindowsApps`) — no
+network. It runs after the blocking version is gone, so re-provisioning the
+sibling cannot resurrect what sysprep objected to. Failures are logged, never
+fatal: a template without winget is a defect, one that never generalizes is
+useless. It then re-enumerates and names anything still absent.
+
+Deliberately generic rather than winget-specific — anything the cleanup drops is
+something a clone was supposed to have.
+
+A `winget-present` verify check asserts `winget.exe` resolves on the clone, and
+distinguishes "registered but unresolved" from "provisioning was lost". It is a
+**2025-only** override (`RECIPE_OVERRIDES` in `src/verify/checks/index.ts`):
+winget is not inbox on 2019 or 2022, so asserting it there would fail templates
+that are behaving correctly.
+
+Asserting the command resolves, rather than reading the provisioned-package list,
+is the point: a template whose provisioning survived but never registered for the
+user is the same defect from the clone's point of view.
+
 ### Sysprep Appx pre-validation: being provisioned does not mean safe
 
 With the session restored, the underlying generalize failure was visible:

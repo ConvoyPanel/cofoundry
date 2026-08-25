@@ -538,6 +538,74 @@ if ($dropped.Count) {
   foreach ($d in $dropped) { Write-Step "    $d" }
 }
 
+# Put back what the cleanup took (#32).
+#
+# Reporting the loss was not enough: winget went missing from shipped 2025
+# templates exactly this way. Microsoft.DesktopAppInstaller is inbox on 2025 and
+# ships two coexisting versions; sysprep rejects the per-user-registered one, the
+# deprovision-and-retry fallback above strips the SIBLING version's provisioning
+# to unstick the removal, and provisioning is what registers an app into each new
+# user profile. remove-build-profile.ps1 deletes the build profile, so every
+# clone's first logon builds a fresh one -- with no winget in it.
+#
+# Server keeps the payloads for inbox provisioned apps on disk, so this does not
+# need the network: find the bundle for each dropped family and provision it
+# again. Deliberately generic rather than winget-specific -- anything the
+# cleanup dropped is something a clone was supposed to have.
+#
+# Ordering matters: this runs AFTER the removal loop, so the blocking version is
+# already gone and re-provisioning the sibling cannot resurrect the package
+# sysprep objected to. Failures here are logged, never fatal -- a template
+# missing winget is a defect, but a template that never generalizes is useless,
+# and assert-generalized still gates the export either way.
+if ($dropped.Count) {
+  $bundleRoots = @(
+    'C:\Windows\InboxApps',
+    "$env:ProgramFiles\WindowsApps"
+  ) | Where-Object { Test-Path $_ }
+
+  foreach ($d in $dropped) {
+    # PackageName is <family>_<version>_<arch>__<publisher>; the family alone is
+    # what the on-disk bundle is named after.
+    $family = ($d -split '_')[0]
+    if (-not $family) { continue }
+
+    $bundle = $null
+    foreach ($root in $bundleRoots) {
+      $bundle = Get-ChildItem -Path $root -Recurse -ErrorAction SilentlyContinue `
+        -Include "$family*.appxbundle", "$family*.msixbundle", "$family*.appx", "$family*.msix" |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+      if ($bundle) { break }
+    }
+
+    if (-not $bundle) {
+      Write-Step "  could not re-provision $family : no package payload found under $($bundleRoots -join ', ')"
+      continue
+    }
+
+    try {
+      Add-AppxProvisionedPackage -Online -PackagePath $bundle.FullName -SkipLicense -ErrorAction Stop | Out-Null
+      Write-Step "  re-provisioned $family from $($bundle.Name)"
+    } catch {
+      Write-Step "  re-provision of $family failed: $($_.Exception.Message)"
+    }
+  }
+
+  # Say what actually stuck, so the build log answers "does this template ship
+  # winget" without anyone preserving the VM to find out.
+  try {
+    $finalNames = @(Get-AppxProvisionedPackage -Online -ErrorAction Stop | ForEach-Object { $_.PackageName })
+    $stillMissing = @($dropped | Where-Object { $finalNames -notcontains $_ })
+    Write-Step ("  provisioned packages after recovery: {0}" -f $finalNames.Count)
+    if ($stillMissing.Count) {
+      Write-Step "  WARNING still ABSENT on every clone:"
+      foreach ($m in $stillMissing) { Write-Step "    $m" }
+    }
+  } catch {
+    Write-Step "  (could not confirm re-provisioning: $($_.Exception.Message))"
+  }
+}
+
 Write-Step "sysprep and shutdown"
 
 # Everything from here to the shutdown -- copying the answer file, rewriting it,
