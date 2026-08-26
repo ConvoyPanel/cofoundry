@@ -165,10 +165,10 @@ if ($bad) {
             // without it would expose the logon surface pre-auth.
             id: 'rdp-enabled',
             description: 'RDP is enabled, listening on 3389, and requires NLA',
-            script: `$ts = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'
+            script: `$ts = Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server'
 Write-Output "fDenyTSConnections=$($ts.fDenyTSConnections)"
 if ($ts.fDenyTSConnections -ne 0) { exit 1 }
-$nla = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp').UserAuthentication
+$nla = (Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp').UserAuthentication
 Write-Output "NLA=$nla"
 if ($nla -ne 1) {
   Write-Output 'NLA is off - the logon surface would be reachable pre-auth'
