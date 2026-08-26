@@ -950,7 +950,44 @@ while ([DateTime]::Now -lt $servicingDeadline) {
   Start-Sleep 15
 }
 if ((Test-Path "$cbsKey\RebootPending") -or (Test-Path "$cbsKey\PackagesPending")) {
-  throw "servicing still pending before sysprep (CBS RebootPending/PackagesPending) - a generalize over this state ships a template whose clones never specialize"
+  # Name what is actually pending. The bare assertion cost two 4-hour
+  # windows-server-2022 attempts on 2026-08-25/26 that reported only *that* CBS
+  # was pending, never which key or which package -- and a Windows build is the
+  # one place where "reproduce it to find out" costs three hours a go.
+  #
+  # Note the loop above cannot clear either key: RebootPending means exactly
+  # that, and PackagesPending is CBS work that completes during a restart. The
+  # real gate is packer's windows-restart, whose restart_check now tests both
+  # (it used to test RebootPending alone, which is how a build reached this
+  # throw with PackagesPending still set). This stays as a backstop that fails
+  # loudly rather than generalizing over half-applied servicing.
+  $why = @()
+  if (Test-Path "$cbsKey\RebootPending") { $why += 'CBS\RebootPending' }
+  if (Test-Path "$cbsKey\PackagesPending") { $why += 'CBS\PackagesPending' }
+  if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\WindowsUpdate\Auto Update\RebootRequired") {
+    $why += 'WU\RebootRequired'
+  }
+  if (Get-ItemProperty $sessionMgr -Name PendingFileRenameOperations -ErrorAction SilentlyContinue) {
+    $why += 'PendingFileRenameOperations'
+  }
+  Write-Step "  pending: $($why -join ', ')"
+
+  foreach ($k in @('PackagesPending', 'RebootPending')) {
+    try {
+      $names = @(Get-ChildItem "$cbsKey\$k" -ErrorAction Stop | ForEach-Object { $_.PSChildName })
+      if ($names.Count) {
+        Write-Step "  $k holds $($names.Count) entr(y/ies):"
+        foreach ($n in ($names | Select-Object -First 20)) { Write-Step "    $n" }
+      }
+    } catch { }
+  }
+  try {
+    $last = Get-WinEvent -FilterHashtable @{ LogName = 'Setup'; Id = 2 } -MaxEvents 5 -ErrorAction Stop
+    Write-Step "  most recent servicing events:"
+    foreach ($e in $last) { Write-Step ("    {0} {1}" -f $e.TimeCreated, ($e.Message -split "`n")[0]) }
+  } catch { }
+
+  throw "servicing still pending before sysprep ($($why -join ', ')) - a generalize over this state ships a template whose clones never specialize"
 }
 
 # 2. WMI must answer. Several generalize providers query it; confirm it responds
