@@ -568,6 +568,40 @@ packages are skipped outright (`$pkg.IsFramework`) since they can never be
 removed while dependents remain and only inflate the blocker list. Note 2022 passes with 32 packages still registered, so
 "still registered" is not itself fatal — only packages sysprep names are.
 
+### windows-server-2022: PackagesPending survives the restart gate
+
+**2026-08-25/26.** 2022 failed twice in a row, ~4h into each attempt, at
+Finalize's pre-sysprep settle gate:
+
+    PROVISIONER ERROR: servicing still pending before sysprep
+    (CBS RebootPending/PackagesPending)
+
+Twice is the signal — once would have been flakiness. The gate was correct to
+refuse; the bug is that the build was allowed to reach it in that state.
+
+`restart_check` in the Windows HCLs tested CBS **`RebootPending`** but not
+**`PackagesPending`**, while Finalize's guard tests both. A cumulative update can
+clear `RebootPending` on the restart that follows it and still leave
+`PackagesPending` set, so packer's `windows-restart` reported the machine
+settled, provisioning continued, and Finalize then found CBS pending anyway.
+
+Finalize's own 10-minute wait cannot rescue that: `RebootPending` means exactly
+what it says, and `PackagesPending` is CBS work that completes *during* a
+restart. Waiting for either to clear on a running system waits forever, then
+throws.
+
+**Fix.** `restart_check` now tests `PackagesPending` too, in all three Windows
+recipes, so packer keeps the restart gate closed until CBS is genuinely settled.
+Finalize's guard stays as a backstop rather than the primary gate.
+
+The guard also now names what is pending — which keys are set, the entries under
+`PackagesPending`/`RebootPending`, and the last few Setup-log servicing events —
+instead of asserting bare. Two four-hour attempts reported only *that* CBS was
+pending, never which package, and this is the one place where "reproduce it to
+find out" costs three hours a go.
+
+**Untested on a build** as of 2026-08-26: 2019 held the node when this landed.
+
 ### winget missing from shipped 2025 templates (#32)
 
 **2026-08-25.** `Microsoft.DesktopAppInstaller` — winget — was absent from clones
