@@ -600,7 +600,12 @@ instead of asserting bare. Two four-hour attempts reported only *that* CBS was
 pending, never which package, and this is the one place where "reproduce it to
 find out" costs three hours a go.
 
-**Untested on a build** as of 2026-08-26: 2019 held the node when this landed.
+**Confirmed on a build, 2026-08-26.** windows-server-2022 rebuilt with the fix
+and cleared the gate that had killed it twice: sysprep armed on attempt 1/2,
+`assert-generalized` reported the image generalized and armed for OOBE, and the
+export completed. Its clone then passed `cf verify` (928s), including
+`rdp-enabled` — so the restart gate, the RDP enablement from #33, and the
+winget work all compose on one artifact.
 
 ### winget missing from shipped 2025 templates (#32)
 
