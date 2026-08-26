@@ -13,7 +13,23 @@ import { shellQuote } from '@/util.ts'
 export const RUN_LEASE_DIR = '/var/lib/cofoundry/run-leases'
 export const RUN_LEASE_LOCK = '/var/lib/cofoundry/run-leases.lock'
 export const OWNED_VMID_DIR = '/var/lib/cofoundry/owned-vmids'
-export const RUN_LEASE_STALE_SECS = 10 * 60
+/**
+ * How long a lease may go unrefreshed before an admission sweep reaps it and
+ * destroys the run's VM and scratch.
+ *
+ * This is a tolerance for losing the LINK to the node, not for the build dying:
+ * packer runs on the node, so a build survives its launcher losing SSH — what
+ * stops is cf's ability to heartbeat. At 10 minutes a brief tunnel outage
+ * therefore threw away hours of real work. On 2026-08-26 a windows-server-2025
+ * rebuild was killed 2h33m in ("10 consecutive heartbeats failed"), and two
+ * other Windows runs died the same way earlier that day.
+ *
+ * 30 minutes is chosen against the thing being protected: a Windows build costs
+ * 1-3 hours, so holding a dead run's resources for an extra 20 minutes is far
+ * cheaper than discarding a live one. Reaping is still bounded, and a genuinely
+ * dead launcher still frees everything well inside the next build's setup.
+ */
+export const RUN_LEASE_STALE_SECS = 30 * 60
 
 const HEARTBEAT_MS = 60_000
 const RETRY_MS = 10_000
