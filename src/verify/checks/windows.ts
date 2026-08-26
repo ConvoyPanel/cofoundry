@@ -34,36 +34,41 @@ const psList = (items: string[]): string => items.map(psQuote).join(',')
  * template that is behaving correctly.
  */
 export const wingetPresentCheck: GuestCheck = {
-    // Winget went missing from shipped 2025 templates (#32) and nobody
-    // noticed until someone looked inside a clone by hand. It is not a
-    // build-time property: Finalize's Appx cleanup can strip the
-    // provisioning that registers it into new profiles, and the damage
-    // only shows up in a profile created AFTER generalize -- which is
-    // exactly what this clone is.
+    // windows-server-2025 only. Winget is inbox on 2025 (and ships two
+    // coexisting DesktopAppInstaller versions, which is what makes it fragile
+    // there); 2019 and 2022 do not carry it, so asserting its presence on those
+    // legs would fail a template that is behaving correctly.
     //
-    // Asserting the command resolves is the point. Checking the
-    // provisioned-package list would pass on a template where
-    // provisioning survived but the app never registered for the user,
-    // which is the same defect from the clone's point of view.
+    // Deliberately NOT `Get-Command winget.exe`. Guest checks run over
+    // `qm guest exec`, i.e. as SYSTEM, while winget resolves through a per-user
+    // App Execution Alias in %LOCALAPPDATA%\\Microsoft\\WindowsApps. SYSTEM
+    // cannot resolve that on ANY template, so a PATH probe fails universally
+    // and proves nothing — the first cut of this check did exactly that and
+    // failed a good 2025 image.
     //
-    // 2019 has no inbox winget at all, so the suite that carries this
-    // check is per-recipe (see index.ts) rather than every Windows leg.
+    // What actually matters for #32 is the provisioned entry: provisioning is
+    // what registers the app into each new profile, and remove-build-profile.ps1
+    // deletes the build profile so every clone starts fresh. Losing it is how
+    // winget went missing. The per-profile alias is then reported as
+    // corroboration, since a profile exists by the post-logon phase.
     id: 'winget-present',
-    description: 'winget resolves for a freshly created user profile',
-    script: `$cmd = Get-Command winget.exe -ErrorAction SilentlyContinue
-if (-not $cmd) {
-  Write-Output 'winget.exe not on PATH for this profile'
-  $pkg = Get-AppxPackage -Name Microsoft.DesktopAppInstaller -ErrorAction SilentlyContinue
-  if ($pkg) {
-    Write-Output "DesktopAppInstaller registered ($($pkg.Version)) but winget.exe did not resolve"
-  } else {
-    Write-Output 'DesktopAppInstaller is not registered for this user - provisioning was lost before generalize'
-  }
+    description: 'winget is provisioned so new profiles receive it',
+    script: `$prov = @(Get-AppxProvisionedPackage -Online |
+  Where-Object { $_.DisplayName -eq 'Microsoft.DesktopAppInstaller' })
+if (-not $prov) {
+  Write-Output 'Microsoft.DesktopAppInstaller is NOT provisioned - every clone profile will lack winget'
   exit 1
 }
-Write-Output "winget at $($cmd.Source)"`,
+Write-Output "provisioned: $($prov[0].PackageName)"
+
+$alias = @(Get-ChildItem 'C:\\Users\\*\\AppData\\Local\\Microsoft\\WindowsApps\\winget.exe' -ErrorAction SilentlyContinue)
+if ($alias) {
+  Write-Output "alias present for $($alias.Count) profile(s): $($alias[0].FullName)"
+} else {
+  Write-Output 'note: no per-profile winget alias yet (provisioning is the gate that matters)'
+}`,
     severity: 'fail',
-    phase: 'post-reboot',
+    phase: 'post-logon',
     timeoutS: 120,
 }
 
