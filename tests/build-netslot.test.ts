@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildSlotAllocationScript } from '@/build/netslot.ts'
+import { RUN_LEASE_STALE_SECS } from '@/build/lease.ts'
 
 const script = (): string =>
     buildSlotAllocationScript({ CF_BUILD_BRIDGE: 'vmbr1' })
@@ -125,10 +126,13 @@ describe('vmid_leased', () => {
         expect(vmidLeased('200205', [lease('200205', 30)])).toBe(true)
     })
 
-    test('treats a lease past the stale window as dead', () => {
-        // RUN_LEASE_STALE_SECS is 600; beyond it the owning process is gone and
-        // the slot really is reclaimable.
-        expect(vmidLeased('200205', [lease('200205', 900)])).toBe(false)
+    test('holds a slot for the whole stale window, then lets it go', () => {
+        // Derived from the constant, not a copy of it. This test previously
+        // hardcoded the old 600s window and started failing the moment the
+        // window was widened — the guard was right and the test was stale.
+        const window = RUN_LEASE_STALE_SECS
+        expect(vmidLeased('200205', [lease('200205', window - 60)])).toBe(true)
+        expect(vmidLeased('200205', [lease('200205', window + 60)])).toBe(false)
     })
 
     test('does not match a different VMID', () => {
