@@ -245,6 +245,21 @@ New-Item -ItemType Directory -Force -Path $cloudbaseConfDir | Out-Null
 # Re-add it only if the template ever installs Win32-OpenSSH.
 @"
 [DEFAULT]
+# MTUPlugin queries the DHCP server for option 26 by binding UDP/68 itself.
+# That port is already owned by the Windows DHCP Client service, and binding a
+# port another process holds exclusively is WSAEACCES -- surfacing as
+# "[WinError 10013] An attempt was made to access a socket in a way forbidden
+# by its access permissions" and failing the plugin.
+#
+# Confirmed on a live 2019 clone (2026-08-27): Get-NetUDPEndpoint -LocalPort 68
+# reports svchost owning it, while the adapter already sits at mtu=1500. So the
+# query never had a chance to apply anything, and switching it off costs no
+# behaviour -- it only stops a guaranteed failure from being reported as one.
+#
+# MTUPlugin stays in the plugin lists: the specialize-pass conf runs it and
+# nothing else precisely because it never requests a reboot, which is what
+# stopped clones looping on "The computer restarted unexpectedly".
+mtu_use_dhcp_config=false
 username=Administrator
 groups=Administrators
 inject_user_password=true
@@ -319,6 +334,21 @@ locations=cdrom,hdd,partition
 # this block must carry them forward.
 @"
 [DEFAULT]
+# MTUPlugin queries the DHCP server for option 26 by binding UDP/68 itself.
+# That port is already owned by the Windows DHCP Client service, and binding a
+# port another process holds exclusively is WSAEACCES -- surfacing as
+# "[WinError 10013] An attempt was made to access a socket in a way forbidden
+# by its access permissions" and failing the plugin.
+#
+# Confirmed on a live 2019 clone (2026-08-27): Get-NetUDPEndpoint -LocalPort 68
+# reports svchost owning it, while the adapter already sits at mtu=1500. So the
+# query never had a chance to apply anything, and switching it off costs no
+# behaviour -- it only stops a guaranteed failure from being reported as one.
+#
+# MTUPlugin stays in the plugin lists: the specialize-pass conf runs it and
+# nothing else precisely because it never requests a reboot, which is what
+# stopped clones looping on "The computer restarted unexpectedly".
+mtu_use_dhcp_config=false
 username=Administrator
 groups=Administrators
 inject_user_password=true

@@ -631,9 +631,26 @@ runs MTUPlugin only" above) did not recur. The practical effect is that a
 DHCP-supplied MTU is not applied and the adapter keeps its 1500 default, which
 matters only on networks that need a smaller or larger MTU.
 
-Not yet diagnosed further. MTUPlugin reads the DHCP MTU option, so a socket it
-is no longer permitted to open is the obvious suspect, but that has not been
-confirmed on a live guest and should not be assumed.
+**Diagnosed and fixed, 2026-08-27.** Probed on a live 2019 clone rather than
+guessed at. MTUPlugin queries DHCP option 26 by binding UDP/68 itself, and
+`Get-NetUDPEndpoint -LocalPort 68` showed `svchost` — the Windows DHCP Client
+service — already owning that port. Binding a port another process holds
+exclusively is WSAEACCES, which surfaces as WinError 10013.
+
+The adapter was already at `mtu=1500`, so the query never applied anything.
+Setting `mtu_use_dhcp_config=false` in both cloudbase-init configs therefore
+costs no behaviour; it only stops a guaranteed failure from being reported as
+one. Verified on the same clone: running cloudbase-init with the flag set
+produced **0** MTUPlugin failure lines, against a reproducible failure without
+it.
+
+MTUPlugin stays in the plugin lists. The specialize-pass conf runs it and
+nothing else precisely because it never requests a reboot — removing it would
+reintroduce the "The computer restarted unexpectedly" clone loop.
+
+Why 2019 alone: 2022 and 2025 pass this check with the same MSI and configs, so
+the port-68 contention is specific to 2019's service start ordering (the same
+delayed-auto ordering noted above).
 
 ### winget missing from shipped 2025 templates (#32)
 
