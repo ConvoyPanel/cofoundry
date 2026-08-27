@@ -607,6 +607,34 @@ export completed. Its clone then passed `cf verify` (928s), including
 `rdp-enabled` — so the restart gate, the RDP enablement from #33, and the
 winget work all compose on one artifact.
 
+### windows-server-2019: MTUPlugin fails WinError 10013 (OPEN)
+
+**2026-08-27.** A rebuilt 2019 clone failed `cloudbase-init-completed`:
+
+    plugin 'MTUPlugin' failed with error '[WinError 10013] An attempt was made
+    to access a socket in a way forbidden by its access permissions'
+
+Reproduced twice in one verify run (first boot pid 4740, post-reboot pid 1780),
+so it is deterministic, not a flake.
+
+**Not caused by the RDP change or the Finalize edits landed the same day.**
+windows-server-2022 was rebuilt from the same tree, with the same RDP
+enablement and the same Aug-26 update wave, and passes this check. The old
+2019 artifact (built 2026-08-04) also passed. What is unique to the failing
+image is 2019 plus three weeks of newer cumulative updates.
+
+**Everything else on that clone is healthy** — 15 of 16 checks pass, including
+`cipassword-validates`, `hostname-applied`, `system-volume-extended`,
+`no-critical-service-failures`, and `rdp-enabled`. Specialize completed, so the
+reboot-loop failure MTUPlugin was chosen to avoid (see "specialize-pass conf
+runs MTUPlugin only" above) did not recur. The practical effect is that a
+DHCP-supplied MTU is not applied and the adapter keeps its 1500 default, which
+matters only on networks that need a smaller or larger MTU.
+
+Not yet diagnosed further. MTUPlugin reads the DHCP MTU option, so a socket it
+is no longer permitted to open is the obvious suspect, but that has not been
+confirmed on a live guest and should not be assumed.
+
 ### winget missing from shipped 2025 templates (#32)
 
 **2026-08-25.** `Microsoft.DesktopAppInstaller` — winget — was absent from clones
