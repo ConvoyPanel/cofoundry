@@ -109,10 +109,11 @@ export const buildRemoteEnv = (
     group: string,
     finalDiskSize?: string,
     baseVmid?: number,
-    skipUpload: boolean = false
+    skipUpload: boolean = false,
+    minimum?: { cores?: number; memoryMb?: number }
 ): string => {
     // Packer runs on the PVE node, so SSH_TARGET=local tells the post-processor
-    // to run vzdump directly instead of SSHing back to itself.
+    // to export directly instead of SSHing back to itself.
     const pairs: Record<string, string> = {
         SSH_TARGET: 'local',
         PVE_DUMP_DIR: env.PVE_DUMP_DIR,
@@ -134,8 +135,14 @@ export const buildRemoteEnv = (
     // CF_UPLOAD_CMD it spawns.
     if (baseVmid !== undefined) pairs.CF_RECIPE_BASE_VMID = String(baseVmid)
     // Opt-in: when set, the post-processor shrinks the OS disk to this size
-    // before vzdump (see recipes/_shared/post/shrink-disk.sh).
+    // before the export (see recipes/_shared/post/shrink-disk.sh).
     if (finalDiskSize) pairs.CF_FINAL_DISK_SIZE = finalDiskSize
+    // Runtime floor for the sidecar's `minimum` block. Hand-authored in the
+    // recipe header rather than captured from the build VM, whose cores/memory
+    // are servicing headroom (see RecipeInfo.minCores in src/config.ts).
+    if (minimum?.cores !== undefined) pairs.CF_MIN_CORES = String(minimum.cores)
+    if (minimum?.memoryMb !== undefined)
+        pairs.CF_MIN_MEMORY = String(minimum.memoryMb)
     if (!skipUpload) {
         if (env.CF_UPLOAD_CMD) pairs.CF_UPLOAD_CMD = env.CF_UPLOAD_CMD
         if (env.CF_SIDECAR_UPLOAD_CMD)
@@ -159,7 +166,7 @@ export const buildRemoteEnv = (
         }
         // R2 rejects the default CRC32 integrity checksum AWS CLI v2.23+ adds
         // to single-part PutObject ("SignatureDoesNotMatch" on small objects
-        // like sidecar JSONs). Multipart uploads (large .vma.zst) take a
+        // like sidecar JSONs). Multipart uploads (large disk images) take a
         // different code path and aren't affected. Caller can override these.
         pairs.AWS_REQUEST_CHECKSUM_CALCULATION =
             process.env.AWS_REQUEST_CHECKSUM_CALCULATION ?? 'when_required'

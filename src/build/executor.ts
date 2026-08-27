@@ -228,7 +228,9 @@ export const buildPhase = async (
         const startedAtRaw = await captureRemote(
             env.SSH_TARGET,
             `${sweepStaleDiagnosticsCommand()}; ` +
-                `rm -f ${shellQuote(stalePrefix + '.vma.zst')} ${shellQuote(stalePrefix + '.json')} ${shellQuote(stalePrefix + '.json.tmp')} && date +%s`
+                `rm -f ${['.qcow2', '.efivars.raw', '.json', '.json.tmp']
+                    .map(ext => shellQuote(stalePrefix + ext))
+                    .join(' ')} && date +%s`
         )
         startedAt = Number.parseInt(startedAtRaw.trim(), 10)
         if (!Number.isFinite(startedAt)) {
@@ -297,7 +299,8 @@ export const buildPhase = async (
             recipe.group ?? '',
             recipe.finalDiskSize,
             recipe.buildVmid,
-            options.skipUpload
+            options.skipUpload,
+            { cores: recipe.minCores, memoryMb: recipe.minMemoryMb }
         )
 
         const cleanupVmid = effectiveBuildVmid

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import type { Env } from '@/env.ts'
 import { shellQuote } from '@/util.ts'
 import { BUILD_SLOT_BASE, BUILD_SLOT_COUNT } from '@/build/buildnet.ts'
+import { RUN_LEASE_DIR, RUN_LEASE_STALE_SECS } from '@/build/lease.ts'
 
 // Per-build network slot allocated on the node's configured NAT build bridge.
 // Each slot owns one IP + a deterministic MAC, registered with dnsmasq as a
@@ -29,12 +30,27 @@ import { BUILD_SLOT_BASE, BUILD_SLOT_COUNT } from '@/build/buildnet.ts'
 // (SIGTERM/SIGKILL, OOM, host reboot, power loss) leaves its snippet behind,
 // silently leaking a slot forever. So allocation first reconciles: any snippet
 // with no live DHCP lease for its IP, whose file is older than
-// STALE_RECLAIM_SECS, AND whose slot VM is not still running, belongs to a
-// build that's long gone and is swept. A DHCP build holds a non-expired lease
-// (12h lease time, far longer than any build); a static-IP build (Debian/Ubuntu
-// preseed) never leases at all, so the running-VM check — not the lease probe —
-// is what proves it live. The age guard keeps us from racing a just-allocated
-// slot whose VM hasn't booted yet.
+// STALE_RECLAIM_SECS, whose slot VM is not still running, AND whose slot VM is
+// not held by a live run lease, belongs to a build that's long gone and is
+// swept. A DHCP build holds a non-expired lease (12h lease time, far longer
+// than any build); a static-IP build (Debian/Ubuntu preseed) never leases at
+// all, so the running-VM check — not the DHCP probe — is what proves it live.
+// The age guard keeps us from racing a just-allocated slot whose VM hasn't
+// booted yet.
+//
+// The run-lease check exists because power state is not liveness. Packer stops
+// the build VM and templates it before the export post-processor runs, so a
+// healthy build sits stopped for the whole export — long enough, on 2026-08-25,
+// for a concurrent build to reclaim netslot 05 and destroy a windows-server-2025
+// build VM 3h26m in. The run lease is heartbeated by the owning `cf` process and
+// records its VMID, so it answers "is this build alive" correctly regardless of
+// whether the VM happens to be powered on.
+//
+// Eviction is separately guarded: it destroys VMs, and it must never touch one
+// a live lease owns, nor anything that is not a `packer-*` build VM. Installed
+// templates restored by older coport releases carry their build VM's MAC (no
+// --unique on qmrestore), and build MACs are deterministic per slot, so an
+// unguarded eviction deletes a user's templates — eleven of them, once.
 
 const LOCK_DIR = '/var/lib/cofoundry'
 const LOCK_FILE = `${LOCK_DIR}/netslot.lock`
@@ -174,6 +190,39 @@ slot_mac_running() {
     done
 }
 
+# Succeed if a live run lease owns VMID $1.
+#
+# Power state cannot answer "is this build still going". Packer stops the build
+# VM and converts it to a template BEFORE the export post-processor runs, so a
+# perfectly healthy build sits stopped for the whole export — minutes, for a
+# 32 G qcow2 conversion. On 2026-08-25 that window was long enough for a
+# concurrent build to reclaim netslot 05 and destroy VM 200205 mid-export,
+# losing its EFI varstore.
+#
+# The run lease is the authority instead: it is heartbeated every 60s by the
+# owning \`cf\` process and records its VMID, so a fresh lease means the build is
+# alive whatever the VM's power state. A lease older than the stale window
+# belongs to a process that is gone.
+vmid_leased() {
+    _want=$1
+    [ -n "$_want" ] && [ "$_want" != 0 ] || return 1
+    for _lease in ${shellQuote(RUN_LEASE_DIR)}/*; do
+        [ -f "$_lease" ] || continue
+        _age=$(( now - $(stat -c %Y "$_lease" 2>/dev/null || echo 0) ))
+        [ "$_age" -le ${RUN_LEASE_STALE_SECS} ] || continue
+        IFS=$'\\t' read -r _k _r _lv _rest < "$_lease" || continue
+        [ "$_lv" = "$_want" ] && return 0
+    done
+    return 1
+}
+
+# Succeed if any VM carrying MAC $1 is owned by a live run lease.
+slot_mac_leased() {
+    slot_vms_for_mac "$1" | while read -r _n _v; do
+        vmid_leased "$_v" && exit 0
+    done
+}
+
 now=$(date +%s)
 # Reclaim orphaned snippets: no live (non-expired) lease for the reserved IP,
 # the file is older than the boot/DHCP grace window, and no running VM still
@@ -189,7 +238,8 @@ for f in ${shellQuote(SNIPPET_DIR)}/${SNIPPET_PREFIX}*; do
         active=1
     fi
     mt=$(stat -c %Y "$f" 2>/dev/null || echo "$now")
-    if [ "$active" -eq 0 ] && [ "$(( now - mt ))" -gt ${STALE_RECLAIM_SECS} ] && ! slot_mac_running "$smac"; then
+    if [ "$active" -eq 0 ] && [ "$(( now - mt ))" -gt ${STALE_RECLAIM_SECS} ] \\
+        && ! slot_mac_running "$smac" && ! slot_mac_leased "$smac"; then
         echo "reclaiming stale netslot \${f##*/} ($sip): no lease, no running VM, age $(( now - mt ))s" >&2
         rm -f "$f"
         rm -f ${shellQuote(OWNER_DIR)}/"\${f##*/}"
@@ -220,15 +270,43 @@ pad=$(printf '%02d' "$pick")
 ip="$prefix.$(( slot_base + pick ))"
 byte=$(printf '%02x' "$(( slot_base + pick ))")
 mac="02:50:4b:00:00:$byte"
-# Evict any VM squatting this slot's MAC, anywhere in the cluster. A slot is
-# exclusive, so the only VM that can carry this deterministic MAC is an orphan
-# from a previous build of the same slot whose VM outlived a dirty teardown
-# (SIGKILL/OOM/CI-cancel killed the launcher before its VM-destroy ran, or its
-# snippet was released first leaving the VM unmarked). Left alive, it answers ARP
-# for the slot IP and the new build VM's traffic blackholes — Packer then waits
-# out its full SSH/WinRM timeout. The orphan can be on any node, so scan the
-# cluster-wide config tree and destroy it on the node that owns it.
+# Evict VMs squatting this slot's MAC, anywhere in the cluster. Left alive, such
+# a VM answers ARP for the slot IP and the new build VM's traffic blackholes —
+# Packer then waits out its full SSH/WinRM timeout.
+#
+# Two guards, because this destroys data and the original had neither. The
+# premise used to be "a slot is exclusive, so the only VM carrying this MAC is a
+# build orphan". Both halves were false:
+#
+#   1. A LIVE build's VM carries it. Packer stops the VM for the whole export,
+#      so it is invisible to a power-state check. Skipping VMIDs held by a fresh
+#      run lease is what keeps a concurrent build from deleting it (2026-08-25:
+#      "evicting orphan VM 200205 ... squatting netslot 05" killed a
+#      windows-server-2025 build 3h26m in).
+#
+#   2. INSTALLED TEMPLATES carry it. coport used to restore with \`qmrestore\` and
+#      no --unique, so every template it installed kept its build VM's MAC —
+#      and build MACs are deterministic per slot. One \`cf build\` drawing that
+#      slot wiped eleven of them. Build VMs are named \`packer-*\` (packer sets
+#      vm_name, and the export never renames it), so a VM that is not \`packer-*\`
+#      is not ours to destroy no matter whose MAC it wears.
+#
+# A VM that trips a guard is reported, not silently skipped: if it really is
+# squatting the slot, the build that follows will fail on a network timeout and
+# this line is the only thing that explains why.
 slot_vms_for_mac "$mac" | while read -r node vid; do
+    vname=$(qm_on_node "$node" "$vid" config 2>/dev/null | sed -nE 's/^name: (.*)$/\\1/p')
+    if vmid_leased "$vid"; then
+        echo "netslot $pad ($ip): VM $vid on $node carries this MAC but a live run lease owns it — not evicting" >&2
+        continue
+    fi
+    case "$vname" in
+        packer-*) ;;
+        *)
+            echo "netslot $pad ($ip): VM $vid on $node ('\${vname:-unnamed}') carries this MAC but is not a packer build VM — not evicting" >&2
+            continue
+            ;;
+    esac
     echo "evicting orphan VM $vid on node $node squatting netslot $pad ($ip)" >&2
     qm_on_node "$node" "$vid" stop --skiplock 1 >/dev/null 2>&1 || true
     qm_on_node "$node" "$vid" destroy --purge 1 --destroy-unreferenced-disks 1 --skiplock 1 >/dev/null 2>&1 || true

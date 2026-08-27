@@ -2,22 +2,17 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import byteSize from 'byte-size'
-import { execa } from 'execa'
 import pc from 'picocolors'
 import { log } from '@/log.ts'
-import type { Registry, Group, Template } from '@/registry/schema.ts'
-
-interface Sidecar {
-    name: string
-    display: string
-    arch: string
-    group: string
-    sha256: string
-    size: number
-    suggested_vmid?: number
-    url: string
-    built_at: string
-}
+import { s3api, s3Get } from '@/r2.ts'
+import {
+    systemDisk,
+    templateSize,
+    type Registry,
+    type Group,
+    type Sidecar,
+    type Template,
+} from '@/registry/schema.ts'
 
 interface GroupDef {
     id: string
@@ -44,18 +39,10 @@ const assembleRegistry = (
     for (const s of sidecars) {
         const gid = s.group ?? 'other'
         if (!groupMap.has(gid)) groupMap.set(gid, [])
-        groupMap.get(gid)!.push({
-            name: s.name,
-            display: s.display,
-            arch: s.arch,
-            sha256: s.sha256,
-            size: s.size,
-            url: s.url,
-            built_at: s.built_at,
-            ...(s.suggested_vmid !== undefined && {
-                suggested_vmid: s.suggested_vmid,
-            }),
-        })
+        // `group` and `schema_version` identify the sidecar, not the template;
+        // the group becomes the enclosing Group and the version the registry's.
+        const { group: _group, schema_version: _schema, ...template } = s
+        groupMap.get(gid)!.push(template)
     }
 
     const groups: Group[] = []
@@ -72,9 +59,9 @@ const assembleRegistry = (
     }
 
     return {
-        schema_version: '1',
+        schema_version: '2',
         name: 'Cofoundry Templates',
-        description: 'Proxmox VM templates built with Cofoundry',
+        description: 'Proxmox VM disk images built with Cofoundry',
         generated_at: new Date().toISOString(),
         groups,
     }
@@ -142,7 +129,7 @@ export const buildManifest = async (
         const parsed = JSON.parse(raw) as Sidecar
         sidecars.push(parsed)
         log.raw(
-            `  ${pc.green('+')} ${pc.cyan(basename(entry, '.json').padEnd(28))} ${pc.dim(parsed.sha256.slice(0, 12) + '…')}  ${byteSize(parsed.size)}`
+            `  ${pc.green('+')} ${pc.cyan(basename(entry, '.json').padEnd(28))} ${pc.dim(systemDisk(parsed).sha256.slice(0, 12) + '…')}  ${byteSize(templateSize(parsed))}`
         )
     }
 
@@ -187,28 +174,6 @@ export const selectNewestSidecars = (items: R2Sidecar[]): R2Sidecar[] => {
     return [...newest.values()]
 }
 
-const awsS3api = async (endpoint: string, args: string[]): Promise<string> => {
-    const { stdout } = await execa(
-        'aws',
-        ['--endpoint-url', endpoint, 's3api', ...args],
-        { stderr: 'inherit' }
-    )
-    return stdout
-}
-
-const awsS3Get = async (
-    endpoint: string,
-    bucket: string,
-    key: string
-): Promise<string> => {
-    const { stdout } = await execa(
-        'aws',
-        ['--endpoint-url', endpoint, 's3', 'cp', `s3://${bucket}/${key}`, '-'],
-        { stderr: 'inherit' }
-    )
-    return stdout
-}
-
 /**
  * Aggregate sidecar JSONs from R2 into a registry, advertising the newest
  * artifact per template (not the full history). Every `.json` under the prefix
@@ -230,7 +195,7 @@ export const buildManifestFromR2 = async (
     log.step(`listing objects`)
     const listArgs = ['list-objects-v2', '--bucket', bucket]
     if (normalizedPrefix) listArgs.push('--prefix', normalizedPrefix)
-    const raw = await awsS3api(endpoint, listArgs)
+    const raw = await s3api(endpoint, listArgs)
     const parsed = raw.trim() ? JSON.parse(raw) : { Contents: [] }
     const objects: R2Object[] = parsed.Contents ?? []
 
@@ -241,7 +206,7 @@ export const buildManifestFromR2 = async (
     const fetched = (
         await Promise.all(
             sidecarObjects.map(async o => {
-                const body = await awsS3Get(endpoint, bucket, o.Key)
+                const body = await s3Get(endpoint, bucket, o.Key)
                 try {
                     return {
                         key: o.Key,
@@ -263,7 +228,7 @@ export const buildManifestFromR2 = async (
     for (const { sidecar } of newest) {
         sidecars.push(sidecar)
         log.raw(
-            `  ${pc.green('+')} ${pc.cyan(sidecar.name.padEnd(28))} ${pc.dim(sidecar.sha256.slice(0, 12) + '…')}  ${byteSize(sidecar.size)}`
+            `  ${pc.green('+')} ${pc.cyan(sidecar.name.padEnd(28))} ${pc.dim(systemDisk(sidecar).sha256.slice(0, 12) + '…')}  ${byteSize(templateSize(sidecar))}`
         )
     }
 

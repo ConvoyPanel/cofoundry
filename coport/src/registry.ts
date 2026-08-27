@@ -49,7 +49,7 @@ export const fetchRegistry = async (
         throw new Error('Invalid registry format. Try upgrading coport.')
     }
 
-    if (parsed.data.schema_version !== '1') {
+    if (parsed.data.schema_version !== '2') {
         throw new Error(
             `Unsupported registry schema_version: ${parsed.data.schema_version}. Upgrade coport.`
         )

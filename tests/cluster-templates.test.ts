@@ -30,8 +30,62 @@ const bashPath = (p: string) =>
               .replace(/\\/g, '/')
         : p
 
-const ARTIFACT_CONTENT = 'artifact-content'
-const SHA256 = createHash('sha256').update(ARTIFACT_CONTENT).digest('hex')
+const NAME = 'windows-server-2025-amd64'
+const SYSTEM_CONTENT = 'system-disk-content'
+const EFI_CONTENT = 'efi-varstore-content'
+const sha = (s: string) => createHash('sha256').update(s).digest('hex')
+
+// A Windows template: two images with DIFFERENT hashes. The single-artifact
+// shape could not express this, which is the whole reason this script moved
+// from CF_UPLOAD_CMD (once per image) to CF_SIDECAR_UPLOAD_CMD (once per
+// template).
+const SIDECAR = {
+    schema_version: '2',
+    name: NAME,
+    display: 'Windows Server 2025 Datacenter',
+    arch: 'amd64',
+    group: 'windows-server',
+    suggested_vmid: 2002,
+    built_at: '2026-08-04T16:53:31Z',
+    disks: [
+        {
+            slot: 'scsi0',
+            role: 'system',
+            format: 'qcow2',
+            file: `${NAME}-${sha(SYSTEM_CONTENT)}.qcow2`,
+            url: '',
+            sha256: sha(SYSTEM_CONTENT),
+            size: SYSTEM_CONTENT.length,
+            virtual_size: '32G',
+            options: { discard: 'on' },
+        },
+        {
+            slot: 'efidisk0',
+            role: 'efivars',
+            format: 'raw',
+            file: `${NAME}-${sha(EFI_CONTENT)}.efivars.raw`,
+            url: '',
+            sha256: sha(EFI_CONTENT),
+            size: EFI_CONTENT.length,
+            options: {
+                'efitype': '4m',
+                'pre-enrolled-keys': 1,
+                'ms-cert': '2023k',
+            },
+        },
+    ],
+    hardware: {
+        ostype: 'win11',
+        bios: 'ovmf',
+        machine: 'q35',
+        scsihw: 'virtio-scsi-single',
+        cpu: 'host',
+        agent: 1,
+        net_model: 'virtio',
+        tpm: 'v2.0',
+    },
+    minimum: { cores: 2, memory: 4096 },
+}
 
 // Two online nodes (fake TEST-NET-3 IPs so they never match a real local
 // interface) plus one offline node without an "ip" field, mirroring the real
@@ -51,7 +105,8 @@ const MEMBERS = `{
 type Fixture = {
     root: string
     dump: string
-    artifact: string
+    out: string
+    sidecar: string
     callsLog: string
     env: Record<string, string>
     args: string[]
@@ -66,17 +121,20 @@ const setup = async (): Promise<Fixture> => {
     const out = join(root, 'out')
     await Promise.all([mkdir(bin), mkdir(dump), mkdir(out)])
 
-    const artifact = join(out, 'debian-13-amd64.vma.zst')
+    const sidecar = join(out, `${NAME}.json`)
     const members = join(root, 'members.json')
     const callsLog = join(root, 'calls.log')
     await Promise.all([
-        writeFile(artifact, ARTIFACT_CONTENT),
+        writeFile(sidecar, JSON.stringify(SIDECAR, null, 2)),
+        writeFile(join(out, `${NAME}.qcow2`), SYSTEM_CONTENT),
+        writeFile(join(out, `${NAME}.efivars.raw`), EFI_CONTENT),
         writeFile(members, MEMBERS),
         writeFile(callsLog, ''),
     ])
 
     // `ip` prints nothing so no cluster IP is ever treated as local — every
-    // node goes through the ssh/scp stubs.
+    // node goes through the ssh/scp stubs. python3 is deliberately NOT stubbed:
+    // the script renders its qm flags with it, so a stub would test nothing.
     const stubs: Record<string, string> = {
         ip: '#!/usr/bin/env bash\nexit 0\n',
         ssh: `#!/usr/bin/env bash
@@ -108,7 +166,9 @@ while [ "$#" -gt 0 ]; do
 done
 dest="\${args[1]#*:}"
 cp -f "\${args[0]}" "$dest"
-if [ "\${SCP_CORRUPT:-}" = "1" ]; then
+# Corrupt only the varstore: a template whose SECOND image failed to transfer
+# is exactly the case a single-artifact checksum could not catch.
+if [ "\${SCP_CORRUPT_EFI:-}" = "1" ] && [[ "\${args[0]}" == *.efivars.raw ]]; then
   printf 'CORRUPT' >>"$dest"
 fi
 `,
@@ -117,23 +177,14 @@ set -uo pipefail
 printf 'qm %s\\n' "$*" >>"$CALLS_LOG"
 case "\${1:-}" in
   status) if [ "\${QM_HAS_VM:-}" = "1" ]; then exit 0; else exit 1; fi ;;
-  config) echo "template: 1" ;;
+  config) if [ "\${QM_REAL_VM:-}" = "1" ]; then echo "name: tenant"; else echo "template: 1"; fi ;;
+  create) if [ "\${QM_CREATE_FAIL:-}" = "1" ]; then exit 1; fi ;;
 esac
-exit 0
-`,
-        qmrestore: `#!/usr/bin/env bash
-set -uo pipefail
-printf 'qmrestore %s\\n' "$*" >>"$CALLS_LOG"
-if [ "\${QMRESTORE_FAIL:-}" = "1" ]; then exit 1; fi
 exit 0
 `,
         pvesh: `#!/usr/bin/env bash
 printf 'pvesh %s\\n' "$*" >>"$CALLS_LOG"
-echo '[]'
-`,
-        python3: `#!/usr/bin/env bash
-cat >/dev/null
-echo local-lvm
+echo '[{"storage":"local-lvm","active":1,"shared":0,"type":"lvmthin","avail":100}]'
 `,
     }
     await Promise.all(
@@ -146,7 +197,8 @@ echo local-lvm
     return {
         root,
         dump,
-        artifact,
+        out,
+        sidecar,
         callsLog,
         env: {
             PATH: `${bin}${delimiter}${process.env.PATH}`,
@@ -155,7 +207,7 @@ echo local-lvm
             CF_BUILT_VMID: '4001',
             CALLS_LOG: bashPath(callsLog),
         },
-        args: [resolve('scripts/cf-cluster-templates.sh'), bashPath(artifact)],
+        args: [resolve('scripts/cf-cluster-templates.sh'), bashPath(sidecar)],
     }
 }
 
@@ -163,16 +215,16 @@ const calls = async (fx: Fixture) =>
     (await readFile(fx.callsLog, 'utf8')).split('\n').filter(Boolean)
 
 // cf-cluster-templates.sh is Proxmox-node orchestration: it drives ssh, scp,
-// qmrestore, and `mapfile < <(...)` process substitution that hang under Git
-// Bash on Windows. The script only ever runs on a Linux node, so gate the suite
-// to POSIX rather than exercise it under an environment it never targets — the
+// qm, and `mapfile < <(...)` process substitution that hang under Git Bash on
+// Windows. The script only ever runs on a Linux node, so gate the suite to
+// POSIX rather than exercise it under an environment it never targets — the
 // same rationale as the python-dependent prefetch tests.
 const suite = process.platform === 'win32' ? describe.skip : describe
 
 suite('cf-cluster-templates', () => {
-    test('verifies the copy and restores a template on every online node', async () => {
+    test('stages every image and creates a template on each online node', async () => {
         const fx = await setup()
-        const result = await execa('bash', [...fx.args, SHA256], {
+        const result = await execa('bash', fx.args, {
             env: fx.env,
             all: true,
             reject: false,
@@ -184,20 +236,63 @@ suite('cf-cluster-templates', () => {
         expect(result.all).toContain('2/2 node(s) ok, 0 failed, 1 offline')
         expect(result.all).toContain('[offline] pve3 (id 3)')
 
-        const restores = (await calls(fx)).filter(c =>
-            c.startsWith('qmrestore')
+        // Both images travel to both nodes.
+        expect((await calls(fx)).filter(c => c.startsWith('scp'))).toHaveLength(
+            4
         )
-        expect(restores).toHaveLength(2)
-        expect(restores[0]).toContain(' 14001 --storage local-lvm')
-        expect(restores[1]).toContain(' 24001 --storage local-lvm')
-        // Success removes the per-node copies from the dump dir.
+
+        const creates = (await calls(fx)).filter(c => c.startsWith('qm create'))
+        expect(creates).toHaveLength(2)
+        expect(creates[0]).toContain('qm create 14001')
+        expect(creates[1]).toContain('qm create 24001')
+
+        const templates = (await calls(fx)).filter(c =>
+            c.startsWith('qm template')
+        )
+        expect(templates).toEqual(['qm template 14001', 'qm template 24001'])
+
+        // Success clears the staged images and the node-side temp sidecar.
         expect(await readdir(fx.dump)).toEqual([])
     })
 
-    test('leaves the existing template untouched and exits non-zero on a corrupt transfer', async () => {
+    test('renders the hardware profile into the create command', async () => {
         const fx = await setup()
-        const result = await execa('bash', [...fx.args, SHA256], {
-            env: { ...fx.env, SCP_CORRUPT: '1', QM_HAS_VM: '1' },
+        await execa('bash', fx.args, { env: fx.env, reject: false })
+        const create = (await calls(fx)).find(c => c.startsWith('qm create'))!
+
+        expect(create).toContain('--ostype win11')
+        expect(create).toContain('--bios ovmf')
+        expect(create).toContain('--scsihw virtio-scsi-single')
+        expect(create).toContain('--cpu host')
+        expect(create).toContain('--agent 1')
+        // Sized from `minimum`, not the build's 4/8192.
+        expect(create).toContain('--cores 2')
+        expect(create).toContain('--memory 4096')
+        // Bare machine type: Proxmox re-pins it per node for Windows guests.
+        expect(create).toContain('--machine q35')
+
+        // Both images import from their staged absolute paths, varstore
+        // options included.
+        expect(create).toContain(`--scsi0 local-lvm:0,import-from=`)
+        expect(create).toContain(`${NAME}.qcow2,discard=on`)
+        expect(create).toContain(
+            `${NAME}.efivars.raw,efitype=4m,pre-enrolled-keys=1,ms-cert=2023k`
+        )
+
+        // Allocated fresh, never imported.
+        expect(create).toContain('--tpmstate0 local-lvm:0,version=v2.0')
+        expect(create).toContain('--ide2 local-lvm:cloudinit')
+        expect(create).toContain('--net0 virtio,bridge=vmbr0')
+        expect(create).toContain('--boot order=scsi0')
+        // net_model/tpm name things to allocate; qm would reject them as flags.
+        expect(create).not.toContain('--net_model')
+        expect(create).not.toContain('--tpm ')
+    })
+
+    test('leaves the existing template alone when any single image is corrupt', async () => {
+        const fx = await setup()
+        const result = await execa('bash', fx.args, {
+            env: { ...fx.env, SCP_CORRUPT_EFI: '1', QM_HAS_VM: '1' },
             all: true,
             reject: false,
         })
@@ -207,102 +302,88 @@ suite('cf-cluster-templates', () => {
         expect(result.all).toContain('0/2 node(s) ok, 2 failed, 1 offline')
 
         const log = await calls(fx)
-        // One retry per node: two copies each.
-        expect(log.filter(c => c.startsWith('scp'))).toHaveLength(4)
-        // The existing template must never be destroyed or replaced.
+        // A template whose varstore failed to transfer is unbootable — better
+        // to skip the node than replace a working template with that.
         expect(log.some(c => c.includes('qm destroy'))).toBe(false)
-        expect(log.some(c => c.startsWith('qmrestore'))).toBe(false)
-        // The source artifact survives.
-        expect(await readFile(fx.artifact, 'utf8')).toBe(ARTIFACT_CONTENT)
+        expect(log.some(c => c.startsWith('qm create'))).toBe(false)
+        // Sources survive untouched.
+        expect(
+            await readFile(join(fx.out, `${NAME}.efivars.raw`), 'utf8')
+        ).toBe(EFI_CONTENT)
     })
 
-    test('keeps the copied artifact and reports the state when the restore fails', async () => {
+    test('keeps the staged images and reports state when the create fails', async () => {
         const fx = await setup()
-        const result = await execa('bash', [...fx.args, SHA256], {
-            env: { ...fx.env, QMRESTORE_FAIL: '1' },
+        const result = await execa('bash', fx.args, {
+            env: { ...fx.env, QM_CREATE_FAIL: '1' },
             all: true,
             reject: false,
         })
 
         expect(result.exitCode).toBe(1)
         expect(result.all).toContain('0/2 node(s) ok, 2 failed, 1 offline')
-        // The cleanup trap undoes the vzdump-style rename instead of deleting
-        // the copy, so a manual retry does not need a re-transfer.
-        expect(await readdir(fx.dump)).toEqual(['debian-13-amd64.vma.zst'])
-        expect(await readFile(fx.artifact, 'utf8')).toBe(ARTIFACT_CONTENT)
-        // No prior template existed here, so the message must not claim one was
-        // destroyed — only that none was created and the copy is retained.
+        // No prior template existed, so the message must not claim one was
+        // destroyed — only that none was created and the images are retained.
         expect(result.all).toContain('no template was created at 14001')
-        expect(result.all).toContain('kept at')
+        expect(result.all).toContain('for a manual retry')
+        expect((await readdir(fx.dump)).sort()).toEqual(
+            [`${NAME}.qcow2`, `${NAME}.efivars.raw`].sort()
+        )
     })
 
-    test('warns the node is left without a template when the restore fails after destroy', async () => {
+    test('warns the node is left without a template when create fails after destroy', async () => {
         const fx = await setup()
-        const result = await execa('bash', [...fx.args, SHA256], {
-            env: { ...fx.env, QMRESTORE_FAIL: '1', QM_HAS_VM: '1' },
+        const result = await execa('bash', fx.args, {
+            env: { ...fx.env, QM_CREATE_FAIL: '1', QM_HAS_VM: '1' },
             all: true,
             reject: false,
         })
 
         expect(result.exitCode).toBe(1)
-        // The previous template was destroyed before the failed restore, so the
-        // operator is told this node now has no template at that id.
         expect(result.all).toContain(
             'previous template at 14001 was already destroyed'
         )
         expect(result.all).toContain('now has NO template at 14001')
-        expect(result.all).toContain('for a manual retry')
-        // The verified copy is still retained for that retry.
-        expect(await readdir(fx.dump)).toEqual(['debian-13-amd64.vma.zst'])
     })
 
-    test('verifies by default without a sha256, deriving it from the local artifact', async () => {
+    test('never clobbers a real VM sitting at the target VMID', async () => {
         const fx = await setup()
         const result = await execa('bash', fx.args, {
-            env: fx.env,
+            env: { ...fx.env, QM_HAS_VM: '1', QM_REAL_VM: '1' },
             all: true,
             reject: false,
         })
 
         expect(result.exitCode).toBe(0)
-        // Verification is on by default: it announces the self-computed hash
-        // rather than warning that transfers go unchecked.
-        expect(result.all).toContain('no sha256 given')
-        expect(result.all).toContain("local artifact's own hash")
-        expect(
-            (await calls(fx)).filter(c => c.startsWith('qmrestore'))
-        ).toHaveLength(2)
-    })
-
-    test('catches a corrupt transfer even when no sha256 is passed', async () => {
-        const fx = await setup()
-        const result = await execa('bash', fx.args, {
-            env: { ...fx.env, SCP_CORRUPT: '1', QM_HAS_VM: '1' },
-            all: true,
-            reject: false,
-        })
-
-        expect(result.exitCode).toBe(1)
-        expect(result.all).toContain('checksum mismatch')
-        expect(result.all).toContain('0/2 node(s) ok, 2 failed, 1 offline')
+        expect(result.all).toContain('is a real (non-template) VM')
         const log = await calls(fx)
-        // No sha256 given, yet the corrupt copy is still caught before any
-        // destructive step.
         expect(log.some(c => c.includes('qm destroy'))).toBe(false)
-        expect(log.some(c => c.startsWith('qmrestore'))).toBe(false)
-        expect(await readFile(fx.artifact, 'utf8')).toBe(ARTIFACT_CONTENT)
+        expect(log.some(c => c.startsWith('qm create'))).toBe(false)
     })
 
-    test('rejects a malformed sha256 argument', async () => {
+    test('fails before touching any node when a named image is missing', async () => {
         const fx = await setup()
-        const result = await execa('bash', [...fx.args, 'not-a-digest'], {
+        await rm(join(fx.out, `${NAME}.efivars.raw`))
+        const result = await execa('bash', fx.args, {
             env: fx.env,
             all: true,
             reject: false,
         })
 
         expect(result.exitCode).toBe(1)
-        expect(result.all).toContain('not a 64-char hex digest')
+        expect(result.all).toContain('named by the sidecar is missing')
         expect(await calls(fx)).toEqual([])
+    })
+
+    test('rejects a base VMID that would collide with the next node', async () => {
+        const fx = await setup()
+        const result = await execa('bash', fx.args, {
+            env: { ...fx.env, CF_BUILT_VMID: '10001' },
+            all: true,
+            reject: false,
+        })
+
+        expect(result.exitCode).toBe(1)
+        expect(result.all).toContain('must be < CF_TEMPLATE_VMID_OFFSET')
     })
 })

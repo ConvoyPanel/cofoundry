@@ -52,6 +52,35 @@ describe('sentinel values', () => {
         }
     })
 
+    test('survives Proxmox writing it unquoted into cloud-init user-data', () => {
+        // Proxmox emits `password: <value>` with no quoting, so the password
+        // has to be a legal YAML plain scalar on its own. When it is not, the
+        // whole user-data document fails to parse and cloud-init silently
+        // leaves the clone unconfigured -- caught live on a 2019 verify clone
+        // whose password led with '@'.
+        //
+        // Reproduce the real document rather than asserting the narrower
+        // "starts with a letter" rule, so this keeps testing the property that
+        // actually matters if the generator changes shape.
+        for (let i = 0; i < 200; i++) {
+            const pw = sentinelPassword()
+            const doc = [
+                '#cloud-config',
+                'hostname: cfv-abc123',
+                'manage_etc_hosts: true',
+                'fqdn: cfv-abc123',
+                'user: Administrator',
+                `password: ${pw}`,
+                'chpasswd:',
+                '  expire: False',
+            ].join('\n')
+            const parsed = Bun.YAML.parse(doc) as Record<string, unknown>
+            // Parsing is necessary but not sufficient: the value must also
+            // survive as the exact string, not as a tag, alias, or comment.
+            expect(parsed.password, `broke on ${JSON.stringify(pw)}`).toBe(pw)
+        }
+    })
+
     test('values differ between runs', () => {
         expect(sentinelHostname()).not.toBe(sentinelHostname())
         expect(sentinelPassword()).not.toBe(sentinelPassword())

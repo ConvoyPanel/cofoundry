@@ -129,11 +129,11 @@ describe('[upload] derivation', () => {
         const rows = resolveConfig(dir)
         expect(find(rows, 'CF_UPLOAD_CMD')).toMatchObject({
             source: 'derived',
-            value: 'aws --endpoint-url $R2_ENDPOINT s3 cp {{file}} s3://$R2_BUCKET/templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}.vma.zst',
+            value: 'aws --endpoint-url $R2_ENDPOINT s3 cp {{file}} s3://$R2_BUCKET/templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}{{ext}}',
         })
         expect(find(rows, 'CF_SIDECAR_UPLOAD_CMD')?.value).toEndWith('.json')
         expect(find(rows, 'CF_PUBLIC_URL_TMPL')).toMatchObject({
-            value: 'https://cdn.example.com/templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}.vma.zst',
+            value: 'https://cdn.example.com/templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}{{ext}}',
         })
     })
 
@@ -143,7 +143,7 @@ describe('[upload] derivation', () => {
             `[upload]\nendpoint = "https://r2.example.com"\nbucket = "b"\nlayout = "flat"\n`
         )
         expect(find(resolveConfig(dir), 'CF_UPLOAD_CMD')?.value).toContain(
-            'templates/{{recipe}}-{{arch}}/{{sha256}}.vma.zst'
+            'templates/{{recipe}}-{{arch}}/{{sha256}}{{ext}}'
         )
     })
 
@@ -155,20 +155,20 @@ describe('[upload] derivation', () => {
         )
         const rows = resolveConfig(dir)
         expect(find(rows, 'CF_UPLOAD_CMD')?.value).toBe(
-            'aws --endpoint-url $R2_ENDPOINT s3 cp {{file}} s3://$R2_BUCKET/{{recipe}}/{{recipe}}-{{arch}}-{{sha256}}.vma.zst'
+            'aws --endpoint-url $R2_ENDPOINT s3 cp {{file}} s3://$R2_BUCKET/{{recipe}}/{{recipe}}-{{arch}}-{{sha256}}{{ext}}'
         )
         expect(find(rows, 'CF_PUBLIC_URL_TMPL')?.value).toBe(
-            'https://cofoundry.cdn.convoypanel.com/{{recipe}}/{{recipe}}-{{arch}}-{{sha256}}.vma.zst'
+            'https://cofoundry.cdn.convoypanel.com/{{recipe}}/{{recipe}}-{{arch}}-{{sha256}}{{ext}}'
         )
     })
 
     test('key with a trailing extension is normalized away', () => {
         writeToml(
             'cofoundry.toml',
-            `[upload]\nendpoint = "https://r2.example.com"\nbucket = "b"\nkey = "a/{{sha256}}.vma.zst"\n`
+            `[upload]\nendpoint = "https://r2.example.com"\nbucket = "b"\nkey = "a/{{sha256}}.qcow2"\n`
         )
         expect(find(resolveConfig(dir), 'CF_UPLOAD_CMD')?.value).toBe(
-            'aws --endpoint-url $R2_ENDPOINT s3 cp {{file}} s3://$R2_BUCKET/a/{{sha256}}.vma.zst'
+            'aws --endpoint-url $R2_ENDPOINT s3 cp {{file}} s3://$R2_BUCKET/a/{{sha256}}{{ext}}'
         )
     })
 

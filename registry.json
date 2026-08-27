@@ -1,8 +1,8 @@
 {
-  "schema_version": "1",
+  "schema_version": "2",
   "name": "Cofoundry Templates",
-  "description": "Proxmox VM templates built with Cofoundry",
-  "generated_at": "2026-08-04T20:05:25.694Z",
+  "description": "Proxmox VM disk images built with Cofoundry",
+  "generated_at": "2026-08-27T05:25:14.290Z",
   "groups": [
     {
       "id": "almalinux",
@@ -13,31 +13,115 @@
           "name": "almalinux-10-amd64",
           "display": "AlmaLinux 10",
           "arch": "amd64",
-          "sha256": "d15f9b7634573f94c236cde4c76c7482dbe50f0f5ec14547985be5119e038cb2",
-          "size": 1020157458,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/almalinux/almalinux-10-amd64/d15f9b7634573f94c236cde4c76c7482dbe50f0f5ec14547985be5119e038cb2.vma.zst",
-          "built_at": "2026-08-04T01:28:24Z",
-          "suggested_vmid": 6002
+          "suggested_vmid": 6002,
+          "built_at": "2026-08-25T05:27:50Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "almalinux-10-amd64-4914d1d3b6c3aaae61da16ac2e30be11119d24f29e58d9263f31b23e18e631cb.qcow2",
+              "url": "",
+              "sha256": "4914d1d3b6c3aaae61da16ac2e30be11119d24f29e58d9263f31b23e18e631cb",
+              "size": 1107884544,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 2048
+          }
         },
         {
           "name": "almalinux-8-amd64",
           "display": "AlmaLinux 8",
           "arch": "amd64",
-          "sha256": "3fa47a8fec1d3fe18dba63ae50818b0e2a9a29a1e48b3d7446175a881ae384ec",
-          "size": 1377972404,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/almalinux/almalinux-8-amd64/3fa47a8fec1d3fe18dba63ae50818b0e2a9a29a1e48b3d7446175a881ae384ec.vma.zst",
-          "built_at": "2026-08-04T01:30:34Z",
-          "suggested_vmid": 6000
+          "suggested_vmid": 6000,
+          "built_at": "2026-08-25T05:20:28Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "almalinux-8-amd64-0b4f583270f2311cb43a6bc23a24d36e0561ddc837b6855424db8a6c78c6dda5.qcow2",
+              "url": "",
+              "sha256": "0b4f583270f2311cb43a6bc23a24d36e0561ddc837b6855424db8a6c78c6dda5",
+              "size": 1569469952,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 2048
+          }
         },
         {
           "name": "almalinux-9-amd64",
           "display": "AlmaLinux 9",
           "arch": "amd64",
-          "sha256": "613098dd4bfa5e0cfecbb539ff725ea5bfebe63e0ed1562a00c9c059e011c7b6",
-          "size": 1224385362,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/almalinux/almalinux-9-amd64/613098dd4bfa5e0cfecbb539ff725ea5bfebe63e0ed1562a00c9c059e011c7b6.vma.zst",
-          "built_at": "2026-08-04T01:27:27Z",
-          "suggested_vmid": 6001
+          "suggested_vmid": 6001,
+          "built_at": "2026-08-25T05:26:34Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "almalinux-9-amd64-fc4938624a6cc92031f7a2f1c6f696026e8bcbdb9b3df71c9e4c83e04e86182f.qcow2",
+              "url": "",
+              "sha256": "fc4938624a6cc92031f7a2f1c6f696026e8bcbdb9b3df71c9e4c83e04e86182f",
+              "size": 1320124416,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 2048
+          }
         }
       ]
     },
@@ -50,31 +134,115 @@
           "name": "debian-11-amd64",
           "display": "Debian 11 (Bullseye)",
           "arch": "amd64",
-          "sha256": "d1260e8c855816c3611e0888f7b40dca25741063bcb67cc16b5ba827cb675022",
-          "size": 463137830,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/debian/debian-11-amd64/d1260e8c855816c3611e0888f7b40dca25741063bcb67cc16b5ba827cb675022.vma.zst",
-          "built_at": "2026-08-04T01:25:50Z",
-          "suggested_vmid": 4000
+          "suggested_vmid": 4000,
+          "built_at": "2026-08-25T04:53:46Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "debian-11-amd64-e47e71e36520856620c77956c5d3b1a626677a924f7b582c81393f4ab97242c8.qcow2",
+              "url": "",
+              "sha256": "e47e71e36520856620c77956c5d3b1a626677a924f7b582c81393f4ab97242c8",
+              "size": 535298048,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 1024
+          }
         },
         {
           "name": "debian-12-amd64",
           "display": "Debian 12 (Bookworm)",
           "arch": "amd64",
-          "sha256": "195539a7fd0f980ad3a9f4e0edf02216c95732980a7b31a109c3db251e8f4cfc",
-          "size": 536064079,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/debian/debian-12-amd64/195539a7fd0f980ad3a9f4e0edf02216c95732980a7b31a109c3db251e8f4cfc.vma.zst",
-          "built_at": "2026-08-04T01:37:54Z",
-          "suggested_vmid": 4001
+          "suggested_vmid": 4001,
+          "built_at": "2026-08-25T01:08:09Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "debian-12-amd64-021035d3d6de3b927486fe5bfdbe6288a9c15a1a6147ac92d3aa14847e0184a7.qcow2",
+              "url": "",
+              "sha256": "021035d3d6de3b927486fe5bfdbe6288a9c15a1a6147ac92d3aa14847e0184a7",
+              "size": 623106048,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 1024
+          }
         },
         {
           "name": "debian-13-amd64",
           "display": "Debian 13 (Trixie)",
           "arch": "amd64",
-          "sha256": "1c47fe0e62a545582e71e4efb4051cff10f553f6a31cb9eac5ae8404fad2a000",
-          "size": 561965467,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/debian/debian-13-amd64/1c47fe0e62a545582e71e4efb4051cff10f553f6a31cb9eac5ae8404fad2a000.vma.zst",
-          "built_at": "2026-08-04T01:38:04Z",
-          "suggested_vmid": 4002
+          "suggested_vmid": 4002,
+          "built_at": "2026-08-25T05:03:15Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "debian-13-amd64-c5f73d9d9576fcdf4c57083c78f6732b5edd3fc65868880a7a6604930978367e.qcow2",
+              "url": "",
+              "sha256": "c5f73d9d9576fcdf4c57083c78f6732b5edd3fc65868880a7a6604930978367e",
+              "size": 612246528,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 1024
+          }
         }
       ]
     },
@@ -87,31 +255,115 @@
           "name": "rocky-linux-10-amd64",
           "display": "Rocky Linux 10",
           "arch": "amd64",
-          "sha256": "7c87e14291887e7335c30a7ecc5e73877ee28efbb911a370cc7e70cd7cad9b15",
-          "size": 1023089172,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/rocky-linux/rocky-linux-10-amd64/7c87e14291887e7335c30a7ecc5e73877ee28efbb911a370cc7e70cd7cad9b15.vma.zst",
-          "built_at": "2026-08-04T01:50:49Z",
-          "suggested_vmid": 5002
+          "suggested_vmid": 5002,
+          "built_at": "2026-08-25T05:15:59Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "rocky-linux-10-amd64-c39456d59a6d6306294a073879b7a38fddc074bcafea892118c5dd7adb5a955d.qcow2",
+              "url": "",
+              "sha256": "c39456d59a6d6306294a073879b7a38fddc074bcafea892118c5dd7adb5a955d",
+              "size": 1100725760,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 2048
+          }
         },
         {
           "name": "rocky-linux-8-amd64",
           "display": "Rocky Linux 8",
           "arch": "amd64",
-          "sha256": "36d2e101a07fd8cf7488f82e87680bb28a3769385f13ca1ad34b2001ffc491d3",
-          "size": 1376867541,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/rocky-linux/rocky-linux-8-amd64/36d2e101a07fd8cf7488f82e87680bb28a3769385f13ca1ad34b2001ffc491d3.vma.zst",
-          "built_at": "2026-08-04T01:57:03Z",
-          "suggested_vmid": 5000
+          "suggested_vmid": 5000,
+          "built_at": "2026-08-25T05:33:42Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "rocky-linux-8-amd64-9589012a5d4db214ce707fb5ec563ae7b653191492e948141f8a3225cc9171c5.qcow2",
+              "url": "",
+              "sha256": "9589012a5d4db214ce707fb5ec563ae7b653191492e948141f8a3225cc9171c5",
+              "size": 1565144064,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 2048
+          }
         },
         {
           "name": "rocky-linux-9-amd64",
           "display": "Rocky Linux 9",
           "arch": "amd64",
-          "sha256": "5967e4a9754b1791a009f38b1cbd9a171c76cb1a7dc1c173442910c923fc383b",
-          "size": 1232369843,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/rocky-linux/rocky-linux-9-amd64/5967e4a9754b1791a009f38b1cbd9a171c76cb1a7dc1c173442910c923fc383b.vma.zst",
-          "built_at": "2026-08-04T01:58:59Z",
-          "suggested_vmid": 5001
+          "suggested_vmid": 5001,
+          "built_at": "2026-08-25T05:16:14Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "rocky-linux-9-amd64-29e848ab240d0600983ea627fd1c1ac09ad813fa59c72da736b7be25a159d1dd.qcow2",
+              "url": "",
+              "sha256": "29e848ab240d0600983ea627fd1c1ac09ad813fa59c72da736b7be25a159d1dd",
+              "size": 1319554560,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 2048
+          }
         }
       ]
     },
@@ -124,41 +376,153 @@
           "name": "ubuntu-22.04-amd64",
           "display": "Ubuntu 22.04 LTS (Jammy Jellyfish)",
           "arch": "amd64",
-          "sha256": "01bab4e7708ebb424f4590ab50a82278bff36a90ec3d1fc7f9bbbe4cd30f24b1",
-          "size": 1317754456,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/ubuntu/ubuntu-22.04-amd64/01bab4e7708ebb424f4590ab50a82278bff36a90ec3d1fc7f9bbbe4cd30f24b1.vma.zst",
-          "built_at": "2026-08-04T01:56:32Z",
-          "suggested_vmid": 1002
+          "suggested_vmid": 1002,
+          "built_at": "2026-08-25T05:06:32Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "ubuntu-22.04-amd64-330415becdd80caf63a38d012521559322907a5d6b498ae0d799b007b27ba45f.qcow2",
+              "url": "",
+              "sha256": "330415becdd80caf63a38d012521559322907a5d6b498ae0d799b007b27ba45f",
+              "size": 1522899456,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 1024
+          }
         },
         {
           "name": "ubuntu-24.04-amd64",
           "display": "Ubuntu 24.04 LTS (Noble Numbat)",
           "arch": "amd64",
-          "sha256": "887904cef39b3e5e60aa79d06079b69c26738f1e23b87bbbc7ffcd85b83e1ac0",
-          "size": 1423472786,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/ubuntu/ubuntu-24.04-amd64/887904cef39b3e5e60aa79d06079b69c26738f1e23b87bbbc7ffcd85b83e1ac0.vma.zst",
-          "built_at": "2026-08-04T02:07:22Z",
-          "suggested_vmid": 1003
+          "suggested_vmid": 1003,
+          "built_at": "2026-08-25T05:03:11Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "ubuntu-24.04-amd64-0d6421faecb9a1eb02774e9da471c7d7462bd00038af561d0c3d4bfc25815602.qcow2",
+              "url": "",
+              "sha256": "0d6421faecb9a1eb02774e9da471c7d7462bd00038af561d0c3d4bfc25815602",
+              "size": 1537434624,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 1024
+          }
         },
         {
           "name": "ubuntu-25.10-amd64",
           "display": "Ubuntu 25.10 (Questing Quokka)",
           "arch": "amd64",
-          "sha256": "311f4db14390ef16827f81777bd51fb425311f8d88af93084fc02a643ec0bb12",
-          "size": 1540318216,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/ubuntu/ubuntu-25.10-amd64/311f4db14390ef16827f81777bd51fb425311f8d88af93084fc02a643ec0bb12.vma.zst",
-          "built_at": "2026-08-04T02:16:50Z",
-          "suggested_vmid": 1004
+          "suggested_vmid": 1004,
+          "built_at": "2026-08-25T05:04:21Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "ubuntu-25.10-amd64-81d547404da6dd7f5d6e6b000c3e2ed2d00abfee34cd18d48cf878d496f8e3cd.qcow2",
+              "url": "",
+              "sha256": "81d547404da6dd7f5d6e6b000c3e2ed2d00abfee34cd18d48cf878d496f8e3cd",
+              "size": 1638641152,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 1024
+          }
         },
         {
           "name": "ubuntu-26.04-amd64",
           "display": "Ubuntu 26.04 LTS (Resolute Raccoon)",
           "arch": "amd64",
-          "sha256": "61241db528e75c3a0fd5fd99a42bd540d01110cf7c590f85b397a542aa597ced",
-          "size": 1561135312,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/ubuntu/ubuntu-26.04-amd64/61241db528e75c3a0fd5fd99a42bd540d01110cf7c590f85b397a542aa597ced.vma.zst",
-          "built_at": "2026-08-04T17:11:27Z",
-          "suggested_vmid": 1005
+          "suggested_vmid": 1005,
+          "built_at": "2026-08-25T05:26:16Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "ubuntu-26.04-amd64-2f652d16eddca3dab4373c11c870989d4c6c5990107d842e7339aaa463e4477f.qcow2",
+              "url": "",
+              "sha256": "2f652d16eddca3dab4373c11c870989d4c6c5990107d842e7339aaa463e4477f",
+              "size": 1683496448,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 1024
+          }
         }
       ]
     },
@@ -171,31 +535,150 @@
           "name": "windows-server-2019-amd64",
           "display": "Windows Server 2019 Datacenter",
           "arch": "amd64",
-          "sha256": "9bf912c87a25df1593f42fbf338d528990d62bb1a5ba463b972996ff15454418",
-          "size": 7689746898,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/windows-server/windows-server-2019-amd64/9bf912c87a25df1593f42fbf338d528990d62bb1a5ba463b972996ff15454418.vma.zst",
-          "built_at": "2026-08-04T03:29:31Z",
-          "suggested_vmid": 2000
+          "suggested_vmid": 2000,
+          "built_at": "2026-08-27T02:57:51Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "windows-server-2019-amd64-ad922977ab161db3c82f2cdd7f63f7e4f46077c7e374b77d487a3255ec5557c3.qcow2",
+              "url": "",
+              "sha256": "ad922977ab161db3c82f2cdd7f63f7e4f46077c7e374b77d487a3255ec5557c3",
+              "size": 7054557184,
+              "virtual_size": "30G",
+              "options": {
+                "discard": "on"
+              }
+            },
+            {
+              "slot": "efidisk0",
+              "role": "efivars",
+              "format": "raw",
+              "file": "windows-server-2019-amd64-b808c2a1ddd25fa3dfa1cfbd5a7febf0a4c2f9e4036fe346e88c125f415f9137.efivars.raw",
+              "url": "",
+              "sha256": "b808c2a1ddd25fa3dfa1cfbd5a7febf0a4c2f9e4036fe346e88c125f415f9137",
+              "size": 540672,
+              "options": {
+                "efitype": "4m",
+                "pre-enrolled-keys": 1,
+                "ms-cert": "2023k"
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "ovmf",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "win10",
+            "scsihw": "virtio-scsi-single"
+          },
+          "minimum": {
+            "cores": 2,
+            "memory": 4096
+          }
         },
         {
           "name": "windows-server-2022-amd64",
           "display": "Windows Server 2022 Datacenter",
           "arch": "amd64",
-          "sha256": "3e20cfa1520fbde5a0c20503454778facae0d459dd82fade53507ac3933245c0",
-          "size": 6607675543,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/windows-server/windows-server-2022-amd64/3e20cfa1520fbde5a0c20503454778facae0d459dd82fade53507ac3933245c0.vma.zst",
-          "built_at": "2026-08-04T05:40:29Z",
-          "suggested_vmid": 2001
+          "suggested_vmid": 2001,
+          "built_at": "2026-08-26T10:20:30Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "windows-server-2022-amd64-26908e08e45327a10d073c6f3f885c7fd5e4bf1046f8c70211fa86c8564c78bc.qcow2",
+              "url": "",
+              "sha256": "26908e08e45327a10d073c6f3f885c7fd5e4bf1046f8c70211fa86c8564c78bc",
+              "size": 7405240320,
+              "virtual_size": "30G",
+              "options": {
+                "discard": "on"
+              }
+            },
+            {
+              "slot": "efidisk0",
+              "role": "efivars",
+              "format": "raw",
+              "file": "windows-server-2022-amd64-16db87a6fd65b704d6080299b6d1b3267c9118952e6a76e052855e9a032af333.efivars.raw",
+              "url": "",
+              "sha256": "16db87a6fd65b704d6080299b6d1b3267c9118952e6a76e052855e9a032af333",
+              "size": 540672,
+              "options": {
+                "efitype": "4m",
+                "pre-enrolled-keys": 1,
+                "ms-cert": "2023k"
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "ovmf",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "win11",
+            "scsihw": "virtio-scsi-single",
+            "tpm": "v2.0"
+          },
+          "minimum": {
+            "cores": 2,
+            "memory": 4096
+          }
         },
         {
           "name": "windows-server-2025-amd64",
           "display": "Windows Server 2025 Datacenter",
           "arch": "amd64",
-          "sha256": "fa60b598f35d6a6efbf3e1319667e9b677e5570368dc35a76a01866f062a898b",
-          "size": 9486109593,
-          "url": "https://cofoundry.cdn.convoypanel.com/templates/windows-server/windows-server-2025-amd64/fa60b598f35d6a6efbf3e1319667e9b677e5570368dc35a76a01866f062a898b.vma.zst",
-          "built_at": "2026-08-04T19:46:14Z",
-          "suggested_vmid": 2002
+          "suggested_vmid": 2002,
+          "built_at": "2026-08-26T22:25:17Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "windows-server-2025-amd64-d6a1d830c9386df9ef5ce3de12489b0132aa7fe9a9f2aef0f7e363c8c4787615.qcow2",
+              "url": "",
+              "sha256": "d6a1d830c9386df9ef5ce3de12489b0132aa7fe9a9f2aef0f7e363c8c4787615",
+              "size": 10137370624,
+              "virtual_size": "32G",
+              "options": {
+                "discard": "on"
+              }
+            },
+            {
+              "slot": "efidisk0",
+              "role": "efivars",
+              "format": "raw",
+              "file": "windows-server-2025-amd64-28a012a4b417c01ff68040651df08ef1c62f7e567e3e075c4f29b69ad110670f.efivars.raw",
+              "url": "",
+              "sha256": "28a012a4b417c01ff68040651df08ef1c62f7e567e3e075c4f29b69ad110670f",
+              "size": 540672,
+              "options": {
+                "efitype": "4m",
+                "pre-enrolled-keys": 1,
+                "ms-cert": "2023k"
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "ovmf",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "win11",
+            "scsihw": "virtio-scsi-single",
+            "tpm": "v2.0"
+          },
+          "minimum": {
+            "cores": 2,
+            "memory": 4096
+          }
         }
       ]
     }

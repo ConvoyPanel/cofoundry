@@ -11,14 +11,14 @@ export enum Phase {
 const PHASE_VERBS: Record<Phase, string> = {
     [Phase.Download]: 'downloading',
     [Phase.Verify]: 'verifying  ',
-    [Phase.Install]: 'installing ',
+    [Phase.Install]: 'importing  ',
 }
 
 export const formatPhase = (phase: Phase, vmid: number): string =>
     `${PHASE_VERBS[phase]} ${dim(`→ VMID ${String(vmid).padEnd(4)}`)}`
 
 export const QUEUED_DOWNLOAD = `${dim('queued')}     ${dim('→ download')}`
-export const QUEUED_RESTORE = `${dim('queued')}     ${dim('→ restore ')}`
+export const QUEUED_INSTALL = `${dim('queued')}     ${dim('→ import  ')}`
 
 const BAR_WIDTH = 14
 
@@ -42,7 +42,7 @@ export const formatDownload = (
     return `${renderBar(pct)} ${fmtPercent(pct)}  ${size.padEnd(22)} ${fmtRate(received, elapsed).padStart(10)}`
 }
 
-export const formatRestoreProgress = (pct: number): string =>
+export const formatInstallProgress = (pct: number): string =>
     `${renderBar(pct)} ${fmtPercent(pct)}`
 
 // Throttle per-chunk progress callbacks (and the matching renderer redraw) so

@@ -1,6 +1,8 @@
 # display: Rocky Linux 8
 # group: rocky-linux
 # build_vmid: 5000
+# min_cores: 1
+# min_memory: 2048
 # iso_url: https://download.rockylinux.org/pub/rocky/8/isos/x86_64/Rocky-8.10-x86_64-minimal.iso
 # iso_target_path: ${var.iso_cache_dir}/packer-Rocky-8.10-x86_64-minimal.iso
 # iso_checksum_url: https://download.rockylinux.org/pub/rocky/8/isos/x86_64/Rocky-8.10-x86_64-minimal.iso.CHECKSUM
@@ -233,6 +235,6 @@ build {
       "CF_RECIPE_NAME=${local.recipe_name}",
       "CF_RECIPE_DISPLAY=${local.recipe_display}",
     ]
-    script = "${path.root}/_shared/post/vzdump-and-cleanup.sh"
+    script = "${path.root}/_shared/post/export-and-cleanup.sh"
   }
 }

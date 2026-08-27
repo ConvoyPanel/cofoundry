@@ -12,9 +12,20 @@ cf build debian-12 --skip-upload
 The first run for a recipe downloads the ISO to the node's cache automatically. Subsequent builds skip the download. Output lands in `./dist/`:
 
 ```
-dist/debian-12.vma.zst       # artifact
-dist/debian-12.json          # sidecar (name, sha256, size, url, built_at)
+dist/debian-12-amd64.qcow2   # system disk, compressed qcow2
+dist/debian-12-amd64.json    # sidecar (disks, hardware profile, minimum)
 ```
+
+OVMF recipes (every `windows-server-*`) emit a third file, the EFI variable
+store, which carries the boot entry and enrolled Secure Boot keys that a freshly
+allocated varstore would not have:
+
+```
+dist/windows-server-2025-amd64.efivars.raw
+```
+
+See [Disk images](disk-images.md) for the sidecar schema and how a consumer
+turns these back into a VM.
 
 ## List available recipes
 
@@ -84,8 +95,9 @@ cf verify ubuntu-24.04
 cf verify windows-server-2025 --level quick   # boot + agent ping only
 ```
 
-`cf verify` restores the artifact onto a scratch VMID and exercises it the way a
-user's clone is exercised, rather than merely booting it:
+`cf verify` rebuilds a VM from the published sidecar onto a scratch VMID — the
+same `qm create --import-from` path `coport` installs through — and exercises it
+the way a user's clone is exercised, rather than merely booting it:
 
 1. **Cloud-init is actually configured.** A sentinel hostname, user, generated
    password, and generated SSH key are injected, and the disk is grown beyond
@@ -96,7 +108,11 @@ user's clone is exercised, rather than merely booting it:
    has painted a desktop. The guest agent answering is the _entry condition_ for
    these checks, not the result: it starts early and is independent of nearly
    everything a template promises.
-3. **The console framebuffer is sampled.** This needs nothing from the guest, so
+3. **The hardware profile is under test, not just the disk.** The VM is built
+   from the sidecar's `hardware` block through the shared builder in
+   `src/registry/create.ts`, so a profile that no longer describes what its
+   images need fails here instead of in a consumer's install.
+4. **The console framebuffer is sampled.** This needs nothing from the guest, so
    it is the only check that can see a kernel panic, a GRUB hang, or a desktop
    that never painted. Outside CI the frame is written to
    `./diagnostics/verify-<recipe>-<arch>-<timestamp>/` as a gzipped PPM (same
@@ -109,7 +125,7 @@ suite and a Windows suite, with per-recipe overrides keyed by recipe name in
 few lines there and needs no change to the runner. Each check declares a
 severity: `warn` records a finding, `fail` fails the run.
 
-`--level quick` restores, boots, and pings the guest agent — the pre-battery
+`--level quick` imports, boots, and pings the guest agent — the pre-battery
 behaviour, for fast local loops. `--ci` suppresses framebuffer captures, which
 are unredactable images and must never land in a public repo.
 
@@ -226,10 +242,12 @@ derived value; that is the escape hatch used to wire in a fully custom hook
 such as the [cluster distribution script](#cluster-template-distribution).
 
 Packer runs on the Proxmox node, so its shell-local post-processor
-(`recipes/_shared/post/vzdump-and-cleanup.sh`) executes `CF_UPLOAD_CMD` **on
-the node** with `bash -c`, right after the artifact is exported and hashed —
-any binary the command calls (such as `aws`) must exist there. These
-placeholders are substituted first:
+(`recipes/_shared/post/export-and-cleanup.sh`) executes `CF_UPLOAD_CMD` **on
+the node** with `bash -c`, right after each artifact is exported and hashed —
+any binary the command calls (such as `aws`) must exist there. A recipe emits
+a system disk and, on OVMF recipes, an EFI varstore, so the command runs
+**once per artifact** with that artifact's own `{{sha256}}` and `{{filename}}`
+(see [Disk images](disk-images.md)). These placeholders are substituted first:
 
 | Placeholder               | Value                                                                                        |
 | ------------------------- | -------------------------------------------------------------------------------------------- |
@@ -237,11 +255,13 @@ placeholders are substituted first:
 | `{{recipe}}` / `{{name}}` | recipe name, e.g. `debian-12` (`{{name}}` is a legacy alias)                                 |
 | `{{arch}}`                | architecture, e.g. `amd64`                                                                   |
 | `{{group}}`               | OS family                                                                                    |
-| `{{sha256}}`              | artifact SHA-256                                                                             |
-| `{{filename}}`            | `<recipe>-<arch>-<sha256>.vma.zst` (`.json` for the sidecar command)                         |
+| `{{sha256}}`              | SHA-256 of the artifact being uploaded                                                       |
+| `{{filename}}`            | `<recipe>-<arch>-<sha256>.qcow2` / `.efivars.raw` (`.json` for the sidecar command)          |
+| `{{ext}}`                 | extension of the artifact being uploaded, with the dot: `.qcow2`, `.efivars.raw`, `.json`    |
 
 `CF_PUBLIC_URL_TMPL` accepts the same placeholders except `{{file}}`; the
-rendered URL is written into the sidecar's `url` field.
+rendered URL is written into that artifact's `url` field in the sidecar's
+`disks` array.
 
 The command also inherits useful build environment: `R2_ENDPOINT`,
 `R2_BUCKET`, `R2_PREFIX`, and the `AWS_*` credentials (so the generated
@@ -256,15 +276,22 @@ artifacts (with `--remote` they execute on the node against its
 ## Cluster template distribution
 
 `scripts/cf-cluster-templates.sh` is a local/cluster convenience — not part of
-the upstream recipes — that turns each freshly built artifact into a clonable
+the upstream recipes — that turns each freshly built template into a clonable
 template on **every online node** of a Proxmox cluster. Cluster VMIDs are
 globally unique, so each node gets its own copy under its own VMID.
 
-Wire it in as the build node's upload hook in `.env`:
+Wire it in as the build node's **sidecar** hook in `.env`:
 
 ```sh
-CF_UPLOAD_CMD=bash $PVE_DUMP_DIR/cofoundry-work/scripts/cf-cluster-templates.sh {{file}} {{sha256}}
+CF_SIDECAR_UPLOAD_CMD=bash $PVE_DUMP_DIR/cofoundry-work/scripts/cf-cluster-templates.sh {{file}}
 ```
+
+Not `CF_UPLOAD_CMD`. A template is several images now (a system disk and, on
+OVMF recipes, an EFI varstore), and `CF_UPLOAD_CMD` fires once **per image** —
+the script would be handed a bare `.qcow2` with no idea what else belongs to
+it. `CF_SIDECAR_UPLOAD_CMD` fires once per template, after every image has been
+written, and hands over the sidecar that names them all. No separate
+`{{sha256}}` argument is needed: the sidecar records a hash per image.
 
 For every online node listed in `/etc/pve/.members`, the script:
 
@@ -274,30 +301,37 @@ For every online node listed in `/etc/pve/.members`, the script:
    node 1 → `14001`, node 2 → `24001`, node 3 → `34001`. The script refuses
    to run when the base VMID is not below the offset, since adjacent nodes
    would collide;
-2. copies the artifact into the node's dump dir over `scp` (a plain `cp` when
-   the target is the build node itself);
-3. verifies the copied artifact's SHA-256 against `{{sha256}}` (or, when the
-   hook omits it, against the local artifact's own hash), retrying the copy
-   once on a mismatch; a copy that still fails to match is skipped with its
-   existing template left untouched;
+2. copies **every** image named by the sidecar into the node's dump dir over
+   `scp` (a plain `cp` when the target is the build node itself);
+3. verifies each copy against that image's recorded SHA-256, retrying once on
+   a mismatch. All images must land before anything destructive happens — a
+   template whose varstore failed to transfer is unbootable, so a node that
+   cannot stage the full set is skipped with its existing template intact;
 4. picks that node's disk storage, in order: `CF_TEMPLATE_STORAGE` (default
    `local-lvm`) if active, then `local-lvm`, then `local-zfs`, and as a last
    resort the best active images-capable storage — local over shared,
    VM-native types (lvmthin/zfspool/btrfs/rbd/lvm) over directory storage,
    most free space first;
-5. restores with `qmrestore --unique 1` and marks the result as a template.
+5. runs `qm create` with the sidecar's hardware profile, importing each image
+   from its staged path, then `qm template`. The flags are rendered on the
+   target node, since only it knows its own storage name; that rendering
+   mirrors `src/registry/create.ts`, the builder `coport` and `cf verify`
+   share, and the two must be kept in step.
+
+`CF_TEMPLATE_BRIDGE` (default `vmbr0`) sets the NIC bridge, since the profile
+records only the model.
 
 A VMID holding a real (non-template) VM is never touched — that node is
 skipped with a log line. An existing template at the VMID is stopped,
 destroyed, and replaced. A failure on one node is logged (`[fail] <ip>`) and
 the loop continues with the remaining nodes.
 
-The two knobs are read from the post-processor's environment on the node;
-`cf` does not forward them from your workstation. To change one, set it
-inside the command itself:
+The knobs are read from the post-processor's environment on the node; `cf`
+does not forward them from your workstation. To change one, set it inside the
+command itself:
 
 ```sh
-CF_UPLOAD_CMD=CF_TEMPLATE_STORAGE=local-zfs bash $PVE_DUMP_DIR/cofoundry-work/scripts/cf-cluster-templates.sh {{file}} {{sha256}}
+CF_SIDECAR_UPLOAD_CMD=CF_TEMPLATE_STORAGE=local-zfs bash $PVE_DUMP_DIR/cofoundry-work/scripts/cf-cluster-templates.sh {{file}}
 ```
 
 This flow pushes templates to the nodes of your own cluster at build time.

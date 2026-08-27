@@ -61,8 +61,13 @@ program
     )
     .option(
         '--restore-concurrency <n>',
-        'Parallel verifies + qmrestores (env: COPORT_RESTORE_CONCURRENCY)',
+        'Parallel verifies + imports (env: COPORT_RESTORE_CONCURRENCY)',
         process.env.COPORT_RESTORE_CONCURRENCY ?? '2'
+    )
+    .option(
+        '--bridge <name>',
+        'Network bridge for installed templates (the profile records only the NIC model)',
+        process.env.COPORT_BRIDGE ?? 'vmbr0'
     )
     .option('--verbose', 'Stream per-event logs instead of in-place TUI')
     .option(
@@ -166,7 +171,7 @@ program
 
         if (interrupted) {
             log.warn(
-                'Interrupted. Temporary archives were removed; inspect Proxmox for any partial restores before retrying.'
+                'Interrupted. Temporary images were removed; inspect Proxmox for any partial imports before retrying.'
             )
             process.exit(130)
         }

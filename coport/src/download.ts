@@ -13,11 +13,17 @@ export interface DownloadProgress {
     total: number
 }
 
-export const tempPath = (vmid: number): string =>
-    join(
-        tempDir ?? TEMP_ROOT,
-        `vzdump-qemu-${vmid}-1970_01_01-00_00_00.vma.zst`
-    )
+/**
+ * Where a downloaded image lands. `qm create --import-from` takes an absolute
+ * path as readily as a storage volid (PVE::API2::Qemu falls through to
+ * check_volume_access for non-volids), so images can stay in this temp dir and
+ * never need an `import`-content storage configured on the node.
+ *
+ * The name is the artifact's published, content-addressed filename, so two
+ * templates downloading concurrently cannot collide.
+ */
+export const tempPath = (filename: string): string =>
+    join(tempDir ?? TEMP_ROOT, filename)
 
 export const ensureTempDir = async (): Promise<void> => {
     tempDir = join(TEMP_ROOT, `${process.pid}-${Date.now()}`)

@@ -59,10 +59,9 @@ export const NODE_TOOLS: ReadonlyArray<{ bin: string; why: string }> = [
     // Storage plumbing: list/free orphaned build disks, resolve volume paths
     // (src/build/vm.ts, lease.ts, prune/node.ts, verify.ts).
     { bin: 'pvesm', why: 'lists and frees build-VM disks on the storage pool' },
-    // The export step itself (recipes/_shared/post/vzdump-and-cleanup.sh).
-    { bin: 'vzdump', why: 'exports the finished template as a .vma.zst dump' },
-    // `vzdump --compress zstd` shells out to the zstd binary.
-    { bin: 'zstd', why: 'compression backend for vzdump --compress zstd' },
+    // Resolves the built VM's disks to node-side paths for the export
+    // (recipes/_shared/post/export-disks.sh).
+    { bin: 'cp', why: 'copies the EFI varstore out for OVMF recipes' },
     // Resumable ISO/asset prefetch with progress (src/build/prefetch.ts,
     // src/build/remote.ts remoteWgetCapture).
     { bin: 'wget', why: 'resumable ISO and asset prefetch' },
@@ -73,14 +72,16 @@ export const NODE_TOOLS: ReadonlyArray<{ bin: string; why: string }> = [
     // (src/build/netslot.ts, lease.ts, prefetch.ts, executor.ts).
     { bin: 'flock', why: 'serializes slots, leases, prefetch and packer init' },
     // ISO checksum validation and artifact sidecar hashes
-    // (src/build/prefetch.ts, recipes/_shared/post/vzdump-and-cleanup.sh).
+    // (src/build/prefetch.ts, recipes/_shared/post/export-and-cleanup.sh).
     { bin: 'sha256sum', why: 'ISO and artifact checksum validation' },
     // Extracts the expected SHA-256 from distro checksum files and parses the
     // GitHub release JSON during prefetch (src/build/prefetch.ts).
     { bin: 'python3', why: 'checksum extraction in the prefetch pipeline' },
     // Host-side disk shrink for Windows recipes with CF_FINAL_DISK_SIZE
-    // (recipes/_shared/post/shrink-disk.sh).
-    { bin: 'qemu-img', why: 'host-side disk shrink for Windows recipes' },
+    // (shrink-disk.sh) and the compressed-qcow2 export itself
+    // (export-disks.sh). Compression lives inside the image because Proxmox
+    // refuses to decompress on the import path — see docs/disk-images.md.
+    { bin: 'qemu-img', why: 'compressed-qcow2 export and Windows disk shrink' },
     // Ephemeral per-build SSH keypair generation on the node
     // (scripts/inject-placeholders.sh, invoked remotely by executor.ts).
     { bin: 'ssh-keygen', why: 'generates the ephemeral build SSH keypair' },
@@ -99,7 +100,7 @@ export const ISO_MASTERING_TOOLS: ReadonlyArray<string> = ['xorriso', 'mkisofs']
 // ── free-space thresholds ─────────────────────────────────────────────────────
 
 /** Below this, a pool/directory gets a low-space warning: a single Windows ISO
- *  plus virtio media runs ~10 GiB, and a vzdump artifact can reach the same. */
+ *  plus virtio media runs ~10 GiB, and an exported disk image the same. */
 export const LOW_FREE_GIB = 20
 const LOW_FREE_KIB = LOW_FREE_GIB * 1024 * 1024
 

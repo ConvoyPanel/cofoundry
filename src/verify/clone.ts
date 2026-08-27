@@ -60,6 +60,27 @@ export const sentinelPassword = (): string => {
         const j = randomBytes(1)[0]! % (i + 1)
         ;[chars[i], chars[j]] = [chars[j]!, chars[i]!]
     }
+
+    // Proxmox interpolates --cipassword into its generated cloud-init
+    // user-data UNQUOTED (`password: <value>`, verified with `qm cloudinit
+    // dump <vmid> user` on PVE 9.2.2). YAML forbids a plain scalar from
+    // starting with an indicator character, so a password beginning with
+    // @ ! # % * or - makes the whole document unparseable:
+    //
+    //   yaml.scanner.ScannerError: found character that cannot start any token
+    //     in "<byte string>", line 6, column 11
+    //
+    // cloud-init then aborts UserDataPlugin and the clone comes up
+    // unconfigured. Observed live on a 2019 verify clone whose sentinel
+    // happened to lead with '@'. Four of the ten symbols are unsafe first, so
+    // this fired on roughly one run in ten and read as flakiness.
+    //
+    // Forcing an alphanumeric lead costs nothing: all four character classes
+    // are still present, so Windows complexity still passes. Nothing inside
+    // the string can break the scalar -- that needs ": " or " #", and the
+    // alphabet contains neither a colon nor a space.
+    const lead = chars.findIndex(c => /[A-Za-z0-9]/.test(c))
+    ;[chars[0], chars[lead]] = [chars[lead]!, chars[0]!]
     return chars.join('')
 }
 

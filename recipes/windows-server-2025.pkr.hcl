@@ -1,6 +1,8 @@
 # display: Windows Server 2025 Datacenter
 # group: windows-server
 # build_vmid: 2002
+# min_cores: 2
+# min_memory: 4096
 # final_disk_size: 32G
 # iso_url: https://go.microsoft.com/fwlink/?linkid=2345730&clcid=0x409&culture=en-us&country=us
 # iso_target_path: /var/lib/vz/template/iso/packer-windows-server-2025-eval.iso
@@ -306,6 +308,6 @@ build {
       "CF_RECIPE_NAME=${local.recipe_name}",
       "CF_RECIPE_DISPLAY=${local.recipe_display}",
     ]
-    script = "${path.root}/_shared/post/vzdump-and-cleanup.sh"
+    script = "${path.root}/_shared/post/export-and-cleanup.sh"
   }
 }

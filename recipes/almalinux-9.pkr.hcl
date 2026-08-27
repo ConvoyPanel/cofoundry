@@ -1,6 +1,8 @@
 # display: AlmaLinux 9
 # group: almalinux
 # build_vmid: 6001
+# min_cores: 1
+# min_memory: 2048
 # iso_url: https://repo.almalinux.org/almalinux/9/isos/x86_64/AlmaLinux-9.8-x86_64-minimal.iso
 # iso_target_path: ${var.iso_cache_dir}/packer-AlmaLinux-9.8-x86_64-minimal.iso
 # iso_checksum_url: https://repo.almalinux.org/almalinux/9/isos/x86_64/CHECKSUM
@@ -234,6 +236,6 @@ build {
       "CF_RECIPE_NAME=${local.recipe_name}",
       "CF_RECIPE_DISPLAY=${local.recipe_display}",
     ]
-    script = "${path.root}/_shared/post/vzdump-and-cleanup.sh"
+    script = "${path.root}/_shared/post/export-and-cleanup.sh"
   }
 }

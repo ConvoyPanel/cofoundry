@@ -3,12 +3,21 @@
 `coport` is the consumer-side installer: a standalone CLI that runs **on a
 Proxmox node** and turns published Cofoundry artifacts into clonable VM
 templates. It reads a `registry.json` (the file `cf publish` writes), lets you
-pick templates, downloads each `.vma.zst` from its `url`, verifies its
-SHA-256, and restores it with `qmrestore`.
+pick templates, downloads each template's disk images from their `url`s,
+verifies their SHA-256, rebuilds a VM around them with `qm create
+--import-from`, and marks it a template with `qm template`.
+
+A template is one or more images plus a hardware profile rather than a single
+archive — see [Disk images](disk-images.md). Because `import-from` accepts an
+absolute path, images stay in coport's temp directory and the node needs no
+`import`-content storage configured. The TPM state volume and the cloud-init
+drive are allocated fresh rather than downloaded: the images are generalized,
+so nothing is sealed to the TPM, and a shared varstore would give every VM the
+same endorsement key.
 
 It lives in `coport/` as a Bun workspace and is versioned and released
 independently of `cf` — the repository's `CHANGELOG.md` tracks coport
-releases. It must run on the node itself: it invokes `qmrestore` and checks
+releases. It must run on the node itself: it invokes `qm` and checks
 `/etc/pve/qemu-server/` and `/etc/pve/lxc/` for VMID conflicts directly.
 
 ## Install
@@ -37,7 +46,7 @@ From a repo checkout instead: `bun run --cwd coport dev` runs it directly, and
 coport                                            # interactive, default registry
 coport https://templates.example.com/registry.json
 coport ./registry.json                            # local file
-coport '{"schema_version":"1", …}'                # inline JSON document
+coport '{"schema_version":"2", …}'                # inline JSON document
 curl -s https://…/registry.json | coport --all --storage local-zfs
 ```
 
@@ -45,10 +54,10 @@ The interactive flow is a grouped multiselect (space toggles a template, a
 group header toggles the whole OS family, `a` selects everything), followed by
 a VMID review step — per template you can proceed, edit the VMID inline
 (validated as free), or skip it — and a storage prompt unless a storage is
-configured or passed with `--storage`. Downloads and restores run in parallel
-with a live progress display, and each downloaded archive is deleted as soon
-as its restore finishes, so peak temp usage scales with concurrency, not with
-the number of templates.
+configured or passed with `--storage`. Downloads and imports run in parallel
+with a live progress display, and a template's images are deleted as soon as
+its import finishes, so peak temp usage scales with concurrency, not with the
+number of templates.
 
 ## Registry sources
 
@@ -83,7 +92,8 @@ to stay piped.
 | `--overwrite`                | Overwrite existing VMs when a suggested VMID is already taken                          |
 | `--no-verify`                | Skip SHA-256 verification after download                                               |
 | `--download-concurrency <n>` | Parallel downloads (default `4`; env `COPORT_DOWNLOAD_CONCURRENCY`)                    |
-| `--restore-concurrency <n>`  | Parallel verifies + `qmrestore`s (default `2`; env `COPORT_RESTORE_CONCURRENCY`)       |
+| `--restore-concurrency <n>`  | Parallel verifies + imports (default `2`; env `COPORT_RESTORE_CONCURRENCY`)            |
+| `--bridge <name>`            | Bridge for installed templates (default `vmbr0`; env `COPORT_BRIDGE`)                  |
 | `--verbose`                  | Stream per-event logs instead of the in-place TUI                                      |
 | `--config`                   | Print the resolved config (registry, storage, source file) and exit                    |
 
@@ -96,8 +106,9 @@ Duplicate selections are installed once.
 Each template prefers a VMID: the one it was installed at last time (from the
 cache) or, failing that, the registry's `suggested_vmid`. If that VMID is
 taken — an existing config in `/etc/pve/qemu-server/` or `/etc/pve/lxc/` —
-coport assigns the next free VMID counting up from `--vmid-start`, or restores
-over the occupant when `--overwrite` is given. Interactive runs surface every
+coport assigns the next free VMID counting up from `--vmid-start`, or destroys
+and replaces the occupant when `--overwrite` is given (`qm create --force`
+applies only to archive restores, so an overwrite cannot be a flag on create). Interactive runs surface every
 assignment in the review step before anything is installed; non-interactive
 runs log a warning for each reassignment.
 
@@ -110,7 +121,9 @@ install time. The cache powers:
 - `coport --list` — print what is installed, where, and when;
 - `coport --upgrade` — reinstall only the templates whose registry `sha256`
   or `built_at` changed, into their cached VMID and storage, overwriting in
-  place;
+  place. The recorded `sha256` is the **system disk's**: a template is several
+  images, but the varstore is tiny and derived, so the system disk changing is
+  what makes an install stale;
 - VMID stickiness — later installs prefer the cached VMID over the registry's
   suggestion.
 
@@ -131,7 +144,10 @@ installation.
 
 ## Temporary files
 
-Downloads land in a per-run directory `/var/lib/vz/dump/coport-tmp/<pid>-<ts>`.
-Each archive is removed right after its restore, the directory is removed at
-exit (including Ctrl-C), and orphaned directories left by dead processes are
-swept at startup.
+Downloads land in a per-run directory `/var/lib/vz/dump/coport-tmp/<pid>-<ts>`,
+named by each artifact's content-addressed filename so concurrent installs
+cannot collide. A template's images are removed as soon as its import finishes
+— and also when a download or import fails partway, since these are
+multi-gigabyte files and the run may have templates still to go. The directory
+is removed at exit (including Ctrl-C), and orphaned directories left by dead
+processes are swept at startup.

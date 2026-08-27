@@ -44,10 +44,20 @@ const template = (name: string, suggested?: number): Template => ({
     name,
     display: name,
     arch: 'amd64',
-    sha256: 'a'.repeat(64),
-    size: 1,
-    url: `https://example.com/${name}.vma.zst`,
     built_at: '2026-01-01T00:00:00Z',
+    disks: [
+        {
+            slot: 'scsi0',
+            role: 'system',
+            format: 'qcow2',
+            file: `${name}.qcow2`,
+            url: `https://example.com/${name}.qcow2`,
+            sha256: 'a'.repeat(64),
+            size: 1,
+            virtual_size: '5G',
+        },
+    ],
+    hardware: { ostype: 'l26', bios: 'seabios', machine: 'q35' },
     ...(suggested !== undefined && { suggested_vmid: suggested }),
 })
 

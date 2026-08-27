@@ -287,9 +287,9 @@ you lose it, generate a new one). Add both as repo secrets in the next step:
   it verbatim; do not strip the header/footer or collapse it to one line. On
   the command line you can pipe it straight in:
 
-  ```sh
-  gh secret set REGISTRY_APP_PRIVATE_KEY < ~/Downloads/cofoundry-registry-writer.*.private-key.pem
-  ```
+    ```sh
+    gh secret set REGISTRY_APP_PRIVATE_KEY < ~/Downloads/cofoundry-registry-writer.*.private-key.pem
+    ```
 
 **Allow it through the branch ruleset** (repo → **Settings → Rules → Rulesets**):
 
@@ -310,22 +310,22 @@ use `${VAR}` and are supplied from the environment below.
 
 Commit a `cofoundry.toml` (see [Part 3](#part-3--local-development-optional) or
 run `cf init`). Its `[upload]` block controls the R2 layout — `layout = "grouped"`
-produces `templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}.vma.zst`; see
+produces `templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}{{ext}}`; see
 [Usage → CDN upload](usage.md#cdn-upload).
 
 Then go to **Settings → Secrets and variables → Actions**.
 
 **Secrets** (Secrets tab):
 
-| Secret                     | Value                                                                |
-| -------------------------- | -------------------------------------------------------------------- |
-| `PVE_TOKEN_SECRET`         | Token secret from Part 1 step 1                                      |
-| `SSH_PRIVATE_KEY`          | Contents of `~/.ssh/cofoundry_ci`. Omit if using Tailscale SSH.      |
-| `TS_OAUTH_CLIENT_ID`       | Tailscale OAuth client ID (only if using Tailscale)                  |
-| `TS_OAUTH_SECRET`          | Tailscale OAuth secret (only if using Tailscale)                     |
-| `R2_ACCESS_KEY_ID`         | R2 API token access key                                              |
-| `R2_SECRET_ACCESS_KEY`     | R2 API token secret                                                  |
-| `REGISTRY_APP_CLIENT_ID`   | Client ID for the `cofoundry-registry-writer` GitHub App. Only if `main` is ruleset-protected (see §3); omit to push with `GITHUB_TOKEN`.             |
+| Secret                     | Value                                                                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PVE_TOKEN_SECRET`         | Token secret from Part 1 step 1                                                                                                             |
+| `SSH_PRIVATE_KEY`          | Contents of `~/.ssh/cofoundry_ci`. Omit if using Tailscale SSH.                                                                             |
+| `TS_OAUTH_CLIENT_ID`       | Tailscale OAuth client ID (only if using Tailscale)                                                                                         |
+| `TS_OAUTH_SECRET`          | Tailscale OAuth secret (only if using Tailscale)                                                                                            |
+| `R2_ACCESS_KEY_ID`         | R2 API token access key                                                                                                                     |
+| `R2_SECRET_ACCESS_KEY`     | R2 API token secret                                                                                                                         |
+| `REGISTRY_APP_CLIENT_ID`   | Client ID for the `cofoundry-registry-writer` GitHub App. Only if `main` is ruleset-protected (see §3); omit to push with `GITHUB_TOKEN`.   |
 | `REGISTRY_APP_PRIVATE_KEY` | Private key for the `cofoundry-registry-writer` GitHub App. Only if `main` is ruleset-protected (see §3); omit to push with `GITHUB_TOKEN`. |
 
 **Coordinates referenced by `${VAR}` in `cofoundry.toml`.** Set each as a repo
@@ -353,11 +353,11 @@ separate controls:
 
 Set these in the repo **Variables** tab:
 
-| Name                        | Value                                                                  |
-| --------------------------- | ---------------------------------------------------------------------- |
-| `CF_CI_MAX_PARALLEL`        | Maximum GitHub matrix fan-out; defaults to `4`                         |
-| `CF_BUILD_MEMORY_BUDGET_MB` | Node-wide build/verify RAM budget; defaults to 80% of RAM              |
-| `CF_BUILD_CPU_BUDGET`       | Total concurrent VM vCPUs; defaults to the host's logical CPU count    |
+| Name                        | Value                                                               |
+| --------------------------- | ------------------------------------------------------------------- |
+| `CF_CI_MAX_PARALLEL`        | Maximum GitHub matrix fan-out; defaults to `4`                      |
+| `CF_BUILD_MEMORY_BUDGET_MB` | Node-wide build/verify RAM budget; defaults to 80% of RAM           |
+| `CF_BUILD_CPU_BUDGET`       | Total concurrent VM vCPUs; defaults to the host's logical CPU count |
 
 For example, a matrix cap of `4`, a memory budget of `16384`, and a CPU budget
 of `8` allow GitHub to start four recipe jobs while the node admits only the
@@ -413,9 +413,13 @@ you control, e.g. `templates.example.com`, and set it as `[upload].public_url`
 in `cofoundry.toml`. With the grouped layout, final artifact URLs look like:
 
 ```
-https://templates.example.com/templates/<group>/<recipe>-<arch>/<sha256>.vma.zst
+https://templates.example.com/templates/<group>/<recipe>-<arch>/<sha256>.qcow2
 https://templates.example.com/registry.json
 ```
+
+`{{ext}}` is what makes one key template serve every file a template ships: a
+system disk (`.qcow2`), an EFI varstore on OVMF recipes (`.efivars.raw`), and
+the sidecar (`.json`), each content-addressed by its own hash.
 
 ### 3. Create an R2 API token
 
@@ -425,9 +429,18 @@ https://templates.example.com/registry.json
 
 **R2 → Bucket → Settings → Object Lifecycle Rules → Add rule:** prefix `templates/`, delete after 60 days. This catches orphans whose recipe was deleted. The build pipeline also runs `cf prune --r2 --keep 5` for tight per-recipe windows.
 
+`--keep` counts **generations**, not objects: a schema-2 template is a sidecar
+plus the images it names, so retention reads each sidecar and keeps the images
+the newest `keep` of them reference. Images matching no surviving generation are
+deleted, including ones orphaned by a half-finished publish; an image two
+generations still share (an unchanged EFI varstore across rebuilds) survives as
+long as either does. Objects that are neither a sidecar nor a recognized image
+extension are never touched.
+
 ### 5. Path scheme
 
-- Artifacts: `s3://<bucket>/templates/<name>-<arch>/<sha256>.vma.zst` — content-addressed, immutable.
+- Images: `s3://<bucket>/templates/<name>-<arch>/<sha256>.qcow2` and, on OVMF recipes, `…/<sha256>.efivars.raw` — content-addressed, immutable.
+- Sidecars: `s3://<bucket>/templates/<name>-<arch>/<sha256>.json`, addressed by the **system disk's** hash so each build publishes a distinct key rather than overwriting the last. That history is what `cf publish --r2` picks newest-per-template from and what `cf prune --r2` retains N of.
 - Registry: `s3://<bucket>/registry.json` — short TTL (60s), one canonical pointer file. `git log registry.json` is the audit log; rollback = `git revert` the commit, CI re-mirrors.
 
 ---
