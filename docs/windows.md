@@ -347,6 +347,54 @@ set` calls and the firewall rules now all sit together after generalize. The
 rule is simple: **nothing above sysprep may touch WinRM auth, its policy keys,
 or its firewall rules.**
 
+### A password starting with a YAML indicator breaks every clone (2026-08-27)
+
+Proxmox interpolates `--cipassword` into its generated cloud-init user-data
+**unquoted**. Confirmed on PVE 9.2.2 with `qm cloudinit dump <vmid> user`:
+
+```
+     1  #cloud-config
+     2  hostname: cfv-e622ca
+     ...
+     6  password: @8yyK5dS+hA-n8XD7p#S
+```
+
+YAML forbids a plain scalar from beginning with an indicator character, so a
+password starting with `@ ! # % * -` makes the whole document unparseable:
+
+```
+yaml.scanner.ScannerError: while scanning for the next token
+found character that cannot start any token
+  in "<byte string>", line 6, column 11
+```
+
+Column 11 is the first character of the password. Cloudbase-Init aborts
+`UserDataPlugin` and the clone comes up **unconfigured** — no hostname, no
+password applied — while every earlier plugin logs success. There is no error
+that names the password, which is what makes this expensive to find.
+
+This is not Windows-specific: the same user-data is generated for `nocloud`,
+so a Linux clone with such a password fails the same way.
+
+**Cofoundry's fix covers only its own sentinel.** `sentinelPassword()` now
+forces an alphanumeric first character; all four complexity classes are still
+present, so Windows complexity still passes. Nothing *inside* the string can
+break the scalar — that needs `": "` or `" #"`, and the alphabet has neither a
+colon nor a space. `tests/verify-clone.test.ts` builds the real user-data
+document and round-trips it through a YAML parser, asserting the password
+survives as the exact string; reverting the fix fails it.
+
+**Consumers passing user-supplied passwords (Convoy, coport) are still
+exposed.** Cofoundry cannot fix that from here — the constraint belongs at the
+point the password is accepted. Either reject a leading `@ ! # % * -` at input
+validation, or quote the value before it reaches `qm set`.
+
+This supersedes the earlier triage of upstream issue #34, which attributed the
+symptom to the keyboard-layout problem below. That problem is real and
+separately fixed, but it cannot explain #34: `cipassword-validates` passes
+in-guest via `LogonUser`, which never touches a keyboard layout. A user-data
+document that fails to parse does explain it.
+
 ### Shipped templates enable RDP (2026-08-19)
 
 Windows Server ships with RDP off, and until now nothing in the build changed
