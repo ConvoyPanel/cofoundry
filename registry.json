@@ -2,6 +2,685 @@
   "schema_version": "2",
   "name": "Cofoundry Templates",
   "description": "Proxmox VM disk images built with Cofoundry",
-  "generated_at": "2026-09-04T05:12:11.383Z",
-  "groups": []
+  "generated_at": "2026-09-04T10:25:51.917Z",
+  "groups": [
+    {
+      "id": "almalinux",
+      "display_name": "AlmaLinux",
+      "description": null,
+      "templates": [
+        {
+          "name": "almalinux-10-amd64",
+          "display": "AlmaLinux 10",
+          "arch": "amd64",
+          "suggested_vmid": 6002,
+          "built_at": "2026-09-04T05:28:06Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "almalinux-10-amd64-e848d653da44882cf7e7f691d5c2b3747d4ad617ef3dd13552339d31e3d436a5.qcow2",
+              "url": "",
+              "sha256": "e848d653da44882cf7e7f691d5c2b3747d4ad617ef3dd13552339d31e3d436a5",
+              "size": 901424128,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 2048
+          }
+        },
+        {
+          "name": "almalinux-8-amd64",
+          "display": "AlmaLinux 8",
+          "arch": "amd64",
+          "suggested_vmid": 6000,
+          "built_at": "2026-09-04T05:31:22Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "almalinux-8-amd64-d38551236ae35940b660d250b8071df30927dfb09b2d6375d0470f273edff91e.qcow2",
+              "url": "",
+              "sha256": "d38551236ae35940b660d250b8071df30927dfb09b2d6375d0470f273edff91e",
+              "size": 1569609728,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 2048
+          }
+        },
+        {
+          "name": "almalinux-9-amd64",
+          "display": "AlmaLinux 9",
+          "arch": "amd64",
+          "suggested_vmid": 6001,
+          "built_at": "2026-09-04T05:29:24Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "almalinux-9-amd64-6a1233b850f8e9701c0e89f1e7c3896209e438f52d827932bc0fb06e7e8246d0.qcow2",
+              "url": "",
+              "sha256": "6a1233b850f8e9701c0e89f1e7c3896209e438f52d827932bc0fb06e7e8246d0",
+              "size": 1328155648,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 2048
+          }
+        }
+      ]
+    },
+    {
+      "id": "debian",
+      "display_name": "Debian",
+      "description": null,
+      "templates": [
+        {
+          "name": "debian-11-amd64",
+          "display": "Debian 11 (Bullseye)",
+          "arch": "amd64",
+          "suggested_vmid": 4000,
+          "built_at": "2026-09-04T05:28:38Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "debian-11-amd64-128d41ac51827fe99475b670ac61e49b360e4b64132f02703fb19c5f38051223.qcow2",
+              "url": "",
+              "sha256": "128d41ac51827fe99475b670ac61e49b360e4b64132f02703fb19c5f38051223",
+              "size": 529399808,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 1024
+          }
+        },
+        {
+          "name": "debian-12-amd64",
+          "display": "Debian 12 (Bookworm)",
+          "arch": "amd64",
+          "suggested_vmid": 4001,
+          "built_at": "2026-09-04T05:42:35Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "debian-12-amd64-eab8eb4a0d81b487f885ee07836c780ba85ba4d173e1b9942781517402c03d03.qcow2",
+              "url": "",
+              "sha256": "eab8eb4a0d81b487f885ee07836c780ba85ba4d173e1b9942781517402c03d03",
+              "size": 622084608,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 1024
+          }
+        },
+        {
+          "name": "debian-13-amd64",
+          "display": "Debian 13 (Trixie)",
+          "arch": "amd64",
+          "suggested_vmid": 4002,
+          "built_at": "2026-09-04T05:40:11Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "debian-13-amd64-6f4eb8819597c1e37335ea4f522516772326713ad41f4fd8c90813323a99f3af.qcow2",
+              "url": "",
+              "sha256": "6f4eb8819597c1e37335ea4f522516772326713ad41f4fd8c90813323a99f3af",
+              "size": 614963712,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 1024
+          }
+        }
+      ]
+    },
+    {
+      "id": "rocky-linux",
+      "display_name": "Rocky Linux",
+      "description": null,
+      "templates": [
+        {
+          "name": "rocky-linux-10-amd64",
+          "display": "Rocky Linux 10",
+          "arch": "amd64",
+          "suggested_vmid": 5002,
+          "built_at": "2026-09-04T05:49:56Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "rocky-linux-10-amd64-a14631cec41b6baea2aec2dcb5e3058d031336d113a3ee6a9be03a4467ba8b7c.qcow2",
+              "url": "",
+              "sha256": "a14631cec41b6baea2aec2dcb5e3058d031336d113a3ee6a9be03a4467ba8b7c",
+              "size": 894042112,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 2048
+          }
+        },
+        {
+          "name": "rocky-linux-8-amd64",
+          "display": "Rocky Linux 8",
+          "arch": "amd64",
+          "suggested_vmid": 5000,
+          "built_at": "2026-09-04T06:01:44Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "rocky-linux-8-amd64-a6c583193a9cabb3d0d46cef8f6eec3ac429c614dccedc16ae2568b2107f2403.qcow2",
+              "url": "",
+              "sha256": "a6c583193a9cabb3d0d46cef8f6eec3ac429c614dccedc16ae2568b2107f2403",
+              "size": 1565640704,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 2048
+          }
+        },
+        {
+          "name": "rocky-linux-9-amd64",
+          "display": "Rocky Linux 9",
+          "arch": "amd64",
+          "suggested_vmid": 5001,
+          "built_at": "2026-09-04T06:00:40Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "rocky-linux-9-amd64-00e1cfd0a78f644bea705dd28419e33d1f806a954837170ecdc804b318cbbbb8.qcow2",
+              "url": "",
+              "sha256": "00e1cfd0a78f644bea705dd28419e33d1f806a954837170ecdc804b318cbbbb8",
+              "size": 1327866368,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 2048
+          }
+        }
+      ]
+    },
+    {
+      "id": "ubuntu",
+      "display_name": "Ubuntu",
+      "description": null,
+      "templates": [
+        {
+          "name": "ubuntu-22.04-amd64",
+          "display": "Ubuntu 22.04 LTS (Jammy Jellyfish)",
+          "arch": "amd64",
+          "suggested_vmid": 1002,
+          "built_at": "2026-09-04T06:11:21Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "ubuntu-22.04-amd64-a7266730fcc88dbffe6d8df96ce59f5d43df08057d939626c8ddb6afdabcabda.qcow2",
+              "url": "",
+              "sha256": "a7266730fcc88dbffe6d8df96ce59f5d43df08057d939626c8ddb6afdabcabda",
+              "size": 1519775744,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 1024
+          }
+        },
+        {
+          "name": "ubuntu-24.04-amd64",
+          "display": "Ubuntu 24.04 LTS (Noble Numbat)",
+          "arch": "amd64",
+          "suggested_vmid": 1003,
+          "built_at": "2026-09-04T06:13:10Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "ubuntu-24.04-amd64-e6b17fe67a9f44cf5b259cd699a171b48daadc674c8c22875ce791bdba4a1bb1.qcow2",
+              "url": "",
+              "sha256": "e6b17fe67a9f44cf5b259cd699a171b48daadc674c8c22875ce791bdba4a1bb1",
+              "size": 1544743424,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 1024
+          }
+        },
+        {
+          "name": "ubuntu-25.10-amd64",
+          "display": "Ubuntu 25.10 (Questing Quokka)",
+          "arch": "amd64",
+          "suggested_vmid": 1004,
+          "built_at": "2026-09-04T06:26:15Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "ubuntu-25.10-amd64-3093964a44a26e751d178376077c2eacc7f98ff818f70311f3ef5d02a4839536.qcow2",
+              "url": "",
+              "sha256": "3093964a44a26e751d178376077c2eacc7f98ff818f70311f3ef5d02a4839536",
+              "size": 1638426624,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 1024
+          }
+        },
+        {
+          "name": "ubuntu-26.04-amd64",
+          "display": "Ubuntu 26.04 LTS (Resolute Raccoon)",
+          "arch": "amd64",
+          "suggested_vmid": 1005,
+          "built_at": "2026-09-04T06:48:54Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "ubuntu-26.04-amd64-58a97ac520e37690407ab60adb3c1ad3d2a8d0f0f6778b27335e4b1a1cda8aeb.qcow2",
+              "url": "",
+              "sha256": "58a97ac520e37690407ab60adb3c1ad3d2a8d0f0f6778b27335e4b1a1cda8aeb",
+              "size": 1683861504,
+              "virtual_size": "5G",
+              "options": {
+                "discard": "on",
+                "ssd": 1
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "seabios",
+            "ciuser": "root",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "l26",
+            "scsihw": "virtio-scsi-single",
+            "serial0": "socket"
+          },
+          "minimum": {
+            "cores": 1,
+            "memory": 1024
+          }
+        }
+      ]
+    },
+    {
+      "id": "windows-server",
+      "display_name": "Windows Server",
+      "description": null,
+      "templates": [
+        {
+          "name": "windows-server-2019-amd64",
+          "display": "Windows Server 2019 Datacenter",
+          "arch": "amd64",
+          "suggested_vmid": 2000,
+          "built_at": "2026-09-04T08:07:38Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "windows-server-2019-amd64-70baccca9d128f83ad3b23e47a90f0097fcb1a9c6866a5c5256f6f612a6ba8dd.qcow2",
+              "url": "",
+              "sha256": "70baccca9d128f83ad3b23e47a90f0097fcb1a9c6866a5c5256f6f612a6ba8dd",
+              "size": 8576237568,
+              "virtual_size": "30G",
+              "options": {
+                "discard": "on"
+              }
+            },
+            {
+              "slot": "efidisk0",
+              "role": "efivars",
+              "format": "raw",
+              "file": "windows-server-2019-amd64-1d9e2e6f94fdf39434623b98d46db3769e86f43fddea6f8ae5398162a584cfba.efivars.raw",
+              "url": "",
+              "sha256": "1d9e2e6f94fdf39434623b98d46db3769e86f43fddea6f8ae5398162a584cfba",
+              "size": 540672,
+              "options": {
+                "efitype": "4m",
+                "pre-enrolled-keys": 1,
+                "ms-cert": "2023k"
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "ovmf",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "win10",
+            "scsihw": "virtio-scsi-single"
+          },
+          "minimum": {
+            "cores": 2,
+            "memory": 4096
+          }
+        },
+        {
+          "name": "windows-server-2022-amd64",
+          "display": "Windows Server 2022 Datacenter",
+          "arch": "amd64",
+          "suggested_vmid": 2001,
+          "built_at": "2026-09-04T10:11:03Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "windows-server-2022-amd64-315736a10b7601b804d3d801aefb23fa73e71ebc6b3d6e04db35a67284b48268.qcow2",
+              "url": "",
+              "sha256": "315736a10b7601b804d3d801aefb23fa73e71ebc6b3d6e04db35a67284b48268",
+              "size": 7480999936,
+              "virtual_size": "30G",
+              "options": {
+                "discard": "on"
+              }
+            },
+            {
+              "slot": "efidisk0",
+              "role": "efivars",
+              "format": "raw",
+              "file": "windows-server-2022-amd64-64adaaed8f01e3007adff4e9ad0409d48a5e11d1980d06a9e22e492729ea9265.efivars.raw",
+              "url": "",
+              "sha256": "64adaaed8f01e3007adff4e9ad0409d48a5e11d1980d06a9e22e492729ea9265",
+              "size": 540672,
+              "options": {
+                "efitype": "4m",
+                "pre-enrolled-keys": 1,
+                "ms-cert": "2023k"
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "ovmf",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "win11",
+            "scsihw": "virtio-scsi-single",
+            "tpm": "v2.0"
+          },
+          "minimum": {
+            "cores": 2,
+            "memory": 4096
+          }
+        },
+        {
+          "name": "windows-server-2025-amd64",
+          "display": "Windows Server 2025 Datacenter",
+          "arch": "amd64",
+          "suggested_vmid": 2002,
+          "built_at": "2026-09-04T09:46:20Z",
+          "disks": [
+            {
+              "slot": "scsi0",
+              "role": "system",
+              "format": "qcow2",
+              "file": "windows-server-2025-amd64-b90594a40caade98c6ca734dbee437a0a399a2202761fdc2b0e533e6a75c02f0.qcow2",
+              "url": "",
+              "sha256": "b90594a40caade98c6ca734dbee437a0a399a2202761fdc2b0e533e6a75c02f0",
+              "size": 10738335744,
+              "virtual_size": "32G",
+              "options": {
+                "discard": "on"
+              }
+            },
+            {
+              "slot": "efidisk0",
+              "role": "efivars",
+              "format": "raw",
+              "file": "windows-server-2025-amd64-8192c9104b97d3111a4cf42cc77f1b9fee30b20b6e12502ebe5d9ff1c0f51f33.efivars.raw",
+              "url": "",
+              "sha256": "8192c9104b97d3111a4cf42cc77f1b9fee30b20b6e12502ebe5d9ff1c0f51f33",
+              "size": 540672,
+              "options": {
+                "efitype": "4m",
+                "pre-enrolled-keys": 1,
+                "ms-cert": "2023k"
+              }
+            }
+          ],
+          "hardware": {
+            "agent": 1,
+            "bios": "ovmf",
+            "cpu": "host",
+            "machine": "q35",
+            "net_model": "virtio",
+            "ostype": "win11",
+            "scsihw": "virtio-scsi-single",
+            "tpm": "v2.0"
+          },
+          "minimum": {
+            "cores": 2,
+            "memory": 4096
+          }
+        }
+      ]
+    }
+  ]
 }
