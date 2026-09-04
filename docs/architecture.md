@@ -85,7 +85,7 @@ the cache under that lock, download to a PID-scoped temporary file, and publish
 with an atomic rename. Cache hits are touched so age-based maintenance cannot
 remove media between prefetch and VM creation.
 
-The *remote* `tar` is acceptable because the destination is always the
+The _remote_ `tar` is acceptable because the destination is always the
 Linux-based Proxmox node. Large artifact downloads still use SFTP directly and
 may use parallel connections; they are not repackaged. Repository upload is one
 file, so `--upload-concurrency`, `CF_UPLOAD_CONCURRENCY`, and

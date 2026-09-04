@@ -3,7 +3,7 @@
 Dated record of every Windows build experiment, including the ones that failed
 and the theories that were later falsified. Newest first.
 
-This is history, not instructions. What is *currently* true lives in
+This is history, not instructions. What is _currently_ true lives in
 [windows.md](windows.md) — when an entry here changes that, edit windows.md too.
 Append a new entry rather than rewriting an old one; a wrong theory that cost a
 build cycle is worth exactly as much as the fix that followed it.
@@ -76,13 +76,13 @@ follows it and still leave the latter set, so packer reported the machine settle
 and provisioning continued.
 
 Finalize's own 10-minute wait cannot rescue that: `PackagesPending` is CBS work
-that completes *during* a restart, so waiting for it to clear on a running system
+that completes _during_ a restart, so waiting for it to clear on a running system
 waits forever and then throws.
 
 Fix: `restart_check` tests `PackagesPending` in all three recipes; Finalize's guard
 becomes a backstop rather than the primary gate. The guard also now names what is
 pending — which keys, which entries, the last few Setup-log servicing events —
-instead of asserting bare. Two four-hour attempts reported only *that* CBS was
+instead of asserting bare. Two four-hour attempts reported only _that_ CBS was
 pending, never which package.
 
 ## 2026-08-25 — winget missing from shipped 2025 templates (#32)
@@ -106,7 +106,7 @@ the cleanup dropped, from on-disk payload (`C:\Windows\InboxApps`, then
 winget-specific: anything the cleanup drops is something a clone was supposed to
 have. Failures are logged, never fatal.
 
-A `winget-present` check asserts `winget.exe` *resolves* on the clone — a template
+A `winget-present` check asserts `winget.exe` _resolves_ on the clone — a template
 whose provisioning survived but never registered for the user is the same defect
 from the clone's point of view. 2025-only override (`RECIPE_OVERRIDES`): winget is
 not inbox on 2019 or 2022.
@@ -134,16 +134,16 @@ Untested on a full build as of this date.
 
 ## 2026-08-04 — all three recipes build and verify
 
-| Recipe | Build | `cf verify` |
-| ------ | ----- | ----------- |
+| Recipe              | Build | `cf verify`                  |
+| ------------------- | ----- | ---------------------------- |
 | windows-server-2019 | 1h16m | 15 passed, 1 warned (13m27s) |
-| windows-server-2022 | —     | 15 passed, 1 warned |
+| windows-server-2022 | —     | 15 passed, 1 warned          |
 | windows-server-2025 | 2h54m | 14 passed, 2 warned (17m27s) |
 
 Both warnings are check defects, not template defects — see windows.md's open
 issues. `no-critical-service-failures` fires on all three because it classifies
 delayed-auto services by a hard-coded name allowlist; on 2019 it named
-`cloudbase-init` itself, whose stopped state at that point *is* the success
+`cloudbase-init` itself, whose stopped state at that point _is_ the success
 condition. `rearm-headroom` fires on 2025 only and cannot distinguish a real
 0-rearm template from a probe that does not match the release.
 
@@ -186,7 +186,7 @@ It was never load-bearing — its only purpose was keeping `SetUserPasswordPlugi
 out of specialize, which removal achieves outright. Prefer removing a fragile step
 over repairing it when a later stage already does the work.
 
-## 2026-08-03 — clone specialize aborted by the Cloudbase-Init *service* (solved)
+## 2026-08-03 — clone specialize aborted by the Cloudbase-Init _service_ (solved)
 
 A clone of the `339eccd` artifact settled on its own: agent up at 90s, hostname
 applied, cloudbase-init ran to completion and stopped. The event log shows the
@@ -200,7 +200,7 @@ The theory that verify's 900s window was simply too short was **wrong**.
 **Two earlier readings of this failure were wrong and cost a cycle each:**
 
 1. The randomized `WIN-…` hostname in event 1074 is what **sysprep** assigns on
-   generalize. It is *not* evidence that `SetHostNamePlugin` ran. Removing that
+   generalize. It is _not_ evidence that `SetHostNamePlugin` ran. Removing that
    plugin from the specialize conf therefore changed nothing.
 2. `allow_reboot=false` **does** work. `init.py` reads
    `if reboot_required and CONF.allow_reboot: osutils.reboot()` — and the clone's
@@ -220,7 +220,7 @@ after OOBE completes, and they do not. Plus a specialize-pass conf running
 
 Reading the System event log offline (`python-evtx`, in a venv — system pip is
 PEP-668 managed) is what settled this. `setupact.log` and CBS only ever showed
-TrustedInstaller *reacting* to the shutdown.
+TrustedInstaller _reacting_ to the shutdown.
 
 ## 2026-08-03 — the Appx cleanup manufactured its own generalize blocker
 
@@ -232,7 +232,7 @@ entered Finalize with 5 provisioned packages and left with 0. Confirmed on a liv
    package, registered for the build's Administrator **and correctly provisioned**.
    sysprep is happy.
 2. The cleanup sees it registered, does not skip, and calls `Remove-AppxPackage
-   -AllUsers`. Windows refuses `0x80070032 ERROR_NOT_SUPPORTED`. (Per-user removal
+-AllUsers`. Windows refuses `0x80070032 ERROR_NOT_SUPPORTED`. (Per-user removal
    is refused too, `0x80073CFA`; `Set-NonRemovableAppsPolicy -NonRemovable 0`
    reports success and changes nothing.) The package is not removable by any route.
 3. The failure drives the deprovision fallback, which **removes the provisioning
@@ -263,7 +263,7 @@ Two versions coexist — 1.26.510.0 (rejected) and 1.29.280.0. 62 packages attem
 0 recovered, 47 still registered. The deprovision-and-retry fallback added for Edge
 never fired on this path.
 
-Cause: the fallback re-queried `Get-AppxProvisionedPackage` *inside* the catch, so a
+Cause: the fallback re-queried `Get-AppxProvisionedPackage` _inside_ the catch, so a
 query returning nothing or throwing made the outer catch log `STILL REGISTERED`
 with no `deprovisioning` line — a silent no-op. It now uses the list enumerated once
 up front, matches on package **family** so both versions are found, deprovisions
@@ -287,11 +287,11 @@ for two separate reasons:
   reader to inspect a log on a VM that no longer existed.
 
 **`C:\Windows.old` was investigated and ruled out.** The 2025 checkpoint cumulative
-is applied as a full OS re-deploy, so the directory *is* created and looked like the
+is applied as a full OS re-deploy, so the directory _is_ created and looked like the
 obvious 2025-only consumer. Measured on the live guest it is an empty stub — 0
 files, 0 enumeration errors. Note a naive `Get-ChildItem -Recurse -Force
 -ErrorAction SilentlyContinue | Measure-Object Length -Sum` also returns 0 for a
-*populated* tree, because ACLs stop the enumeration and the error is silenced;
+_populated_ tree, because ACLs stop the enumeration and the error is silenced;
 count the errors before believing the size. Finalize removes it anyway; it reclaims
 nothing on this release.
 
@@ -303,7 +303,7 @@ since a syntax error in `Finalize.ps1` otherwise costs a full rebuild to find.
 ## 2026-08-02 — `allow_reboot` and `reset_service_password`
 
 Root cause found on an image the export gate had already certified as correctly
-generalized and armed. The template was fine; every *clone* failed specialize and
+generalized and armed. The template was fine; every _clone_ failed specialize and
 looped on "The computer restarted unexpectedly", so Cloudbase-Init never ran and
 verify failed with `Cloudbase-Init did not settle within 900s`.
 
@@ -317,10 +317,10 @@ Chain, from the clone's own logs read offline via qemu-nbd:
 
 `SetHostNamePlugin` requests a reboot after renaming. Cloudbase-Init defaults to
 `allow_reboot=true`, so it acts on that itself: `terminate()` stops the
-cloudbase-init *service* — but during specialize it runs as a console process, the
+cloudbase-init _service_ — but during specialize it runs as a console process, the
 service is not started, `ControlService` raises 1062 unhandled, the non-zero exit
 takes the `|| exit 2` branch, SetupUGC returns 3, and specialize fails every boot.
-The reboot is the *unattend's* job: `&& exit 1` is what signals
+The reboot is the _unattend's_ job: `&& exit 1` is what signals
 `WillReboot=OnRequest`, and cloudbase-init must exit 0 for that to happen.
 
 **`allow_reboot=false` alone was not enough.** The next call in the same family
@@ -331,7 +331,7 @@ password and respawning as that user —
 
 **Both flags ship in the MSI's stock conf** and were lost because `Finalize.ps1`
 overwrites that file wholesale. The general lesson: the specialize-pass run is a
-*console* invocation, so every service-oriented path in `configure_host()` has to be
+_console_ invocation, so every service-oriented path in `configure_host()` has to be
 disabled by config.
 
 Note what this says about the export gate: a template can be genuinely generalized
@@ -348,7 +348,7 @@ flags clear throughout — captured live from the guest:
     13:22:27  BOOT TIME CHANGED 13:20:44 -> 13:22:03   (second, unsolicited)
     13:24:48  cbsPending=False wuPending=False servicingRunning=False
 
-The registry flags describe work already *queued*; they say nothing about servicing
+The registry flags describe work already _queued_; they say nothing about servicing
 still executing. `TiWorker`/`TrustedInstaller` running is the signal that another
 restart may still be coming. With only the flag checks, packer resumed into that
 window and the second reboot destroyed the uploaded provisioner script. The process
@@ -359,7 +359,7 @@ check must stay alongside the flags; minimum uptime went 120s → 180s.
 Even with `restart_check` correctly holding through the double reboot (verified
 16:14–16:18Z: it waited past both until `servicingRunning` went False), a
 provisioner upload can still fail to land. Three builds were lost this way, each
-with a *different* missing file:
+with a _different_ missing file:
 
     script-<uuid>.ps1              "is not recognized"        (before the gate existed)
     script-<uuid>.ps1              "never arrived within 300s"
@@ -394,8 +394,8 @@ min into round two — the fourth identical 2025 failure. Keep the re-arm (a re-
 orchestrator is its own hazard) but do not expect it to fix this.
 
 The same run showed why 2022 survives where 2025 dies, and it is timing, not a
-per-release difference: TrustedInstaller rebooted the 2022 guest *while packer was
-still inside its restart-wait loop*, so packer never resumed into a session about to
+per-release difference: TrustedInstaller rebooted the 2022 guest _while packer was
+still inside its restart-wait loop_, so packer never resumed into a session about to
 be killed. On 2025 the same reboot lands after packer has resumed.
 
 Fix: `restart_check` re-keyed off process presence and onto pending reboot state,
@@ -417,7 +417,7 @@ the start of each round and after the installs. But it is **not** what kills rou
 two — see the TrustedInstaller entry above.
 
 An earlier note claiming the suppression was "still present, not a lost fix"
-checked the *source*, never the *guest*. That is the recurring mistake in this
+checked the _source_, never the _guest_. That is the recurring mistake in this
 whole investigation: the packer log cannot distinguish an orchestrator reboot from
 a load-related WinRM drop, which is why the 07-31 investigation stalled on a
 concurrency correlation. Capture the guest directly.
@@ -441,7 +441,7 @@ is independent and worth keeping.
 ## 2026-08-01 — the silent non-generalized export: the WinRM firewall teardown
 
 Root cause of the 2026-07-31 silent export, identified 13:26Z. `Finalize.ps1`
-restored the stock WinRM firewall exposure *before* the Appx cleanup and sysprep.
+restored the stock WinRM firewall exposure _before_ the Appx cleanup and sysprep.
 The build NIC sits on an unidentified (Public-profile) network, so removing
 `WinRM-HTTP` and disabling the Public-profile HTTP-In rule drops packer's live WinRM
 session. The script kept running on the guest — sysprep ran, and failed — but its
@@ -454,7 +454,7 @@ The earlier `3094234` diagnosis (stale `$LastExitCode`) was a real weakness but 
 this — `ps_execute` never got the chance to return anything.
 
 **Moving only part of it is not enough (21:45Z).** With the firewall rules moved,
-Finalize reached the Appx step for the first time and truncated *there* instead,
+Finalize reached the Appx step for the first time and truncated _there_ instead,
 because the Basic/`AllowUnencrypted` policy unpin was still above sysprep. Packer
 connects with Basic auth over unencrypted HTTP, so `winrm set .../auth
 @{Basic="false"}` cuts its session exactly as the firewall removal did.
@@ -467,12 +467,12 @@ firewall rules.** Everything moved together to after generalize.
 A 2022 build reported `finished after 3 hours 7 minutes` and published an artifact.
 Offline inspection showed it was **never generalized at all**:
 
-| marker | good 2019 template | this 2022 artifact |
-| --- | --- | --- |
-| `SetupType` | 2 | **0** |
-| `CmdLine` | `oobe\windeploy.exe` | **empty** |
-| `ImageState` | `…GENERALIZE_RESEAL_TO_OOBE` | **`IMAGE_STATE_COMPLETE`** |
-| `Sysprep_succeeded.tag` | present | **absent** |
+| marker                  | good 2019 template           | this 2022 artifact         |
+| ----------------------- | ---------------------------- | -------------------------- |
+| `SetupType`             | 2                            | **0**                      |
+| `CmdLine`               | `oobe\windeploy.exe`         | **empty**                  |
+| `ImageState`            | `…GENERALIZE_RESEAL_TO_OOBE` | **`IMAGE_STATE_COMPLETE`** |
+| `Sysprep_succeeded.tag` | present                      | **absent**                 |
 
 Facts from the artifact itself: sysprep ran and failed at 23:07:16 in Appx
 pre-validation (`Microsoft.MicrosoftEdge.Stable_150…` registered per-user by a WU
@@ -491,7 +491,7 @@ without appealing to a guest-internal reboot.
 Three fixes, each defensive at a different layer:
 
 1. `ps_execute` wraps the script call in `try/catch`. It previously ended `exit
-   $LastExitCode`, which reflects the last *native* command, so a thrown error could
+$LastExitCode`, which reflects the last _native_ command, so a thrown error could
    exit with a stale `0`.
 2. `recipes/_shared/post/assert-generalized.sh` (new) reads the finished disk **from
    the host** and fails the build unless the image is generalized and armed, dumping
@@ -537,7 +537,7 @@ idle rather than slow:
   while WUA still reported `install 20%`.
 
 The bound is `WU.ps1`'s own 3-hour deadline. This run was cancelled before reaching
-it, so it is unknown whether the stall self-resolves. Both prior runs *did* break
+it, so it is unknown whether the stall self-resolves. Both prior runs _did_ break
 out of this plateau after ~2 hours, so a long idle stretch is not by itself proof
 of a hang.
 
@@ -560,7 +560,7 @@ ntfs3 loop-mount at the `sgdisk -p` offset, `reged -x`). Findings, evidence at
   `OOBEInProgress=1`, `ImageState=IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE`.
 - Its `setuperr.log` nevertheless contains **every** error previously blamed for
   Mode B — `MRTGeneralize: ERROR: Failed ConnectServer`, `Failed to re-enable
-  Compat-Gentel custom trigger`, BCD `c000000d`. **These appear in known-armed
+Compat-Gentel custom trigger`, BCD `c000000d`. **These appear in known-armed
   builds: benign noise, not a corruption signature.** The stage-3 retry heuristic
   flagged this good build "corrupt" on both attempts and shipped it with a false
   warning. The earlier WMI-race reading of `Failed ConnectServer` loses its
@@ -612,7 +612,7 @@ validated live on clones:
 - Set Cloudbase-Init to delayed-auto-start (scoped to 2019 at the time; later
   extended to every release). A 2019 clone hits state 7 while OOBE is still on
   screen, so an Automatic-start service ran plugins before VDS/WMI/user-profile were
-  ready, and its SetUserPassword landed *before* oobeSystem re-seeded the
+  ready, and its SetUserPassword landed _before_ oobeSystem re-seeded the
   AdministratorPassword — shipping clones with the build's throwaway password.
 - Drop `CreateUserPlugin`: Administrator already exists, and the plugin's only
   effect was opening a logon session that re-created the profile
@@ -633,7 +633,7 @@ reached 7, with the only source diff being a runtime config line that cannot aff
 sysprep.
 
 The theory at the time was the Windows-Update servicing state at sysprep time (the
-working build's update round *rolled back*; the broken build's cumulative installed
+working build's update round _rolled back_; the broken build's cumulative installed
 cleanly), with `SetupType=0`/empty `CmdLine` and a failing `sysprep /respecialize
 /quiet` (`0x8007001f`) as the signature. **Superseded twice**: the error-line
 signature was falsified on 07-31, and the actual mechanism was found on 08-01 —
@@ -652,7 +652,7 @@ trail. On first boot:
 
 1. Cloudbase-Init's sysprep-phase run executes the full MAIN plugin stage **during
    specialize**: `cloudbase-init.log` 06:37:08, `Password succesfully updated for
-   user Administrator` (the Proxmox `cipassword`).
+user Administrator` (the Proxmox `cipassword`).
 2. The **oobeSystem pass runs after it**: `Panther\UnattendGC\setupact.log`
    06:37:37, `[Shell Unattend] UserAccounts: Password set for 'Administrator'` —
    applying the seeded build password **29 seconds later**.
@@ -700,14 +700,14 @@ only by capturing the guest.
 
 Observed live on 2025: three identical "Timeout waiting for WinRM" failures at
 exactly 46m14s — the 45m `winrm_timeout` plus fixed overhead, so the identical
-duration carries no information about *where* the guest stalled. A console
+duration carries no information about _where_ the guest stalled. A console
 screendump of the fourth attempt showed Setup at "23% complete" with a
 **"Windows Server Setup — Are you sure you want to quit?"** modal open, focus on
 **No**.
 
 The ~60-second `<enter>` blanket covering the OVMF boot prompt keeps typing after
 WinPE's GUI loads. The "Installing Windows Server" screen has a single focusable
-Cancel button, so a stray Enter opens the modal; any *following* Enter presses the
+Cancel button, so a stray Enter opens the modal; any _following_ Enter presses the
 modal's default No and closes it — which is why the burst usually gets away with it
 — but when the modal opens on the burst's final keystroke, nothing dismisses it.
 Whether the race hits depends on how fast WinPE loads, i.e. node I/O load: three
@@ -733,8 +733,8 @@ worked. Diagnostic signature, confirmed on VM 101 (build 26100.33158):
 
 - `explorer.exe` **is running** and persists; it is not the crasher.
 - Application log repeats roughly every 31 seconds: `Faulting application name:
-  ShellHost.exe … Faulting module name: ControlCenter.dll … Exception code:
-  0xc0000409` (`STATUS_STACK_BUFFER_OVERRUN`, the `__fastfail` path — a deliberate
+ShellHost.exe … Faulting module name: ControlCenter.dll … Exception code:
+0xc0000409` (`STATUS_STACK_BUFFER_OVERRUN`, the `__fastfail` path — a deliberate
   abort, not file damage).
 - `sfc /verifyonly` reports **no** integrity violations.
 - `ControlCenter.dll` and `ShellHost.exe` share a `LastWriteTime`, so they are from

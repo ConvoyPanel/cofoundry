@@ -15,11 +15,11 @@
 Three kinds of writing live under `docs/`. Keep them apart — mixing them is why
 the reference docs became unreadable.
 
-| Kind | Lives in | Shape |
-| --- | --- | --- |
-| Reference | `docs/*.md` | Present tense, current truth. No dates, no narrative, no superseded theories. |
-| Experiment log | `docs/windows-log.md` | Dated entries. Every Windows experiment, including failed ones. |
-| Session handoff | `docs/handoffs/YYYY-MM-DD-topic.md` | Point-in-time snapshot for resuming work. Never linked from the README. |
+| Kind            | Lives in                            | Shape                                                                         |
+| --------------- | ----------------------------------- | ----------------------------------------------------------------------------- |
+| Reference       | `docs/*.md`                         | Present tense, current truth. No dates, no narrative, no superseded theories. |
+| Experiment log  | `docs/windows-log.md`               | Dated entries. Every Windows experiment, including failed ones.               |
+| Session handoff | `docs/handoffs/YYYY-MM-DD-topic.md` | Point-in-time snapshot for resuming work. Never linked from the README.       |
 
 - A reference doc states what is true now. When a finding changes that, edit the
   statement — do not append a dated entry recording that you changed it.
@@ -35,7 +35,7 @@ the reference docs became unreadable.
   so the default loop is one hypothesis per three hours; that document is how to
   avoid paying it.
 - Two things there are worth knowing before you need them: `qm set <vmid>
-  --protection 1` preserves a failing build VM from packer's cleanup, and `pwsh`
+--protection 1` preserves a failing build VM from packer's cleanup, and `pwsh`
   runs on Linux so `recipes/_shared/windows/*.ps1` can be parse-checked in
   milliseconds instead of a rebuild.
 - Anything that fails inside a guest must report through packer's stdout. An

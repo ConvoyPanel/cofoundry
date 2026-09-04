@@ -33,29 +33,29 @@ Windows is where the absolute numbers matter.
 
 Confirmed against `pve-manager/9.2.2` on `us-southwest-2`.
 
-| Behaviour                            | Evidence                                                                                             |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `import` content type on by default  | `local` in `/etc/pve/storage.cfg` lists `import`                                                     |
-| Download to an import store          | `POST /nodes/{node}/storage/{storage}/download-url`, `content=import`                                |
-| Native checksum verification         | same endpoint: `checksum` + `checksum-algorithm` (`sha256` accepted)                                 |
-| **No decompression for `import`**    | `API2/Storage/Status.pm:900` — `die "decompression not supported for $content" if $content ne 'iso'` |
-| Accepted extensions                  | `Storage.pm:124` — `UPLOAD_IMPORT_EXT_RE_1 = qr/\.(ova\|qcow2\|raw\|vmdk)/`                          |
-| Filename charset                     | `Storage.pm:126` — `SAFE_CHAR_CLASS_RE = qr/[a-zA-Z0-9\-\.\+\=\_]/`                                  |
-| Import onto a data disk              | `qm create --scsi0 <storage>:0,import-from=<volume>`                                                 |
-| **Import onto the EFI varstore**     | `qm create --efidisk0 <storage>:0,import-from=<volume>`                                              |
-| **`import-from` takes an abs. path** | `API2/Qemu.pm:202` — non-volid sources fall through to `check_volume_access`; probed live             |
-| Machine type re-pinned per node      | `qm create --machine q35` on a `win*` ostype logs "pinning machine type to 'pc-q35-11.0'"            |
-| Format is **not** preserved          | a qcow2 source imported to `local` became `vm-<id>-disk-N.raw` — target follows the storage default  |
-| Block-storage targets need a scratch | `qm create --import-working-storage <storage ID>`                                                    |
-| Disks cannot shrink after import     | `qm disk resize` — "Extend volume size", "Shrinking disk size is not supported"                      |
-| Cloud-init drive format is automatic | `QemuServer/Cloudinit.pm:76` — `configdrive2` for Windows `ostype`, `nocloud` otherwise              |
+| Behaviour                                             | Evidence                                                                                                                                          |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `import` content type on by default                   | `local` in `/etc/pve/storage.cfg` lists `import`                                                                                                  |
+| Download to an import store                           | `POST /nodes/{node}/storage/{storage}/download-url`, `content=import`                                                                             |
+| Native checksum verification                          | same endpoint: `checksum` + `checksum-algorithm` (`sha256` accepted)                                                                              |
+| **No decompression for `import`**                     | `API2/Storage/Status.pm:900` — `die "decompression not supported for $content" if $content ne 'iso'`                                              |
+| Accepted extensions                                   | `Storage.pm:124` — `UPLOAD_IMPORT_EXT_RE_1 = qr/\.(ova\|qcow2\|raw\|vmdk)/`                                                                       |
+| Filename charset                                      | `Storage.pm:126` — `SAFE_CHAR_CLASS_RE = qr/[a-zA-Z0-9\-\.\+\=\_]/`                                                                               |
+| Import onto a data disk                               | `qm create --scsi0 <storage>:0,import-from=<volume>`                                                                                              |
+| **Import onto the EFI varstore**                      | `qm create --efidisk0 <storage>:0,import-from=<volume>`                                                                                           |
+| **`import-from` takes an abs. path**                  | `API2/Qemu.pm:202` — non-volid sources fall through to `check_volume_access`; probed live                                                         |
+| Machine type re-pinned per node                       | `qm create --machine q35` on a `win*` ostype logs "pinning machine type to 'pc-q35-11.0'"                                                         |
+| Format is **not** preserved                           | a qcow2 source imported to `local` became `vm-<id>-disk-N.raw` — target follows the storage default                                               |
+| Block-storage targets need a scratch                  | `qm create --import-working-storage <storage ID>`                                                                                                 |
+| Disks cannot shrink after import                      | `qm disk resize` — "Extend volume size", "Shrinking disk size is not supported"                                                                   |
+| Cloud-init drive format is automatic                  | `QemuServer/Cloudinit.pm:76` — `configdrive2` for Windows `ostype`, `nocloud` otherwise                                                           |
 | `pre-enrolled-keys`/`ms-cert` alongside `import-from` | Probed live: no conflict — imported bytes are authoritative, flags are metadata beside them. `cmp` against the source varstore reported identical |
 
 Two consequences worth stating outright:
 
 - **Artifacts cannot ship as `.zst`.** The `--compression` parameter on
   `download-url` exists but is rejected for `import` content, so compression has
-  to live *inside* the image: `qemu-img convert -c -O qcow2` produces compressed
+  to live _inside_ the image: `qemu-img convert -c -O qcow2` produces compressed
   clusters that qemu reads natively and Proxmox accepts as a plain `.qcow2`.
 - **`--efidisk0 … import-from=` is what makes Windows viable.** Without it there
   is no way to ship a populated UEFI variable store, and none of this works.
@@ -151,7 +151,7 @@ values (`ostype: l26`, `bios: seabios`, `serial0: socket`, `ciuser`).
 source's virtual size and `qm disk resize` cannot shrink, so the disk floor is
 enforced structurally by `disks[0].virtual_size`; a separate field would only
 duplicate it. `cores` and `memory` have no such floor — nothing prevents a 1-core,
-512 MB Windows Server 2025 VM — which is why they stay. A *recommendation* that
+512 MB Windows Server 2025 VM — which is why they stay. A _recommendation_ that
 exceeds the image size ("32 G boots, but expect to be full after two patch
 Tuesdays") is a different number and would need a different name.
 
@@ -206,7 +206,7 @@ vary?" — those diverge:
 **`machine: pc-q35-11.0` → `q35`.** The build pins a QEMU machine version;
 published as-is the image will not start on a node running older QEMU — a hard
 failure, not a degradation. Publishing the bare type is what Proxmox wants: on a
-`win*` ostype it pins the version *itself*, against the target node's QEMU. A
+`win*` ostype it pins the version _itself_, against the target node's QEMU. A
 published pin could only ever name someone else's QEMU.
 
 **`ide3` for the cloud-init drive → `ide2`.** Windows templates land on `ide3` only
@@ -295,7 +295,7 @@ the result. Its VMID machinery stays, because a template still occupies a VMID.
 A build VM is stopped for the entire export — packer shuts it down and converts it
 to a template before the post-processor runs, and a 32 G qcow2 conversion takes
 minutes. This once destroyed a windows-server-2025 build 3h26m in: `netslot.ts`
-reclaimed a slot when no *running* VM carried its MAC, an exporting VM is
+reclaimed a slot when no _running_ VM carried its MAC, an exporting VM is
 indistinguishable from an abandoned one, and a concurrent Linux batch drew that slot
 and deleted the live build's disks between the config read and the varstore copy.
 

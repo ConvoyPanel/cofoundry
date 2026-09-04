@@ -128,9 +128,9 @@ generate a private key (the `.pem` downloads once).
   `-----BEGIN/END RSA PRIVATE KEY-----` lines and every newline. Do not strip the
   header/footer or collapse it to one line:
 
-  ```sh
-  gh secret set REGISTRY_APP_PRIVATE_KEY < ~/Downloads/cofoundry-registry-writer.*.private-key.pem
-  ```
+    ```sh
+    gh secret set REGISTRY_APP_PRIVATE_KEY < ~/Downloads/cofoundry-registry-writer.*.private-key.pem
+    ```
 
 Then add a bypass entry for the app to the ruleset protecting `main` (repo →
 Settings → Rules → Rulesets). Rulesets cannot scope a bypass to specific paths,
@@ -154,30 +154,30 @@ produces `templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}{{ext}}`. See
 
 **Secrets** (Settings → Secrets and variables → Actions → Secrets):
 
-| Secret                     | Value                                                                                     |
-| -------------------------- | ----------------------------------------------------------------------------------------- |
-| `PVE_TOKEN_SECRET`         | Token secret from part 1                                                                  |
-| `SSH_PRIVATE_KEY`          | Contents of `~/.ssh/cofoundry_ci`. Omit if using Tailscale SSH.                           |
-| `TS_OAUTH_CLIENT_ID`       | Tailscale OAuth client ID (Tailscale only)                                                |
-| `TS_OAUTH_SECRET`          | Tailscale OAuth secret (Tailscale only)                                                   |
-| `R2_ACCESS_KEY_ID`         | R2 API token access key                                                                   |
-| `R2_SECRET_ACCESS_KEY`     | R2 API token secret                                                                       |
-| `REGISTRY_APP_CLIENT_ID`   | GitHub App client ID. Only if `main` is ruleset-protected; omit to use `GITHUB_TOKEN`.    |
-| `REGISTRY_APP_PRIVATE_KEY` | GitHub App private key. Only if `main` is ruleset-protected; omit to use `GITHUB_TOKEN`.  |
+| Secret                     | Value                                                                                    |
+| -------------------------- | ---------------------------------------------------------------------------------------- |
+| `PVE_TOKEN_SECRET`         | Token secret from part 1                                                                 |
+| `SSH_PRIVATE_KEY`          | Contents of `~/.ssh/cofoundry_ci`. Omit if using Tailscale SSH.                          |
+| `TS_OAUTH_CLIENT_ID`       | Tailscale OAuth client ID (Tailscale only)                                               |
+| `TS_OAUTH_SECRET`          | Tailscale OAuth secret (Tailscale only)                                                  |
+| `R2_ACCESS_KEY_ID`         | R2 API token access key                                                                  |
+| `R2_SECRET_ACCESS_KEY`     | R2 API token secret                                                                      |
+| `REGISTRY_APP_CLIENT_ID`   | GitHub App client ID. Only if `main` is ruleset-protected; omit to use `GITHUB_TOKEN`.   |
+| `REGISTRY_APP_PRIVATE_KEY` | GitHub App private key. Only if `main` is ruleset-protected; omit to use `GITHUB_TOKEN`. |
 
 **Coordinates referenced by `${VAR}` in `cofoundry.toml`.** Set each as a repo
 Variable (visible and reviewable) or a Secret if you would rather hide it — the
 workflow reads `vars.X || secrets.X`, so set it in one place, not both. If you
 inline any of these as a literal in `cofoundry.toml`, drop it here.
 
-| Name           | Value                                              |
-| -------------- | -------------------------------------------------- |
-| `PVE_HOST`     | Proxmox hostname or IP (or tailnet IP)             |
-| `SSH_TARGET`   | e.g. `root@pve.example.com` or `root@<tailnet-IP>` |
-| `PVE_NODE`     | Proxmox node name (shown in the web UI sidebar)    |
-| `PVE_TOKEN_ID` | `root@pam!cofoundry`                               |
-| `R2_ENDPOINT`  | `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com` |
-| `R2_BUCKET`    | R2 bucket name, e.g. `cofoundry-templates`         |
+| Name           | Value                                                 |
+| -------------- | ----------------------------------------------------- |
+| `PVE_HOST`     | Proxmox hostname or IP (or tailnet IP)                |
+| `SSH_TARGET`   | e.g. `root@pve.example.com` or `root@<tailnet-IP>`    |
+| `PVE_NODE`     | Proxmox node name (shown in the web UI sidebar)       |
+| `PVE_TOKEN_ID` | `root@pam!cofoundry`                                  |
+| `R2_ENDPOINT`  | `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com`    |
+| `R2_BUCKET`    | R2 bucket name, e.g. `cofoundry-templates`            |
 | `TS_TAG`       | Tag the OAuth client is scoped to. Default: `tag:ci`. |
 
 Everything else — `PVE_PORT`, `PVE_DUMP_DIR`, `CF_STORAGE`, `CF_ISO_STORAGE`,
@@ -322,7 +322,7 @@ it on the node.
 pveum user token add root@pam cofoundry --privsep=0
 ```
 
-**Packer**, which runs *on the node* so its HTTP server is reachable by build VMs
+**Packer**, which runs _on the node_ so its HTTP server is reachable by build VMs
 over the bridge:
 
 ```sh

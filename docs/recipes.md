@@ -69,7 +69,7 @@ requires it. The Ubuntu family shares one byte-identical `user-data`, enforced b
 `tests/recipe-consistency.test.ts`.
 
 **The build's SSH key goes in via `late-command`, not the autoinstall `ssh:`
-section.** Subiquity's `ssh.authorized-keys` registers the key as an *instance*
+section.** Subiquity's `ssh.authorized-keys` registers the key as an _instance_
 public key, and cloud-init then also plants it in `/root/.ssh/authorized_keys` as
 a neutered `disable_root` forced-command stub — the build key leaking into the
 shipped template, which `no-foreign-authorized-keys` flags on every Ubuntu leg.
@@ -82,7 +82,7 @@ via the systemd preset) and the `sshd_config.d/10-cofoundry.conf` late-command
 carries `PasswordAuthentication`.
 
 **The `identity` user does not exist in the target when `late-commands` run.**
-Subiquity defers its creation to cloud-init's *first boot* of the installed
+Subiquity defers its creation to cloud-init's _first boot_ of the installed
 system, so at `curtin in-target` time there is no `packer` user or group.
 `install -d -o packer -g packer …` fails with `install: invalid user 'packer'`,
 and a failed late-command **aborts the entire autoinstall** — the installer drops

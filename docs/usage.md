@@ -95,7 +95,7 @@ it the way a user's clone is exercised, rather than merely booting it:
    so nothing cloud-init is supposed to apply gets exercised at all.
 2. **In-guest checks run over `qm guest exec`**, in phases: first boot, again
    after a clean reboot, and on Windows after an autologon has painted a desktop.
-   The agent answering is the *entry condition*, not the result — it starts early
+   The agent answering is the _entry condition_, not the result — it starts early
    and is independent of nearly everything a template promises.
 3. **The hardware profile is under test, not just the disk.** The VM is built
    from the sidecar's `hardware` block through the shared builder in
@@ -222,15 +222,15 @@ binary it calls (such as `aws`) must exist there. A recipe emits a system disk
 and, on OVMF recipes, an EFI varstore, so the command runs **once per artifact**
 with that artifact's own hash and filename.
 
-| Placeholder               | Value                                                                                        |
-| ------------------------- | -------------------------------------------------------------------------------------------- |
-| `{{file}}`                | path of the file being uploaded (the sidecar JSON for `CF_SIDECAR_UPLOAD_CMD`)               |
-| `{{recipe}}` / `{{name}}` | recipe name, e.g. `debian-12` (`{{name}}` is a legacy alias)                                 |
-| `{{arch}}`                | architecture, e.g. `amd64`                                                                   |
-| `{{group}}`               | OS family                                                                                    |
-| `{{sha256}}`              | SHA-256 of the artifact being uploaded                                                       |
-| `{{filename}}`            | `<recipe>-<arch>-<sha256>.qcow2` / `.efivars.raw` (`.json` for the sidecar command)          |
-| `{{ext}}`                 | extension with the dot: `.qcow2`, `.efivars.raw`, `.json`                                    |
+| Placeholder               | Value                                                                               |
+| ------------------------- | ----------------------------------------------------------------------------------- |
+| `{{file}}`                | path of the file being uploaded (the sidecar JSON for `CF_SIDECAR_UPLOAD_CMD`)      |
+| `{{recipe}}` / `{{name}}` | recipe name, e.g. `debian-12` (`{{name}}` is a legacy alias)                        |
+| `{{arch}}`                | architecture, e.g. `amd64`                                                          |
+| `{{group}}`               | OS family                                                                           |
+| `{{sha256}}`              | SHA-256 of the artifact being uploaded                                              |
+| `{{filename}}`            | `<recipe>-<arch>-<sha256>.qcow2` / `.efivars.raw` (`.json` for the sidecar command) |
+| `{{ext}}`                 | extension with the dot: `.qcow2`, `.efivars.raw`, `.json`                           |
 
 `CF_PUBLIC_URL_TMPL` takes the same placeholders except `{{file}}`; the rendered
 URL is written into that artifact's `url` field in the sidecar's `disks` array.
@@ -257,7 +257,7 @@ CF_SIDECAR_UPLOAD_CMD=bash $PVE_DUMP_DIR/cofoundry-work/scripts/cf-cluster-templ
 ```
 
 **Not `CF_UPLOAD_CMD`.** A template is several images now, and `CF_UPLOAD_CMD`
-fires once *per image* — the script would be handed a bare `.qcow2` with no idea
+fires once _per image_ — the script would be handed a bare `.qcow2` with no idea
 what else belongs to it. `CF_SIDECAR_UPLOAD_CMD` fires once per template, after
 every image is written, and hands over the sidecar that names them all (including
 a hash per image, so no separate `{{sha256}}` argument is needed).
@@ -324,10 +324,10 @@ no run history of their own.
 **Called, never dispatched:**
 
 - **`build-one.yml`** — the parallel-safe build and smoke-test worker. It builds
-  with `--skip-upload`, then verifies, *then* uploads. **That order is
+  with `--skip-upload`, then verifies, _then_ uploads. **That order is
   load-bearing.** The upload is normally a side effect of the build itself (the
   node-side post-processor runs `CF_UPLOAD_CMD` as soon as the artifact is
-  hashed), which is *before* the smoke test — so a recipe that built but failed
+  hashed), which is _before_ the smoke test — so a recipe that built but failed
   verify used to publish anyway, and since `cf publish --r2` advertises the newest
   sidecar per template, a failed artifact could supersede a good one.
 - **`publish.yml`** — globally serialized registry writer and R2 finalizer. It

@@ -12,17 +12,17 @@ document says, edit the statement.
 Each of these was found by a build that cost 1–4 hours. Changing one without
 reading its section reintroduces a failure that is expensive to rediscover.
 
-| Setting | Where | Breaks if changed |
-| --- | --- | --- |
-| Nothing above sysprep may touch WinRM auth, policy keys, or firewall rules | `Finalize.ps1` | Severing WinRM truncates the script silently; packer reads the disconnect as success and exports a broken template |
-| `cf-finalize-complete.tag` written last, after the teardown | `Finalize.ps1` / `assert-generalized.sh` | The only detector for post-sysprep truncation. Do not move it earlier |
-| `allow_reboot=false`, `reset_service_password=false` | `cloudbase-init-unattend.conf` | Every clone loops on "The computer restarted unexpectedly" |
-| Specialize conf runs **`MTUPlugin` only** | `cloudbase-init-unattend.conf` | Any plugin that requests a reboot aborts the specialize pass |
-| `mtu_use_dhcp_config=false` | both cloudbase-init confs | MTUPlugin fails `WinError 10013` on 2019 (UDP/68 is held by the DHCP Client service) |
-| `restart_check` tests `PackagesPending` as well as `RebootPending` | all three `.pkr.hcl` | A cumulative can clear `RebootPending` and leave `PackagesPending`; Finalize then refuses at the pre-sysprep gate, ~4h in |
-| `max_retries = 2` on every powershell provisioner | all three `.pkr.hcl` | A lost upload after a cumulative update costs the whole build instead of one provisioner |
-| `<Compact>false</Compact>` | `windows-server-2025` answer file | Deterministic phase 71 / DISM `0x80071160` during servicing |
-| `ostype` from the Proxmox enum, never from the release name | all three `.pkr.hcl` | There is no `win2k19`/`win2k22`/`win2k25` |
+| Setting                                                                    | Where                                    | Breaks if changed                                                                                                         |
+| -------------------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Nothing above sysprep may touch WinRM auth, policy keys, or firewall rules | `Finalize.ps1`                           | Severing WinRM truncates the script silently; packer reads the disconnect as success and exports a broken template        |
+| `cf-finalize-complete.tag` written last, after the teardown                | `Finalize.ps1` / `assert-generalized.sh` | The only detector for post-sysprep truncation. Do not move it earlier                                                     |
+| `allow_reboot=false`, `reset_service_password=false`                       | `cloudbase-init-unattend.conf`           | Every clone loops on "The computer restarted unexpectedly"                                                                |
+| Specialize conf runs **`MTUPlugin` only**                                  | `cloudbase-init-unattend.conf`           | Any plugin that requests a reboot aborts the specialize pass                                                              |
+| `mtu_use_dhcp_config=false`                                                | both cloudbase-init confs                | MTUPlugin fails `WinError 10013` on 2019 (UDP/68 is held by the DHCP Client service)                                      |
+| `restart_check` tests `PackagesPending` as well as `RebootPending`         | all three `.pkr.hcl`                     | A cumulative can clear `RebootPending` and leave `PackagesPending`; Finalize then refuses at the pre-sysprep gate, ~4h in |
+| `max_retries = 2` on every powershell provisioner                          | all three `.pkr.hcl`                     | A lost upload after a cumulative update costs the whole build instead of one provisioner                                  |
+| `<Compact>false</Compact>`                                                 | `windows-server-2025` answer file        | Deterministic phase 71 / DISM `0x80071160` during servicing                                                               |
+| `ostype` from the Proxmox enum, never from the release name                | all three `.pkr.hcl`                     | There is no `win2k19`/`win2k22`/`win2k25`                                                                                 |
 
 `Finalize.ps1` is the one provisioner deliberately **without** `max_retries`: it
 is not idempotent after sysprep, and it retries its own arming step internally.
@@ -107,12 +107,12 @@ block, including its authors — the commit that did the work is titled "drop
 cloudbase-init's specialize command entirely", which reads as though the pass
 itself was removed. It was not.
 
-| # | Thing | What it is | Do we touch it? |
-| - | ----- | ---------- | --------------- |
-| 1 | the specialize **pass** | Windows boot phase on a generalized image. Generates the new SID and machine identity, re-enumerates drivers. Launched by `windeploy.exe`, which `SetupType=2` + `CmdLine` arm. | **No.** Never. It is what the export gate certifies is armed. |
-| 2 | the `RunSynchronous` **list** | Commands the answer file asks that pass to run. | Yes — we rewrite its contents. |
-| 3 | cloudbase-init's **command** | One entry in that list, shipped by the MSI. | **Deleted** (`3208b0c`), replaced with our own profile-cleanup command. |
-| 4 | `cloudbase-init-unattend.conf` | The config file entry 3 ran with. | Still written. Unused by our clones once 3 is gone, but live for anyone re-sysprepping with the vendor's untouched `conf\Unattend.xml`. |
+| #   | Thing                          | What it is                                                                                                                                                                      | Do we touch it?                                                                                                                         |
+| --- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | the specialize **pass**        | Windows boot phase on a generalized image. Generates the new SID and machine identity, re-enumerates drivers. Launched by `windeploy.exe`, which `SetupType=2` + `CmdLine` arm. | **No.** Never. It is what the export gate certifies is armed.                                                                           |
+| 2   | the `RunSynchronous` **list**  | Commands the answer file asks that pass to run.                                                                                                                                 | Yes — we rewrite its contents.                                                                                                          |
+| 3   | cloudbase-init's **command**   | One entry in that list, shipped by the MSI.                                                                                                                                     | **Deleted** (`3208b0c`), replaced with our own profile-cleanup command.                                                                 |
+| 4   | `cloudbase-init-unattend.conf` | The config file entry 3 ran with.                                                                                                                                               | Still written. Unused by our clones once 3 is gone, but live for anyone re-sysprepping with the vendor's untouched `conf\Unattend.xml`. |
 
 The same key is repeated inline at the top of the deletion block in
 `recipes/_shared/windows/Finalize.ps1`.
@@ -157,7 +157,7 @@ Cloudbase-Init is present immediately before export.
   CBS `RebootPending` and `PackagesPending`, WindowsUpdate `RebootRequired`,
   `PendingFileRenameOperations` — plus no `TiWorker`/`TrustedInstaller` process
   and a 180s uptime floor. The flags alone are insufficient: they describe work
-  already *queued* and say nothing about servicing still executing. The process
+  already _queued_ and say nothing about servicing still executing. The process
   check alone is also insufficient: those processes are absent for most of the
   servicing window. Both are needed.
 - **Uploads still race the post-update window.** Packer's powershell provisioner
@@ -377,11 +377,11 @@ Before changing HCL, an answer file, or a provisioner:
    the symptom or error code.
 2. Find the live VM by name — `qm list | grep 'packer-windows-server'`.
 3. Identify the failure stage before proposing a fix:
-   - no partitions: setup rejected input before disk configuration;
-   - partitions but no Panther logs: early WinPE failure;
-   - `$Windows.~BT/Sources/Panther`: apply or WinPE logs;
-   - `Windows/Panther`: specialize or installed-OS logs;
-   - negligible disk writes plus an OVMF message: boot-prompt timing.
+    - no partitions: setup rejected input before disk configuration;
+    - partitions but no Panther logs: early WinPE failure;
+    - `$Windows.~BT/Sources/Panther`: apply or WinPE logs;
+    - `Windows/Panther`: specialize or installed-OS logs;
+    - negligible disk writes plus an OVMF message: boot-prompt timing.
 4. Record the symptom, the change, and the result in
    [windows-log.md](windows-log.md).
 
@@ -404,7 +404,7 @@ For the System event log specifically, extract
 `Windows/System32/winevt/Logs/System.evtx` offline and parse it with `python-evtx`
 (a venv is required — system pip is PEP-668 managed). Reading it is what settled
 the clone-reboot investigation after two wrong fixes; `setupact.log` and CBS only
-ever showed TrustedInstaller *reacting* to a shutdown.
+ever showed TrustedInstaller _reacting_ to a shutdown.
 
 ### Inspecting a template offline
 
@@ -439,38 +439,38 @@ experiments was recovered after the fact.
 
 ## Failure reference
 
-| Symptom | Cause or diagnostic | Current handling |
-| --- | --- | --- |
-| Proxmox rejects `ostype` | A release-derived value was invented | Read the Proxmox enum: `win10` for 2019, `win11` for 2022/2025 |
-| APIPA address or unreachable WinRM | VM is on the wrong bridge or lacks its DHCP reservation | Use the NAT build bridge and allocated IP/MAC slot |
-| Packer waits for IP discovery | Windows has no QEMU agent during setup | Set `winrm_host` to the allocated build IP |
-| OVMF reports no bootable device | Boot-from-CD keypress missed on a loaded node | Keep the two-second wait and ~60-second keypress blanket |
-| WinRM HTTP 401 during initial setup | Basic auth or unencrypted service access not applied | Keep the four separate first-logon commands and exact `cmd.exe /c winrm set ... @{...="true"}` quoting |
-| WinRM HTTP 401 just after reboot | `winrm quickconfig` in the keepalive task reset the service | Keepalive reapplies only the two `winrm set` commands; post-reboot provisioners wait 30s |
-| Cloudbase-Init download fails in the VM | Older Windows TLS stack cannot fetch the GitHub asset | Download on the host; attach the MSI to the answer-files ISO |
-| Windows Update COM returns access denied | WinRM has a network token | Run update work as a SYSTEM scheduled task |
-| Temp PowerShell script missing after update reboot | WinRM reconnects before the filesystem settles | Retain `pause_before = "30s"` after reboots |
-| `packer-ps-env-vars-*.ps1` not recognized after WU reboot | `ps_execute` waited only for `{{.Path}}`, then dot-sourced `{{.Vars}}` before it landed | `ps_execute` waits for both, by name, and fails with `script never arrived at <path>` |
-| WinRM timeout at exactly `winrm_timeout` + overhead; Setup GUI shows "Are you sure you want to quit?" | The `<enter>` boot blanket outlives WinPE load; a stray Enter presses Setup's Cancel | `qm sendkey <vmid> ret` dismisses it live (`esc` does not); 2025 types `<up>` in the blanket |
-| Server 2025 disk invisible in WinPE | Wrong VirtIO directory | Use `2k25`, not `2k22` |
-| Setup fails before partitioning | Invalid answer/setup input, including invalid CompactOS syntax | Inspect the attached answer files; do not revive the `setupconfig.ini` experiment |
-| Setup fails near 11 GB written with `0x80071160` | Compact WOF apply cannot be serviced from WinPE | Retain `<Compact>false</Compact>` |
-| Specialize fails `ERROR_BADDB` / `0x800703f9` | Intermittent corrupt `COMPONENTS` hive transaction state | Retain retries; investigate host RAM or storage integrity, not CompactOS permutations |
-| WU round-two provisioner exits 1 after ~4 min, no artifact | TrustedInstaller restarts the guest to commit servicing, killing the provisioner | `restart_check` holds packer across it; `WU.ps1` re-arms the AU suppression each round |
-| `servicing still pending before sysprep (CBS RebootPending/PackagesPending)` | A cumulative cleared `RebootPending` but left `PackagesPending`; packer resumed anyway | `restart_check` tests both; the guard names which keys and packages are pending |
-| Two builds interfere, or an orphan controls the slot | Stale remote Packer/watchdog or fixed VMID state | Slot-derived VMIDs, stale process cleanup, orphan VM eviction, name-based pruning |
-| Clone boots to a gray desktop with no taskbar | Template shipped the build's `C:\Users\Administrator`; pre-generalize shell state crash-loops `ShellHost.exe` (`0xc0000409` in `ControlCenter.dll`) | `Finalize.ps1` deletes that profile from the specialize pass |
-| Clone asks for an Administrator password; cloud-init never applies | Deprecated `SkipMachineOOBE`/`SkipUserOOBE` leave `GeneralizationState` at 3 | `Finalize.ps1` rewrites the OOBE block to `Hide*` + `AdministratorPassword` + International-Core |
-| Clone loops "The computer restarted unexpectedly" | Cloudbase-Init requested a reboot during the specialize pass | `allow_reboot=false`, `reset_service_password=false`, and `MTUPlugin` alone in the specialize conf |
-| `Set user password failed: ... password policy requirements` | `cipassword` violates the guest's `PasswordComplexity = 1` | Caller must supply a compliant password; the seeded `AdministratorPassword` keeps the clone reachable |
-| Clone comes up with no hostname and no password, every plugin logging success | `cipassword` starts with a YAML indicator, so Proxmox's user-data does not parse | Reject a leading `@ ! # % * -` at the point the password is accepted |
-| Clone stuck at `GeneralizationState=3`, no `Windows\Panther\setupact.log`, build profile intact | Template exported with `SetupType=0`/empty `CmdLine` — reseal arming missing | `Finalize.ps1` asserts the arming markers and fails the build; `assert-generalized.sh` repeats it host-side |
-| Build reports success but every clone is unarmed | sysprep failed or was cut off and the failure never reached packer | `assert-generalized.sh` fails the build before export; `ps_execute` propagates thrown errors |
-| Sysprep aborts `0x80073cf2` — "installed for a user, but not provisioned for all users" | WU registered an Appx package (typically Edge) for the build user | `Finalize.ps1` unregisters per-user, non-provisioned packages before sysprep |
-| `PROVISIONER ERROR: There is not enough space on the disk.` after the sysprep step header | The zero pass wrote to `ERROR_DISK_FULL` and its `SilentlyContinue` delete failed, carrying a full volume into sysprep | The zero pass stops at a 1 GB reserve and throws if the fill file survives; a free-space gate lists the largest directories on C: |
-| `sysprep did not arm the image for OOBE after 2 attempts`, no detail | The message pointed at a log on a VM packer deletes seconds later | `Finalize.ps1` dumps `setuperr.log`/`setupact.log` and the arming registry state to packer's stdout |
-| MTUPlugin fails `[WinError 10013]` | The plugin binds UDP/68 to read DHCP option 26; the DHCP Client service already owns it | `mtu_use_dhcp_config=false` in both confs |
-| `winget` missing from a 2025 clone | The Appx cleanup dropped `DesktopAppInstaller`'s provisioning, so fresh profiles never get it | Finalize re-provisions dropped families from on-disk payload; `winget-present` verify check (2025 only) |
+| Symptom                                                                                               | Cause or diagnostic                                                                                                                                 | Current handling                                                                                                                  |
+| ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Proxmox rejects `ostype`                                                                              | A release-derived value was invented                                                                                                                | Read the Proxmox enum: `win10` for 2019, `win11` for 2022/2025                                                                    |
+| APIPA address or unreachable WinRM                                                                    | VM is on the wrong bridge or lacks its DHCP reservation                                                                                             | Use the NAT build bridge and allocated IP/MAC slot                                                                                |
+| Packer waits for IP discovery                                                                         | Windows has no QEMU agent during setup                                                                                                              | Set `winrm_host` to the allocated build IP                                                                                        |
+| OVMF reports no bootable device                                                                       | Boot-from-CD keypress missed on a loaded node                                                                                                       | Keep the two-second wait and ~60-second keypress blanket                                                                          |
+| WinRM HTTP 401 during initial setup                                                                   | Basic auth or unencrypted service access not applied                                                                                                | Keep the four separate first-logon commands and exact `cmd.exe /c winrm set ... @{...="true"}` quoting                            |
+| WinRM HTTP 401 just after reboot                                                                      | `winrm quickconfig` in the keepalive task reset the service                                                                                         | Keepalive reapplies only the two `winrm set` commands; post-reboot provisioners wait 30s                                          |
+| Cloudbase-Init download fails in the VM                                                               | Older Windows TLS stack cannot fetch the GitHub asset                                                                                               | Download on the host; attach the MSI to the answer-files ISO                                                                      |
+| Windows Update COM returns access denied                                                              | WinRM has a network token                                                                                                                           | Run update work as a SYSTEM scheduled task                                                                                        |
+| Temp PowerShell script missing after update reboot                                                    | WinRM reconnects before the filesystem settles                                                                                                      | Retain `pause_before = "30s"` after reboots                                                                                       |
+| `packer-ps-env-vars-*.ps1` not recognized after WU reboot                                             | `ps_execute` waited only for `{{.Path}}`, then dot-sourced `{{.Vars}}` before it landed                                                             | `ps_execute` waits for both, by name, and fails with `script never arrived at <path>`                                             |
+| WinRM timeout at exactly `winrm_timeout` + overhead; Setup GUI shows "Are you sure you want to quit?" | The `<enter>` boot blanket outlives WinPE load; a stray Enter presses Setup's Cancel                                                                | `qm sendkey <vmid> ret` dismisses it live (`esc` does not); 2025 types `<up>` in the blanket                                      |
+| Server 2025 disk invisible in WinPE                                                                   | Wrong VirtIO directory                                                                                                                              | Use `2k25`, not `2k22`                                                                                                            |
+| Setup fails before partitioning                                                                       | Invalid answer/setup input, including invalid CompactOS syntax                                                                                      | Inspect the attached answer files; do not revive the `setupconfig.ini` experiment                                                 |
+| Setup fails near 11 GB written with `0x80071160`                                                      | Compact WOF apply cannot be serviced from WinPE                                                                                                     | Retain `<Compact>false</Compact>`                                                                                                 |
+| Specialize fails `ERROR_BADDB` / `0x800703f9`                                                         | Intermittent corrupt `COMPONENTS` hive transaction state                                                                                            | Retain retries; investigate host RAM or storage integrity, not CompactOS permutations                                             |
+| WU round-two provisioner exits 1 after ~4 min, no artifact                                            | TrustedInstaller restarts the guest to commit servicing, killing the provisioner                                                                    | `restart_check` holds packer across it; `WU.ps1` re-arms the AU suppression each round                                            |
+| `servicing still pending before sysprep (CBS RebootPending/PackagesPending)`                          | A cumulative cleared `RebootPending` but left `PackagesPending`; packer resumed anyway                                                              | `restart_check` tests both; the guard names which keys and packages are pending                                                   |
+| Two builds interfere, or an orphan controls the slot                                                  | Stale remote Packer/watchdog or fixed VMID state                                                                                                    | Slot-derived VMIDs, stale process cleanup, orphan VM eviction, name-based pruning                                                 |
+| Clone boots to a gray desktop with no taskbar                                                         | Template shipped the build's `C:\Users\Administrator`; pre-generalize shell state crash-loops `ShellHost.exe` (`0xc0000409` in `ControlCenter.dll`) | `Finalize.ps1` deletes that profile from the specialize pass                                                                      |
+| Clone asks for an Administrator password; cloud-init never applies                                    | Deprecated `SkipMachineOOBE`/`SkipUserOOBE` leave `GeneralizationState` at 3                                                                        | `Finalize.ps1` rewrites the OOBE block to `Hide*` + `AdministratorPassword` + International-Core                                  |
+| Clone loops "The computer restarted unexpectedly"                                                     | Cloudbase-Init requested a reboot during the specialize pass                                                                                        | `allow_reboot=false`, `reset_service_password=false`, and `MTUPlugin` alone in the specialize conf                                |
+| `Set user password failed: ... password policy requirements`                                          | `cipassword` violates the guest's `PasswordComplexity = 1`                                                                                          | Caller must supply a compliant password; the seeded `AdministratorPassword` keeps the clone reachable                             |
+| Clone comes up with no hostname and no password, every plugin logging success                         | `cipassword` starts with a YAML indicator, so Proxmox's user-data does not parse                                                                    | Reject a leading `@ ! # % * -` at the point the password is accepted                                                              |
+| Clone stuck at `GeneralizationState=3`, no `Windows\Panther\setupact.log`, build profile intact       | Template exported with `SetupType=0`/empty `CmdLine` — reseal arming missing                                                                        | `Finalize.ps1` asserts the arming markers and fails the build; `assert-generalized.sh` repeats it host-side                       |
+| Build reports success but every clone is unarmed                                                      | sysprep failed or was cut off and the failure never reached packer                                                                                  | `assert-generalized.sh` fails the build before export; `ps_execute` propagates thrown errors                                      |
+| Sysprep aborts `0x80073cf2` — "installed for a user, but not provisioned for all users"               | WU registered an Appx package (typically Edge) for the build user                                                                                   | `Finalize.ps1` unregisters per-user, non-provisioned packages before sysprep                                                      |
+| `PROVISIONER ERROR: There is not enough space on the disk.` after the sysprep step header             | The zero pass wrote to `ERROR_DISK_FULL` and its `SilentlyContinue` delete failed, carrying a full volume into sysprep                              | The zero pass stops at a 1 GB reserve and throws if the fill file survives; a free-space gate lists the largest directories on C: |
+| `sysprep did not arm the image for OOBE after 2 attempts`, no detail                                  | The message pointed at a log on a VM packer deletes seconds later                                                                                   | `Finalize.ps1` dumps `setuperr.log`/`setupact.log` and the arming registry state to packer's stdout                               |
+| MTUPlugin fails `[WinError 10013]`                                                                    | The plugin binds UDP/68 to read DHCP option 26; the DHCP Client service already owns it                                                             | `mtu_use_dhcp_config=false` in both confs                                                                                         |
+| `winget` missing from a 2025 clone                                                                    | The Appx cleanup dropped `DesktopAppInstaller`'s provisioning, so fresh profiles never get it                                                       | Finalize re-provisions dropped families from on-disk payload; `winget-present` verify check (2025 only)                           |
 
 ## Rejected approaches — do not retry
 
@@ -495,10 +495,10 @@ experiments was recovered after the fact.
   timestamp. (`/ResetBase` does leave `DISM /RestoreHealth` with no local payload,
   so repairs on a clone need Windows Update or fail `0x800f081f`.)
 - Disk truncation was ruled out for the same symptom by arithmetic: `qemu-img
-  resize --shrink ... 32G` is GiB, and `Shrink-SystemPartition` targets 32GiB−1GiB.
+resize --shrink ... 32G` is GiB, and `Shrink-SystemPartition` targets 32GiB−1GiB.
 - `SkipMachineOOBE`/`SkipUserOOBE` are deprecated and do not complete OOBE.
 - Grepping `setuperr.log` for `Compat-Gentel` / `MRTGeneralize Failed
-  ConnectServer` / `RunExternalDlls` as a generalize-corruption signal was
+ConnectServer` / `RunExternalDlls` as a generalize-corruption signal was
   falsified: an offline-verified armed template carries all of them.
 - Suppressing Windows Update policy to stop the round-two reboot: the restarter is
   TrustedInstaller, which those policies do not govern.
@@ -513,7 +513,7 @@ experiments was recovered after the fact.
 ## Open issues
 
 - **`no-critical-service-failures` warns on every build.** The check lists
-  Automatic services not yet running, minus a hard-coded *name* allowlist, because
+  Automatic services not yet running, minus a hard-coded _name_ allowlist, because
   `Get-Service` does not expose `DelayedAutoStart`. Every release trips it —
   including on `cloudbase-init`, whose stopped state at that point is the success
   condition. Reading
@@ -545,7 +545,7 @@ fix: `--sshkeys` is now inert on Windows clones and stays inert even if an opera
 installs OpenSSH afterwards, because nothing in the image writes `authorized_keys`.
 
 To bring it back, fix the cause rather than re-adding the plugin — it failed
-precisely *because* there was no OpenSSH to write into. Add the inbox capability in
+precisely _because_ there was no OpenSSH to write into. Add the inbox capability in
 `Install.ps1` (no download needed):
 
 ```powershell
