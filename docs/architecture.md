@@ -62,34 +62,34 @@ design.
 ### Repository snapshots and platform support
 
 Repository upload must work from Windows, macOS, and Linux without extra local
-executables. Cofoundry intentionally does not use `rsync`: Windows does not
-reliably provide it, and npm packages described as rsync wrappers generally
-invoke an externally installed `rsync` binary rather than implementing the
-protocol. Requiring it would make a nominally JavaScript CLI depend on WSL,
-Cygwin, or a separate native install on Windows.
+executables, so Cofoundry uses neither local `rsync` nor local `tar`. Windows
+does not reliably provide `rsync`, and npm packages described as wrappers
+generally invoke an externally installed binary rather than implementing the
+protocol — requiring it would make a nominally JavaScript CLI depend on WSL,
+Cygwin, or a native install.
 
-Instead, the maintained [`tar`](https://www.npmjs.com/package/tar) package
-creates a deterministic archive in the local Node/Bun process after applying
-Cofoundry's repository exclusions. Cofoundry hashes the sorted file paths,
-modes, sizes, and contents, uploads the one archive through SFTP, and extracts
-it into `$PVE_DUMP_DIR/cofoundry-snapshots/<sha256>`. The stable
-`cofoundry-work` path is an atomically switched symlink to that immutable
-snapshot for compatibility and inspection. The pipeline retains the immutable
-snapshot path returned by sync, and every Packer build copies that exact path
-into a UUID-scoped writable directory under `cofoundry-tmp`; a concurrent sync
-therefore cannot change which revision an already-started pipeline builds.
+Instead the maintained [`tar`](https://www.npmjs.com/package/tar) package builds
+a deterministic archive in-process after applying the repository exclusions.
+Cofoundry hashes the sorted file paths, modes, sizes, and contents, uploads the
+one archive over SFTP, and extracts it into
+`$PVE_DUMP_DIR/cofoundry-snapshots/<sha256>`. The stable `cofoundry-work` path is
+an atomically switched symlink to that immutable snapshot.
+
+The pipeline retains the snapshot path returned by sync, and every Packer build
+copies that exact path into a UUID-scoped writable directory under
+`cofoundry-tmp` — so a concurrent sync cannot change which revision an
+already-started pipeline builds.
 
 Shared installer downloads use a per-destination `flock`, recheck and validate
 the cache under that lock, download to a PID-scoped temporary file, and publish
 with an atomic rename. Cache hits are touched so age-based maintenance cannot
 remove media between prefetch and VM creation.
 
-This design requires neither local `rsync` nor local `tar`. The remote `tar`
-command is acceptable because the destination is always the Linux-based
-Proxmox node. Large artifact downloads continue to use SFTP directly and may
-use parallel connections; they are not repackaged. Repository upload is now one
-file, so the obsolete `--upload-concurrency`, `CF_UPLOAD_CONCURRENCY`, and
-`build.upload_concurrency` settings were removed.
+The *remote* `tar` is acceptable because the destination is always the
+Linux-based Proxmox node. Large artifact downloads still use SFTP directly and
+may use parallel connections; they are not repackaged. Repository upload is one
+file, so `--upload-concurrency`, `CF_UPLOAD_CONCURRENCY`, and
+`build.upload_concurrency` no longer exist.
 
 ## Invariants
 
