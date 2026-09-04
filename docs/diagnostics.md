@@ -22,11 +22,6 @@ On failure, `cf` pulls the ring buffer down to a local bundle at
 
 ## Where the files land
 
-> **Note:** In CI the `frames/` directory is **not** included — screenshots are
-> unredactable images and the repository is public, so they never make it into
-> the uploaded artifact. CI bundles carry only the scrubbed logs and Packer
-> console. See [CI and secrets](#ci-and-secrets) for the full rationale.
-
 Each failed build produces one bundle directory:
 
 ```
@@ -76,16 +71,13 @@ CI, and the `build-one.yml` workflow uploads the `diagnostics/` directory as a
 `diagnostics-<recipe>` artifact (7-day retention) on failure. Download it from
 the failed workflow run's **Artifacts** section.
 
-The difference in CI is the **contents**: because the repository is public,
-screenshots (unredactable images) are never durably kept. The recorder is not
-CI-aware — it still screendumps into the node's tmpfs during the build, and the
-collector still pulls the whole tree (frames included) down to the runner — but
-in CI the collector then deletes the local `frames/` directory before the
+**`frames/` never reaches a CI artifact.** Screenshots are unredactable images
+and the repository is public. The recorder is not CI-aware — it still screendumps
+into the node's tmpfs, and the collector still pulls the whole tree down to the
+runner — but in CI the collector deletes the local `frames/` directory before the
 manifest is written and the artifact is uploaded. Only the in-guest logs and
-Packer console survive into the artifact, after exact-value scrubbing of the
-ephemeral build password.
-
-Nothing screenshot-related is persisted durably in CI: the node copy lives in
-RAM-backed tmpfs (wiped by teardown) and the runner is ephemeral.
+Packer console survive, after exact-value scrubbing of the ephemeral build
+password. Nothing screenshot-related persists: the node copy is RAM-backed tmpfs
+wiped by teardown, and the runner is ephemeral.
 
 Disable the whole feature with `CF_DIAGNOSTICS=0`.
