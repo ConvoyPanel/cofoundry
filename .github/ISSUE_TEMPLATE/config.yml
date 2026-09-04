@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or usage help
+    url: https://github.com/ConvoyPanel/cofoundry/discussions
+    about: Ask how to build, publish, or import a template. Questions are answered faster here than in the issue tracker.
+  - name: Documentation
+    url: https://github.com/ConvoyPanel/cofoundry/tree/main/docs
+    about: Setup, usage, recipes, Windows notes, disk images, debugging, diagnostics, and Coport.
+  - name: Debugging a build failure
+    url: https://github.com/ConvoyPanel/cofoundry/blob/main/docs/debugging.md
+    about: Read this before filing a build failure. A Windows build costs 1-3h per hypothesis; this is how to avoid paying it.

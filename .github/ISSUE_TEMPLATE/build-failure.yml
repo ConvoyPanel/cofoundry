@@ -1,0 +1,143 @@
+name: Build failure
+description: A recipe fails to build, times out, or produces a broken image.
+title: "build(<recipe>): "
+type: Bug
+labels: ["bug", "not confirmed"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A failed build leaves an evidence bundle at `diagnostics/<recipe>-<arch>-<ts>/`
+        — locally and in CI alike. Attach it (or its `manifest.json` and
+        `packer-console.log`) rather than describing what you saw on screen.
+
+        See [docs/diagnostics.md](https://github.com/ConvoyPanel/cofoundry/blob/main/docs/diagnostics.md)
+        for what the bundle contains, and
+        [docs/debugging.md](https://github.com/ConvoyPanel/cofoundry/blob/main/docs/debugging.md)
+        for how to keep the failing VM alive before it is destroyed.
+
+  - type: dropdown
+    id: recipe
+    attributes:
+      label: Recipe
+      description: Which recipe fails to build?
+      options:
+        - almalinux-8
+        - almalinux-9
+        - almalinux-10
+        - debian-11
+        - debian-12
+        - debian-13
+        - rocky-linux-8
+        - rocky-linux-9
+        - rocky-linux-10
+        - ubuntu-22.04
+        - ubuntu-24.04
+        - ubuntu-25.10
+        - ubuntu-26.04
+        - windows-server-2019
+        - windows-server-2022
+        - windows-server-2025
+        - Multiple recipes
+    validations:
+      required: true
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Failure phase
+      description: Where in the build does it break?
+      options:
+        - ISO boot / boot command
+        - Unattended install (autoinstall, preseed, kickstart, answer file)
+        - SSH or WinRM connection timeout
+        - Provisioner (a script inside the guest)
+        - Windows Update / Finalize
+        - Export or disk conversion
+        - Upload / publish
+        - Coport import on the node
+        - Other or unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where did it run?
+      options:
+        - GitHub Actions
+        - Local `cf` against a Proxmox node
+        - Both
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What the build did, and what you expected instead.
+      placeholder: |
+        `cf build windows-server-2025` runs for ~2h, then the Finalize provisioner
+        errors with ... The build VM is destroyed before I can inspect it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or workflow run
+      description: The exact `cf` command, or a link to the failing Actions run.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: error
+    attributes:
+      label: Error output
+      description: >-
+        The relevant part of Packer's console output — from `packer-console.log`
+        in the diagnostics bundle, or the Actions log. Scrub any credentials.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics bundle
+      description: >-
+        Attach the `diagnostics/<recipe>-<arch>-<ts>/` directory, or paste
+        `manifest.json`. Drag files into this field to upload them.
+    validations:
+      required: false
+
+  - type: input
+    id: proxmox
+    attributes:
+      label: Proxmox VE version
+      description: Output of `pveversion` on the build node. Cofoundry requires PVE 9.
+      placeholder: "pve-manager/9.0.3 (running kernel: 6.14.8-2-pve)"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Cofoundry version
+      description: Release tag, or the commit SHA you built from.
+      placeholder: v2.0.0
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I read [docs/debugging.md](https://github.com/ConvoyPanel/cofoundry/blob/main/docs/debugging.md) and, for a Windows recipe, [docs/windows.md](https://github.com/ConvoyPanel/cofoundry/blob/main/docs/windows.md).
+          required: true
+        - label: I searched the [Windows experiment log](https://github.com/ConvoyPanel/cofoundry/blob/main/docs/windows-log.md) and existing issues for this failure.
+          required: true
+        - label: The build node runs Proxmox VE 9 or newer.
+          required: true

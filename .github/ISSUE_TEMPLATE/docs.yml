@@ -1,0 +1,54 @@
+name: Documentation
+description: Something in the docs is wrong, missing, or out of date.
+title: "docs: "
+type: Task
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `docs/` keeps three kinds of writing apart: reference docs state current
+        truth, `docs/windows-log.md` is the dated experiment log, and
+        `docs/handoffs/` holds disposable session snapshots. See
+        [AGENTS.md](https://github.com/ConvoyPanel/cofoundry/blob/main/AGENTS.md#documentation-layout).
+
+  - type: dropdown
+    id: doc
+    attributes:
+      label: Document
+      options:
+        - README.md
+        - docs/setup.md
+        - docs/usage.md
+        - docs/recipes.md
+        - docs/windows.md
+        - docs/disk-images.md
+        - docs/architecture.md
+        - docs/debugging.md
+        - docs/diagnostics.md
+        - docs/coport.md
+        - docs/windows-log.md
+        - AGENTS.md
+        - Other or not written yet
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of problem
+      options:
+        - Wrong — the doc states something that is no longer true
+        - Missing — something undocumented that should be written down
+        - Unclear — accurate but hard to follow
+        - Broken link, command, or example
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Quote the passage if there is one, and say what it should say instead.
+    validations:
+      required: true

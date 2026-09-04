@@ -1,0 +1,103 @@
+name: New recipe request
+description: Request a template for an OS release Cofoundry does not build yet.
+title: "recipe: "
+type: Feature
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Cofoundry builds each template from an unattended install of the vendor's
+        own ISO. A new recipe needs a stable ISO URL, a checksum source, and an
+        unattended install method the vendor supports.
+
+        [docs/recipes.md](https://github.com/ConvoyPanel/cofoundry/blob/main/docs/recipes.md)
+        describes what adding one involves.
+
+  - type: input
+    id: os
+    attributes:
+      label: OS and release
+      description: The exact release, as the vendor names it.
+      placeholder: Fedora Server 43
+    validations:
+      required: true
+
+  - type: dropdown
+    id: family
+    attributes:
+      label: Family
+      options:
+        - Debian / Ubuntu (preseed or autoinstall)
+        - RHEL-like (kickstart)
+        - Windows Server (answer file)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: arch
+    attributes:
+      label: Architecture
+      options:
+        - amd64
+        - arm64
+        - Both
+    validations:
+      required: true
+
+  - type: input
+    id: iso
+    attributes:
+      label: ISO URL
+      description: A stable download URL for the installer ISO.
+      placeholder: https://example.com/releases/43/Server/x86_64/iso/...
+    validations:
+      required: true
+
+  - type: input
+    id: checksum
+    attributes:
+      label: Checksum source
+      description: Where the vendor publishes checksums for that ISO.
+      placeholder: https://example.com/releases/43/Server/x86_64/iso/CHECKSUM
+    validations:
+      required: true
+
+  - type: input
+    id: ostype
+    attributes:
+      label: Proxmox ostype
+      description: >-
+        The `ostype` enum value from the Proxmox `qemu-server` schema. Look it up —
+        never infer it from the release name. Leave blank if unsure.
+      placeholder: l26
+    validations:
+      required: false
+
+  - type: input
+    id: support
+    attributes:
+      label: Support window
+      description: When does this release reach end of life?
+      placeholder: EOL 2027-05
+    validations:
+      required: false
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why this release
+      description: What you need it for, and whether an existing recipe is a workable substitute.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: This release is not already in [registry.json](https://github.com/ConvoyPanel/cofoundry/blob/main/registry.json) or `recipes/`.
+          required: true
+        - label: The vendor supports a fully unattended install for it (preseed, autoinstall, kickstart, or an answer file).
+          required: true

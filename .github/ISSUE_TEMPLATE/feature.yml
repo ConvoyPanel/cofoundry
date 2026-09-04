@@ -1,0 +1,59 @@
+name: Feature request
+description: Propose a change to the CLI, Coport, the build pipeline, or the published artifacts.
+title: "feat: "
+type: Feature
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        To request a template for an OS release that is not built yet, use
+        **New recipe request** instead.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - "`cf` CLI"
+        - Coport (node-side installer)
+        - Build pipeline / Packer recipes
+        - Registry / publishing
+        - Disk image format or hardware defaults
+        - Diagnostics
+        - GitHub Actions workflows
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or impossible today? Describe the situation, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What you would like Cofoundry to do instead. Include the command shape or config you imagine, if any.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you tried, and why they fall short.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I searched existing issues for this request.
+          required: true

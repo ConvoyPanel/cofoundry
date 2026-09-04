@@ -1,0 +1,86 @@
+name: Bug report
+description: Something in the CLI, Coport, the registry, or the published images misbehaves.
+title: "bug: "
+type: Bug
+labels: ["bug", "not confirmed"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a recipe that fails to build, use **Build failure** instead — it asks
+        for the diagnostics bundle that a failed build leaves behind.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of Cofoundry is affected?
+      options:
+        - "`cf` CLI (build, publish, doctor, config, recipes, maintenance)"
+        - Coport (node-side installer)
+        - Registry / R2 publishing
+        - Published disk image (imports, but boots or behaves wrong)
+        - Diagnostics bundle
+        - GitHub Actions workflows
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you observed, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact commands, in order, starting from a known state.
+      placeholder: |
+        1. `cf publish ubuntu-24.04`
+        2. On the node, `coport install ubuntu-24.04`
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: >-
+        Relevant terminal output or logs. All `cf` log levels write to stderr, so
+        capture both streams. Scrub credentials, tokens, and R2 keys.
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Cofoundry version
+      description: Release tag, or the commit SHA you built from.
+      placeholder: v2.0.0
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Where you ran it — OS and Bun version for the CLI, `pveversion` for anything node-side.
+      placeholder: macOS 15.5, Bun 1.2.x / node runs pve-manager/9.0.3
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: I checked the relevant document under [docs/](https://github.com/ConvoyPanel/cofoundry/tree/main/docs).
+          required: true
