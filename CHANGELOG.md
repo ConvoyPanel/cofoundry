@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-04
+
+Cofoundry now publishes importable disk images instead of vzdump archives, and
+coport installs them with `qm create --import-from` instead of `qmrestore`. A
+`.vma.zst` can only be restored into a VMID, so every node that wanted a
+template had to download its own copy and reserve that VMID; an image is just a
+file, and the VM is rebuilt around it from the hardware profile the build
+recorded. See `docs/disk-images.md`.
+
+**This release is not compatible in either direction.** coport 2.0 rejects a
+schema-1 registry and coport 1.x rejects a schema-2 one, so the installer and
+the registry have to move together. Templates already installed by 1.x keep
+working — they are ordinary Proxmox templates — but see the cache note below.
+
+### Changed
+
+- **Require Proxmox VE 9.** `qm create --import-from` is what makes an image
+  installable without an archive; there is no fallback path on PVE 8.
+- **Require registry `schema_version: "2"`.** A template is now `disks[]` plus a
+  `hardware{}` profile and a `minimum{}` floor, rather than one `url`/`sha256`/
+  `size` triple.
+- **Install by importing, not restoring.** coport downloads each of a template's
+  images, imports them into a freshly created VM built from the recorded
+  hardware profile, and marks the result a template. Images are passed to
+  `--import-from` by absolute path, so no `import`-content storage has to be
+  configured on the node.
+- **A template can be several files.** OVMF recipes ship an EFI varstore
+  (`.efivars.raw`) alongside the system disk, because the built varstore holds
+  the boot entry Windows Setup wrote, the enrolled Secure Boot keys, and any dbx
+  revocations from the update rounds — none of which a freshly allocated
+  varstore has. Every image is SHA-256 verified before anything is created, and
+  the progress row reports against the template's total size.
+- **`--overwrite` destroys the occupant first.** `qm create --force` only
+  applies to `archive` restores, so overwriting is now an explicit
+  `qm destroy --purge --destroy-unreferenced-disks` before the create. This
+  removes the VMID from backup and HA configuration as well, which
+  `qmrestore -force 1` did not.
+- Rename the install phase from "restore" to "import" throughout the TUI.
+  `--restore-concurrency` and `COPORT_RESTORE_CONCURRENCY` keep their names and
+  now bound parallel imports.
+- Name temporary downloads by the artifact's content-addressed filename instead
+  of a synthetic `vzdump-qemu-<vmid>-…` name. The old name existed only so
+  `qmrestore` could read archive metadata off it, and it collided when two
+  templates were in flight for the same VMID.
+
+### Added
+
+- Rebuild the VM from the sidecar's `hardware{}` profile — `ostype`, `bios`,
+  `machine`, `scsihw`, `cpu`, `agent`, and anything else the build recorded. The
+  profile is captured by denylist over `qm config`, so it cannot drift from what
+  was actually built, and fields Proxmox adds in future releases flow through
+  rather than being dropped.
+- Size the VM from `minimum{}` (falling back to 2 cores / 2048 MB), which is
+  hand-authored per recipe rather than captured — the build's 4 cores / 8 GB is
+  servicing headroom, not a requirement. There is deliberately no disk floor:
+  an imported disk inherits the source's virtual size and `qm disk resize`
+  cannot shrink.
+- Add `--bridge <name>` (env `COPORT_BRIDGE`, default `vmbr0`). The profile
+  records only the NIC model; the bridge and MAC address are the consumer's.
+- Allocate the TPM fresh on OVMF recipes instead of shipping one. The image is
+  generalized so nothing is sealed to it, and a shipped varstore would give
+  every installed VM the same endorsement key.
+- Attach the cloud-init drive at `ide2` on every recipe. Windows builds strand
+  it on `ide3` because `ide0`-`ide2` hold the boot, virtio, and answer-file
+  ISOs; Cloudbase-Init finds the drive by label, not slot.
+
+### Fixed
+
+- Delete a template's downloaded images as soon as it fails, not when the whole
+  run ends. A failed multi-gigabyte download previously sat in the temp
+  directory until every remaining template had finished, which is exactly when
+  the space was needed.
+- Treat the **system** disk's hash as a template's identity for `--upgrade` and
+  `--list`. Note that this reinstalls everything once: records written by 1.x
+  store the `.vma.zst` hash, which no longer matches anything.
+
 ## [1.3.0] - 2026-07-20
 
 ### Added
@@ -110,8 +186,8 @@ Initial coport release.
 - Reduce progress log spam in non-TTY sessions.
 - Clarify VMID reassignment prompts so free fallback VMIDs are not presented as conflicts.
 
-[unreleased]: https://github.com/ConvoyPanel/cofoundry/compare/v1.4.0...HEAD
-[1.4.0]: https://github.com/ConvoyPanel/cofoundry/compare/v1.3.0...v1.4.0
+[unreleased]: https://github.com/ConvoyPanel/cofoundry/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/ConvoyPanel/cofoundry/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/ConvoyPanel/cofoundry/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/ConvoyPanel/cofoundry/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ConvoyPanel/cofoundry/releases/tag/v1.1.0
