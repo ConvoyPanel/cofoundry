@@ -26,12 +26,20 @@ export const uploadSubprocessEnv = (): NodeJS.ProcessEnv => ({
         process.env.AWS_RESPONSE_CHECKSUM_VALIDATION ?? 'when_required',
 })
 
-const remoteEnvironmentPrefix = (): string => {
+/**
+ * `export` statements, one per line — never a `VAR=x cmd` prefix. The upload
+ * command is a template that may reference these by name; the default is
+ * `aws --endpoint-url $R2_ENDPOINT s3 cp {{file}} s3://$R2_BUCKET/...`. A
+ * prefix assignment reaches only the invoked command's environment, and the
+ * shell expands the rest of the line BEFORE applying it — so `$R2_ENDPOINT`
+ * expanded to nothing, `--endpoint-url` swallowed the `s3` subcommand, and aws
+ * rejected `cp` as an invalid command. Separate statements are expanded first.
+ */
+export const remoteEnvironmentScript = (): string => {
     const env = uploadSubprocessEnv()
-    const pairs = AWS_VARS.flatMap(key =>
-        env[key] ? [`${key}=${shellQuote(env[key]!)}`] : []
-    )
-    return pairs.length > 0 ? `${pairs.join(' ')} ` : ''
+    return AWS_VARS.flatMap(key =>
+        env[key] ? [`export ${key}=${shellQuote(env[key]!)}\n`] : []
+    ).join('')
 }
 
 export const localUploadSource = (sourceDir: string): UploadSource => ({
@@ -83,7 +91,7 @@ export const remoteUploadSource = (
     exec: command =>
         remoteStreamingScript(
             target,
-            `${remoteEnvironmentPrefix()}${command}\n`
+            `${remoteEnvironmentScript()}${command}\n`
         ),
 })
 
