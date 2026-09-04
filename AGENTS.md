@@ -51,7 +51,8 @@ the reference docs became unreadable.
 - Never infer a Proxmox `ostype` from a release name. Look up the enum in the
   Proxmox `qemu-server` schema first; see `docs/windows.md#proxmox-os-type`.
 - Keep exported disks as small as the measured installed image permits. Before
-  increasing a final disk size, confirm it against `qemu-img info
---output=json` on the exported image (`actual-size` versus `virtual-size`).
+  increasing a final disk size, confirm it against
+  `qemu-img info --output=json` on the exported image (`actual-size` versus
+  `virtual-size`).
 - Debian preseed files must be committed with the
   `__PACKER_SSH_PUBLIC_KEY__` placeholder, never an injected real key.
