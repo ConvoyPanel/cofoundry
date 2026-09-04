@@ -1,7 +1,7 @@
 {
   "name": "cofoundry",
   "version": "0.0.1",
-  "description": "Automated Proxmox VM template builder. Produces vzdump (.vma.zst) artifacts from unattended ISO installations.",
+  "description": "Automated Proxmox VM template builder. Produces importable disk images from unattended ISO installations.",
   "type": "module",
   "module": "src/cli.ts",
   "bin": {
