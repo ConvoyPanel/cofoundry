@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { parse as parseToml } from 'smol-toml'
 import { z } from 'zod'
+import { readStdinSync } from './tty.ts'
 
 const DEFAULT_REGISTRY = 'https://cofoundry.cdn.convoypanel.com/registry.json'
 
@@ -93,7 +94,7 @@ export type RegistrySource =
     | { kind: RegistryKind.Url; url: string }
     | { kind: RegistryKind.File; path: string }
     | { kind: RegistryKind.Inline; json: string }
-    | { kind: RegistryKind.Stdin }
+    | { kind: RegistryKind.Stdin; json?: string }
 
 // A URL has a scheme like `https://`; anything else (absolute, ./relative,
 // ../relative, or a bare filename) is treated as a local file path.
@@ -134,6 +135,8 @@ export interface ResolvedConfig {
 interface ResolveOptions {
     configPaths?: readonly string[]
     stdinIsTTY?: boolean
+    /** Injectable for tests; drains fd 0 by default. */
+    readStdin?: () => string
 }
 
 export const resolveConfig = async (
@@ -159,12 +162,20 @@ export const resolveConfig = async (
             ...fileDefaults,
         }
     }
-    // No explicit registry: a non-TTY stdin means the document is being piped in.
+    // No explicit registry: a non-TTY stdin *may* mean the document is being
+    // piped in — but plenty of non-TTY fd 0s carry nothing at all (`ssh node
+    // coport --all`, cron, systemd, CI, `< /dev/null`). Drain it and only treat
+    // it as the registry if a document actually arrived; an empty read falls
+    // through to the config file / built-in default instead of failing with a
+    // JSON parse error. An explicit `-` argument still forces stdin.
     if (!(options.stdinIsTTY ?? process.stdin.isTTY)) {
-        return {
-            source: { kind: RegistryKind.Stdin },
-            origin: 'stdin',
-            ...fileDefaults,
+        const piped = (options.readStdin ?? readStdinSync)()
+        if (piped.trim()) {
+            return {
+                source: { kind: RegistryKind.Stdin, json: piped },
+                origin: 'stdin',
+                ...fileDefaults,
+            }
         }
     }
     return {

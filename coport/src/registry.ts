@@ -13,7 +13,8 @@ const readSource = async (source: RegistrySource): Promise<string> => {
         case RegistryKind.Inline:
             return source.json
         case RegistryKind.Stdin:
-            return readStdinSync()
+            // Already drained during config resolution unless `-` forced it.
+            return source.json ?? readStdinSync()
         case RegistryKind.File:
             return readFile(source.path, 'utf8')
         case RegistryKind.Url: {

@@ -164,6 +164,14 @@ export const runInstalls = async (
     })
     onRenderer(renderer)
 
+    // Installs finish in parallel but the cache file is one document: chain the
+    // writes so a later flush can't interleave with an earlier one.
+    let flushing: Promise<void> = Promise.resolve()
+    const flushCache = (): Promise<void> => {
+        flushing = flushing.then(() => writeCache(cache)).catch(() => {})
+        return flushing
+    }
+
     const results = await Promise.allSettled(
         items.map(async item => {
             const task = renderer.task(item.template.name.padEnd(nameWidth))
@@ -177,11 +185,16 @@ export const runInstalls = async (
                     downloadSem,
                     installSem
                 )
-                // Record success so `--upgrade`/`--list` know what's installed and where.
+                // Record success so `--upgrade`/`--list` know what's installed
+                // and where. Flushed per install, not once at the end: a run
+                // that installs 16 templates takes long enough to be
+                // interrupted, and the templates it already created are real
+                // whether or not the rest finish.
                 cache.set(
                     item.template.name,
                     recordFor(item.template, item.vmid, item.storage)
                 )
+                await flushCache()
             } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err)
                 task.fail(msg)
@@ -192,7 +205,7 @@ export const runInstalls = async (
 
     renderer.finish()
     await cleanupTempDir()
-    await writeCache(cache).catch(() => {})
+    await flushCache()
 
     const passed = results.filter(r => r.status === 'fulfilled').length
     const failed = results.length - passed

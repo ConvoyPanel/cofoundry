@@ -57,7 +57,8 @@ Downloads and imports then run in parallel with a live progress display.
 With no argument, coport uses the first of:
 
 1. `COPORT_REGISTRY`;
-2. piped stdin (any non-TTY stdin);
+2. piped stdin, when it carries a document (an empty non-TTY stdin — what
+   `ssh node coport --all`, cron, and `< /dev/null` give — falls through);
 3. `registry` from the config file;
 4. `https://cofoundry.cdn.convoypanel.com/registry.json`.
 
@@ -102,7 +103,8 @@ non-interactive runs log a warning per reassignment.
 ## Upgrades and the install cache
 
 Installs are recorded in `~/.coport/cache.json` (name, label, VMID, storage,
-`sha256` + `built_at`, install time). That gives you:
+`sha256` + `built_at`, install time) as each one finishes, so an interrupted
+run keeps what it already installed. That gives you:
 
 - `coport --list` — what's installed, where, and when;
 - `coport --upgrade` — reinstall only templates whose `sha256` or `built_at`

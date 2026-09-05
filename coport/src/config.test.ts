@@ -66,6 +66,49 @@ describe('coport config', () => {
         expect(resolved.defaultStorage).toBe('fast')
     })
 
+    test('falls through to the default when a non-TTY stdin is empty', async () => {
+        // `ssh node coport --all`, cron, systemd and `< /dev/null` all hand
+        // coport a non-TTY fd 0 that carries no registry.
+        const resolved = await resolveConfig(undefined, {
+            configPaths: [configPath],
+            stdinIsTTY: false,
+            readStdin: () => '',
+        })
+        expect(resolved.source.kind).toBe(RegistryKind.Url)
+        expect(resolved.origin).toBe('default')
+    })
+
+    test('prefers the config file over an empty non-TTY stdin', async () => {
+        writeFileSync(
+            configPath,
+            'registry = "https://file.example.com/r.json"\n'
+        )
+        const resolved = await resolveConfig(undefined, {
+            configPaths: [configPath],
+            stdinIsTTY: false,
+            readStdin: () => '   \n',
+        })
+        expect(resolved.source).toMatchObject({
+            kind: RegistryKind.Url,
+            url: 'https://file.example.com/r.json',
+        })
+        expect(resolved.origin).toBe('file')
+    })
+
+    test('uses a piped document when stdin actually carries one', async () => {
+        const doc = '{"schema_version":"2"}'
+        const resolved = await resolveConfig(undefined, {
+            configPaths: [configPath],
+            stdinIsTTY: false,
+            readStdin: () => doc,
+        })
+        expect(resolved.source).toMatchObject({
+            kind: RegistryKind.Stdin,
+            json: doc,
+        })
+        expect(resolved.origin).toBe('stdin')
+    })
+
     test('fails clearly when interpolation is unresolved', async () => {
         writeFileSync(configPath, 'registry = "${REGISTRY_URL}"\n')
         expect(loadFileConfig([configPath])).rejects.toThrow(

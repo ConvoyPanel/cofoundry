@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
@@ -54,6 +54,10 @@ export const readCache = async (): Promise<Cache> => {
     return new Map(parsed.data.records.map(r => [r.name, r]))
 }
 
+// Written after every successful install, so an interrupted run keeps the
+// installs it already finished. That means writing often, and a run can be
+// killed mid-write — so stage into a temp file and rename it over the cache
+// rather than truncating the real one in place.
 export const writeCache = async (cache: Cache): Promise<void> => {
     await mkdir(dirname(CACHE_PATH), { recursive: true })
     const payload = {
@@ -62,7 +66,9 @@ export const writeCache = async (cache: Cache): Promise<void> => {
             a.name.localeCompare(b.name)
         ),
     }
-    await writeFile(CACHE_PATH, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+    const tmp = `${CACHE_PATH}.${process.pid}.tmp`
+    await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+    await rename(tmp, CACHE_PATH)
 }
 
 /**
