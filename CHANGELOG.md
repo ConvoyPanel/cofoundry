@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-09-05
+
+### Fixed
+
+- **Run coport over SSH again.** Registry resolution treated _any_ non-TTY
+  stdin as a piped registry, without checking that anything had been piped. So
+  `ssh node coport --all`, cron, systemd units, CI steps, and any invocation
+  with `< /dev/null` read an empty fd 0 and died with
+  `Registry is not valid JSON: Unexpected EOF` — never reaching the config file
+  or the built-in default that the run was relying on. stdin is now drained
+  once during resolution and used only when it actually carries a document; an
+  empty read falls through to the next source. An explicit `-` argument still
+  forces stdin, and piping a registry still works.
+- **Keep the installs a run has already finished.** `~/.coport/cache.json` was
+  written once, after every install settled, so an interrupt partway through a
+  multi-template run — Ctrl-C, a crash, a reboot — lost the record of every
+  template it had successfully installed. Those templates exist on the node,
+  but `--list` and `--upgrade` no longer knew about them and their VMIDs
+  stopped being sticky, so the next run reassigned around the very VMIDs its
+  own templates occupied. Each successful install is now flushed as it lands.
+  Writes are serialised against each other and staged through a temp file that
+  is renamed over the cache, since a file written this often can be killed
+  mid-write.
+
 ## [2.0.0] - 2026-09-04
 
 Cofoundry now publishes importable disk images instead of vzdump archives, and
@@ -186,7 +210,8 @@ Initial coport release.
 - Reduce progress log spam in non-TTY sessions.
 - Clarify VMID reassignment prompts so free fallback VMIDs are not presented as conflicts.
 
-[unreleased]: https://github.com/ConvoyPanel/cofoundry/compare/v2.0.0...HEAD
+[unreleased]: https://github.com/ConvoyPanel/cofoundry/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/ConvoyPanel/cofoundry/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/ConvoyPanel/cofoundry/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/ConvoyPanel/cofoundry/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/ConvoyPanel/cofoundry/compare/v1.1.0...v1.2.0
