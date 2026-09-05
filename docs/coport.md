@@ -1,35 +1,13 @@
 # Coport
 
-`coport` is the consumer-side installer: a standalone CLI that runs **on a
-Proxmox node** and turns published Cofoundry artifacts into clonable VM
-templates. It reads a `registry.json` (the file `cf publish` writes), lets you
-pick templates, downloads each template's disk images from their `url`s,
-verifies their SHA-256, rebuilds a VM around them with `qm create
---import-from`, and marks it a template with `qm template`.
+`coport` installs published Cofoundry artifacts as clonable VM templates. It
+reads a `registry.json` (written by `cf publish`), downloads the disk images,
+verifies their SHA-256, and rebuilds each VM with `qm create --import-from`.
 
-A template is one or more images plus a hardware profile rather than a single
-archive — see [Disk images](disk-images.md). Because `import-from` accepts an
-absolute path, images stay in coport's temp directory and the node needs no
-`import`-content storage configured. The TPM state volume and the cloud-init
-drive are allocated fresh rather than downloaded: the images are generalized,
-so nothing is sealed to the TPM, and a shared varstore would give every VM the
-same endorsement key.
-
-It lives in `coport/` as a Bun workspace and is versioned and released
-independently of `cf` — the repository's `CHANGELOG.md` tracks coport
-releases. It must run on the node itself: it invokes `qm` and checks
-`/etc/pve/qemu-server/` and `/etc/pve/lxc/` for VMID conflicts directly.
+Run it **on the Proxmox node** — it calls `qm` and reads
+`/etc/pve/qemu-server/` and `/etc/pve/lxc/` directly.
 
 ## Install
-
-Each `vX.Y.Z` tag publishes a
-[GitHub release](https://github.com/ConvoyPanel/cofoundry/releases) with two
-static Linux binaries and a `coport.sha256` checksum file:
-
-- `coport-linux-x64` — compiled against the baseline x86-64 ISA (no AVX2) so
-  it also runs on older Xeon-era Proxmox nodes instead of crashing with
-  `Illegal instruction`
-- `coport-linux-arm64`
 
 ```sh
 # on the Proxmox node:
@@ -37,44 +15,56 @@ wget https://github.com/ConvoyPanel/cofoundry/releases/latest/download/coport-li
 install -m 755 coport-linux-x64 /usr/local/bin/coport
 ```
 
-From a repo checkout instead: `bun run --cwd coport dev` runs it directly, and
-`bun run build:coport` at the repo root compiles `dist/coport`.
+Every `vX.Y.Z`
+[release](https://github.com/ConvoyPanel/cofoundry/releases) ships
+`coport-linux-x64`, `coport-linux-arm64`, and `coport.sha256`. The x64 build
+targets baseline x86-64 (no AVX2) so it runs on older Xeon-era nodes.
+
+From a checkout: `bun run --cwd coport dev`, or `bun run build:coport` to
+compile `dist/coport`.
 
 ## Run
 
+**One command. This is the whole thing:**
+
 ```sh
-coport                                            # interactive, default registry
-coport https://templates.example.com/registry.json
-coport ./registry.json                            # local file
-coport '{"schema_version":"2", …}'                # inline JSON document
-curl -s https://…/registry.json | coport --all --storage local-zfs
+coport
 ```
 
-The interactive flow is a grouped multiselect (space toggles a template, a
-group header toggles the whole OS family, `a` selects everything), followed by
-a VMID review step — per template you can proceed, edit the VMID inline
-(validated as free), or skip it — and a storage prompt unless a storage is
-configured or passed with `--storage`. Downloads and imports run in parallel
-with a live progress display, and a template's images are deleted as soon as
-its import finishes, so peak temp usage scales with concurrency, not with the
-number of templates.
+Interactive, default registry. Everything below is an _alternative_ to that
+line, not a next step.
+
+To use a different registry, pass **one** of these:
+
+| Source      | Example                                              |
+| ----------- | ---------------------------------------------------- |
+| URL         | `coport https://templates.example.com/registry.json` |
+| Local file  | `coport ./registry.json`                             |
+| Inline JSON | `coport '{"schema_version":"2", …}'`                 |
+| stdin       | `curl -s https://…/registry.json \| coport --all`    |
+
+The interactive flow:
+
+1. **Select** — space toggles a template, a group header toggles the OS family,
+   `a` selects everything.
+2. **Review VMIDs** — proceed, edit inline (validated as free), or skip.
+3. **Storage** — unless configured or passed with `--storage`.
+
+Downloads and imports then run in parallel with a live progress display.
 
 ## Registry sources
 
-The registry argument may be a URL, a file path, an inline JSON document, or
-`-` for stdin. When the argument is omitted, resolution order is:
+With no argument, coport uses the first of:
 
-1. the `COPORT_REGISTRY` environment variable (same forms as the argument);
-2. piped stdin — any non-TTY stdin is read as the registry document;
+1. `COPORT_REGISTRY`;
+2. piped stdin (any non-TTY stdin);
 3. `registry` from the config file;
-4. the built-in default,
-   `https://cofoundry.cdn.convoypanel.com/registry.json`.
+4. `https://cofoundry.cdn.convoypanel.com/registry.json`.
 
-A piped registry occupies stdin, so it cannot be combined with the interactive
-menu; coport exits with guidance instead of hanging on a dead keyboard. Pass
-the registry as an argument to stay interactive
-(`coport "$(curl -s https://…/registry.json)"`), or add `--all` / `--select`
-to stay piped.
+A piped registry occupies stdin, so it can't drive the interactive menu —
+coport exits with guidance rather than hanging. Either pass the registry as an
+argument (`coport "$(curl -s https://…/registry.json)"`) or add `--all` /
+`--select`.
 
 ## Options
 
@@ -97,57 +87,58 @@ to stay piped.
 | `--verbose`                  | Stream per-event logs instead of the in-place TUI                                      |
 | `--config`                   | Print the resolved config (registry, storage, source file) and exit                    |
 
-`--select` group ids match either the registry group's `id` or its
-`display_name`, and a group token expands to every template in that family.
-Duplicate selections are installed once.
+`--select` group ids match a group's `id` or `display_name` and expand to the
+whole family. Duplicate selections install once.
 
 ## VMIDs
 
-Each template prefers a VMID: the one it was installed at last time (from the
-cache) or, failing that, the registry's `suggested_vmid`. If that VMID is
-taken — an existing config in `/etc/pve/qemu-server/` or `/etc/pve/lxc/` —
-coport assigns the next free VMID counting up from `--vmid-start`, or destroys
-and replaces the occupant when `--overwrite` is given (`qm create --force`
-applies only to archive restores, so an overwrite cannot be a flag on create). Interactive runs surface every
-assignment in the review step before anything is installed; non-interactive
-runs log a warning for each reassignment.
+A template prefers its cached VMID, then the registry's `suggested_vmid`. If
+that's taken, coport counts up from `--vmid-start` for a free one — or destroys
+and replaces the occupant with `--overwrite`.
+
+Interactive runs show every assignment in the review step before installing;
+non-interactive runs log a warning per reassignment.
 
 ## Upgrades and the install cache
 
-Successful installs are recorded in `~/.coport/cache.json`: template name,
-display label, VMID, storage, version identity (`sha256` + `built_at`), and
-install time. The cache powers:
+Installs are recorded in `~/.coport/cache.json` (name, label, VMID, storage,
+`sha256` + `built_at`, install time). That gives you:
 
-- `coport --list` — print what is installed, where, and when;
-- `coport --upgrade` — reinstall only the templates whose registry `sha256`
-  or `built_at` changed, into their cached VMID and storage, overwriting in
-  place. The recorded `sha256` is the **system disk's**: a template is several
-  images, but the varstore is tiny and derived, so the system disk changing is
-  what makes an install stale;
-- VMID stickiness — later installs prefer the cached VMID over the registry's
-  suggestion.
+- `coport --list` — what's installed, where, and when;
+- `coport --upgrade` — reinstall only templates whose `sha256` or `built_at`
+  changed, in place at their cached VMID and storage;
+- sticky VMIDs — the cached VMID wins over the registry's suggestion.
 
 ## Configuration
 
-Consumer defaults live in `~/.config/coport/config.toml` (the legacy
-`~/.coport/config.json` is still read as a fallback):
+`~/.config/coport/config.toml` (legacy `~/.coport/config.json` still read as a
+fallback):
 
 ```toml
 registry = "https://templates.example.com/registry.json"
 storage  = "local-zfs"
 ```
 
-Both values support `${VAR}` interpolation from the environment; an unresolved
-variable is an error rather than an empty string. `coport --config` prints the
-resolved registry, storage, and which file they came from without starting an
-installation.
+Both support `${VAR}` interpolation; an unresolved variable is an error, not an
+empty string. `coport --config` prints the resolved values and their source.
 
-## Temporary files
+## How it works
 
-Downloads land in a per-run directory `/var/lib/vz/dump/coport-tmp/<pid>-<ts>`,
-named by each artifact's content-addressed filename so concurrent installs
-cannot collide. A template's images are removed as soon as its import finishes
-— and also when a download or import fails partway, since these are
-multi-gigabyte files and the run may have templates still to go. The directory
-is removed at exit (including Ctrl-C), and orphaned directories left by dead
-processes are swept at startup.
+- **A template is images plus a hardware profile**, not one archive — see
+  [Disk images](disk-images.md). `import-from` takes an absolute path, so
+  images stay in the temp directory and the node needs no `import`-content
+  storage.
+- **TPM state and cloud-init drives are allocated fresh.** The images are
+  generalized, and a shared varstore would give every VM the same endorsement
+  key.
+- **The cached `sha256` is the system disk's** — the varstore is tiny and
+  derived, so only the system disk changing makes an install stale.
+- **`--overwrite` destroys and recreates**; `qm create --force` covers archive
+  restores only.
+- **Temp files** live in `/var/lib/vz/dump/coport-tmp/<pid>-<ts>`, named by
+  content hash so concurrent runs can't collide. Images are deleted as soon as
+  their import finishes or fails, so peak usage scales with concurrency, not
+  template count. The directory is removed at exit (including Ctrl-C), and
+  orphans from dead processes are swept at startup.
+- **Releases:** `coport/` is a Bun workspace versioned independently of `cf`;
+  `CHANGELOG.md` tracks it.
