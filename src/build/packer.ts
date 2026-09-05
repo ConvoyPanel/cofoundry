@@ -143,12 +143,18 @@ export const buildRemoteEnv = (
     if (minimum?.cores !== undefined) pairs.CF_MIN_CORES = String(minimum.cores)
     if (minimum?.memoryMb !== undefined)
         pairs.CF_MIN_MEMORY = String(minimum.memoryMb)
+    // Deliberately outside the `skipUpload` guard below: this is the address
+    // the artifact WILL be served from, not an instruction to upload it. CI
+    // builds with --skip-upload and uploads later (`cf upload --remote`) once
+    // verify passes, and the sidecar written here is the one that ships — so
+    // gating the template on skipUpload published a registry whose every disk
+    // carried `"url": ""` and which coport could not download from at all.
+    if (env.CF_PUBLIC_URL_TMPL)
+        pairs.CF_PUBLIC_URL_TMPL = env.CF_PUBLIC_URL_TMPL
     if (!skipUpload) {
         if (env.CF_UPLOAD_CMD) pairs.CF_UPLOAD_CMD = env.CF_UPLOAD_CMD
         if (env.CF_SIDECAR_UPLOAD_CMD)
             pairs.CF_SIDECAR_UPLOAD_CMD = env.CF_SIDECAR_UPLOAD_CMD
-        if (env.CF_PUBLIC_URL_TMPL)
-            pairs.CF_PUBLIC_URL_TMPL = env.CF_PUBLIC_URL_TMPL
         if (env.R2_ENDPOINT) pairs.R2_ENDPOINT = env.R2_ENDPOINT
         if (env.R2_BUCKET) pairs.R2_BUCKET = env.R2_BUCKET
         if (env.R2_PREFIX) pairs.R2_PREFIX = env.R2_PREFIX

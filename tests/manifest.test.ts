@@ -1,13 +1,23 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtemp, copyFile, readFile, readdir, rm } from 'node:fs/promises'
+import {
+    mkdtemp,
+    copyFile,
+    readFile,
+    readdir,
+    rm,
+    writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
     buildManifest,
+    disksMissingUrls,
     selectNewestSidecars,
+    withPublicUrls,
     type R2Sidecar,
 } from '../src/manifest.ts'
+import type { Registry, Sidecar } from '../src/registry/schema.ts'
 
 const sc = (
     name: string,
@@ -150,6 +160,63 @@ describe('buildManifest', () => {
         ).toBeUndefined()
     })
 
+    test('refuses to publish a registry no consumer can download from', async () => {
+        // A registry entry with a blank `url` is unusable: coport hands the
+        // value to fetch() and every install of that template fails. Publishing
+        // one succeeded silently once, and shipped a registry in which not a
+        // single template could be installed.
+        const previous = process.env.CF_PUBLIC_URL_TMPL
+        delete process.env.CF_PUBLIC_URL_TMPL
+        try {
+            const sidecar = JSON.parse(
+                await readFile(join(sourceDir, 'debian-12.json'), 'utf8')
+            )
+            sidecar.disks[0].url = ''
+            await writeFile(
+                join(sourceDir, 'debian-12.json'),
+                JSON.stringify(sidecar)
+            )
+
+            await expect(buildManifest(sourceDir, outPath)).rejects.toThrow(
+                'no download URL for debian-12-amd64 (scsi0)'
+            )
+            // Nothing half-written: the previous good registry is preferable to
+            // a fresh broken one.
+            expect(await readdir(sourceDir)).not.toContain('registry.json')
+        } finally {
+            if (previous === undefined) delete process.env.CF_PUBLIC_URL_TMPL
+            else process.env.CF_PUBLIC_URL_TMPL = previous
+        }
+    })
+
+    test('backfills a blank URL from the configured public URL template', async () => {
+        const previous = process.env.CF_PUBLIC_URL_TMPL
+        process.env.CF_PUBLIC_URL_TMPL =
+            'https://cdn.example.com/templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}{{ext}}'
+        try {
+            const sidecar = JSON.parse(
+                await readFile(join(sourceDir, 'debian-12.json'), 'utf8')
+            )
+            sidecar.disks[0].url = ''
+            await writeFile(
+                join(sourceDir, 'debian-12.json'),
+                JSON.stringify(sidecar)
+            )
+
+            await buildManifest(sourceDir, outPath)
+            const manifest = JSON.parse(await readFile(outPath, 'utf8'))
+            const debian = manifest.groups
+                .flatMap((g: any) => g.templates)
+                .find((t: any) => t.name === 'debian-12-amd64')
+            expect(debian.disks[0].url).toBe(
+                'https://cdn.example.com/templates/debian/debian-12-amd64/aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa7777bbbb8888.qcow2'
+            )
+        } finally {
+            if (previous === undefined) delete process.env.CF_PUBLIC_URL_TMPL
+            else process.env.CF_PUBLIC_URL_TMPL = previous
+        }
+    })
+
     test('keeps registry.json byte-stable when only generated_at would change', async () => {
         await buildManifest(sourceDir, outPath)
         const first = await readFile(outPath, 'utf8')
@@ -217,5 +284,122 @@ describe('selectNewestSidecars', () => {
             },
         ])
         expect(names(newest)).toEqual(['debian-12-amd64'])
+    })
+})
+
+describe('withPublicUrls', () => {
+    // The shape that actually shipped broken: a Windows template whose system
+    // disk and EFI varstore both carry `"url": ""`.
+    const blank = (): Sidecar =>
+        ({
+            name: 'windows-server-2022-amd64',
+            display: 'Windows Server 2022 Datacenter',
+            arch: 'amd64',
+            group: 'windows-server',
+            built_at: '2026-09-04T10:11:03Z',
+            disks: [
+                {
+                    slot: 'scsi0',
+                    role: 'system',
+                    format: 'qcow2',
+                    file: 'windows-server-2022-amd64-315736a10b7601b804d3d801aefb23fa73e71ebc6b3d6e04db35a67284b48268.qcow2',
+                    url: '',
+                    sha256: '315736a10b7601b804d3d801aefb23fa73e71ebc6b3d6e04db35a67284b48268',
+                    size: 7480999936,
+                },
+                {
+                    slot: 'efidisk0',
+                    role: 'efivars',
+                    format: 'raw',
+                    file: 'windows-server-2022-amd64-64adaaed8f01e3007adff4e9ad0409d48a5e11d1980d06a9e22e492729ea9265.efivars.raw',
+                    url: '',
+                    sha256: '64adaaed8f01e3007adff4e9ad0409d48a5e11d1980d06a9e22e492729ea9265',
+                    size: 540672,
+                },
+            ],
+            hardware: { ostype: 'win11', bios: 'ovmf', machine: 'q35' },
+        }) as Sidecar
+
+    const TMPL =
+        'https://cofoundry.cdn.convoypanel.com/templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}{{ext}}'
+
+    test('reconstructs the address each artifact was actually uploaded to', () => {
+        // Both URLs are the live objects: the images published fine, only the
+        // metadata pointing at them was empty. Per-disk `{{sha256}}`/`{{ext}}`
+        // matter — rendering once for the template would give the varstore the
+        // system disk's hash and a `.qcow2` extension.
+        const filled = withPublicUrls(blank(), TMPL)
+        expect(filled.disks.map(d => d.url)).toEqual([
+            'https://cofoundry.cdn.convoypanel.com/templates/windows-server/windows-server-2022-amd64/315736a10b7601b804d3d801aefb23fa73e71ebc6b3d6e04db35a67284b48268.qcow2',
+            'https://cofoundry.cdn.convoypanel.com/templates/windows-server/windows-server-2022-amd64/64adaaed8f01e3007adff4e9ad0409d48a5e11d1980d06a9e22e492729ea9265.efivars.raw',
+        ])
+    })
+
+    test('never overwrites a URL the exporter already wrote', () => {
+        const sidecar = blank()
+        sidecar.disks[0]!.url = 'https://mirror.example.com/pinned.qcow2'
+        const filled = withPublicUrls(sidecar, TMPL)
+        expect(filled.disks[0]!.url).toBe(
+            'https://mirror.example.com/pinned.qcow2'
+        )
+        expect(filled.disks[1]!.url).toEndWith('.efivars.raw')
+    })
+
+    test('leaves the sidecar untouched when no template is configured', () => {
+        const sidecar = blank()
+        expect(withPublicUrls(sidecar, undefined)).toBe(sidecar)
+    })
+})
+
+describe('disksMissingUrls', () => {
+    const registryWith = (url: string): Registry =>
+        ({
+            schema_version: '2',
+            name: 'Cofoundry Templates',
+            description: '',
+            generated_at: '2026-09-04T10:25:51.917Z',
+            groups: [
+                {
+                    id: 'debian',
+                    display_name: 'Debian',
+                    description: null,
+                    templates: [
+                        {
+                            name: 'debian-13-amd64',
+                            display: 'Debian 13',
+                            arch: 'amd64',
+                            built_at: '2026-09-04T00:00:00Z',
+                            disks: [
+                                {
+                                    slot: 'scsi0',
+                                    role: 'system',
+                                    format: 'qcow2',
+                                    file: 'debian-13-amd64-abc.qcow2',
+                                    url,
+                                    sha256: 'abc',
+                                    size: 1,
+                                },
+                            ],
+                            hardware: {
+                                ostype: 'l26',
+                                bios: 'seabios',
+                                machine: 'q35',
+                            },
+                        },
+                    ],
+                },
+            ],
+        }) as Registry
+
+    test('names the template and slot that cannot be downloaded', () => {
+        expect(disksMissingUrls(registryWith(''))).toEqual([
+            'debian-13-amd64 (scsi0)',
+        ])
+    })
+
+    test('reports nothing when every disk is addressable', () => {
+        expect(
+            disksMissingUrls(registryWith('https://example.com/a.qcow2'))
+        ).toEqual([])
     })
 })

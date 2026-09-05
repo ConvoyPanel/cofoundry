@@ -13,6 +13,7 @@ import {
     type Sidecar,
     type Template,
 } from '@/registry/schema.ts'
+import { renderUploadTemplate, uploadVariables } from '@/upload/template.ts'
 
 interface GroupDef {
     id: string
@@ -29,6 +30,51 @@ const loadGroupDefs = async (): Promise<Map<string, GroupDef>> => {
     return new Map(defs.map(g => [g.id, g]))
 }
 
+/**
+ * Fill in a disk's public URL when the sidecar shipped without one.
+ *
+ * The exporter renders `url` from CF_PUBLIC_URL_TMPL at build time, so a build
+ * that never saw that template writes `"url": ""` — and a registry entry with
+ * no URL is one coport cannot download at all. Reconstructible here because the
+ * object key and the public URL are both derived from the single `[upload].key`
+ * template, against the same placeholders the uploader rendered: an entry
+ * backfilled from a sidecar is byte-identical to one the exporter wrote.
+ *
+ * Recovery, not the mechanism — `buildRemoteEnv` exports the template for every
+ * build. It is what lets a registry broken by a past build be repaired by a
+ * re-publish instead of by rebuilding the images.
+ */
+export const withPublicUrls = (
+    sidecar: Sidecar,
+    template = process.env.CF_PUBLIC_URL_TMPL
+): Sidecar => {
+    if (!template || sidecar.disks.every(disk => disk.url)) return sidecar
+    return {
+        ...sidecar,
+        disks: sidecar.disks.map(disk =>
+            disk.url
+                ? disk
+                : {
+                      ...disk,
+                      url: renderUploadTemplate(
+                          template,
+                          uploadVariables(sidecar, disk, disk.file)
+                      ),
+                  }
+        ),
+    }
+}
+
+/** Every `template/slot` still lacking a download URL. */
+export const disksMissingUrls = (registry: Registry): string[] =>
+    registry.groups.flatMap(group =>
+        group.templates.flatMap(template =>
+            template.disks
+                .filter(disk => !disk.url)
+                .map(disk => `${template.name} (${disk.slot})`)
+        )
+    )
+
 const assembleRegistry = (
     sidecars: Sidecar[],
     groupDefs: Map<string, GroupDef>
@@ -36,7 +82,8 @@ const assembleRegistry = (
     sidecars.sort((a, b) => a.name.localeCompare(b.name))
 
     const groupMap = new Map<string, Template[]>()
-    for (const s of sidecars) {
+    for (const raw of sidecars) {
+        const s = withPublicUrls(raw)
         const gid = s.group ?? 'other'
         if (!groupMap.has(gid)) groupMap.set(gid, [])
         // `group` and `schema_version` identify the sidecar, not the template;
@@ -85,6 +132,19 @@ const writeRegistry = async (
     outPath: string,
     registry: Registry
 ): Promise<string> => {
+    // Refuse to publish a registry nobody can install from. `url` is the only
+    // field coport cannot work around: it hands the value straight to fetch(),
+    // so a blank one fails the template with "URL must not be a blank string"
+    // and no template is installable. This is a hard error rather than a
+    // warning because that is exactly how it shipped unnoticed once — a green
+    // publish whose registry could not download a single image.
+    const missing = disksMissingUrls(registry)
+    if (missing.length > 0)
+        throw new Error(
+            `Refusing to write ${outPath}: no download URL for ${missing.join(', ')}. ` +
+                `Set [upload].public_url in cofoundry.toml (or CF_PUBLIC_URL_TMPL) and re-run.`
+        )
+
     const parent = dirname(outPath)
     if (parent && parent !== '.') await mkdir(parent, { recursive: true })
 

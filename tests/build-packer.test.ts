@@ -109,7 +109,6 @@ describe('buildRemoteEnv', () => {
 
             expect(result).not.toContain('CF_UPLOAD_CMD')
             expect(result).not.toContain('CF_SIDECAR_UPLOAD_CMD')
-            expect(result).not.toContain('CF_PUBLIC_URL_TMPL')
             expect(result).not.toContain('R2_ENDPOINT')
             expect(result).not.toContain('R2_BUCKET')
             expect(result).not.toContain('AWS_ACCESS_KEY_ID')
@@ -118,6 +117,32 @@ describe('buildRemoteEnv', () => {
                 delete process.env.AWS_ACCESS_KEY_ID
             else process.env.AWS_ACCESS_KEY_ID = previousAccessKey
         }
+    })
+
+    test('still exports the public URL template when upload is skipped', () => {
+        // CI builds with --skip-upload and uploads only after verify passes,
+        // but the sidecar is written during the build and never rewritten
+        // afterwards. Withholding the template here is what published a
+        // registry whose every disk had `"url": ""` — the images were live and
+        // reachable, and no consumer could find them.
+        const uploadEnv: Env = {
+            ...env,
+            CF_PUBLIC_URL_TMPL: 'https://cdn.example.com/{{sha256}}{{ext}}',
+        }
+        const result = buildRemoteEnv(
+            uploadEnv,
+            '/var/lib/vz/dump/cofoundry-out',
+            '/var/lib/vz/dump/cofoundry-tmp',
+            'amd64',
+            'linux',
+            undefined,
+            undefined,
+            true
+        )
+
+        expect(result).toContain(
+            "CF_PUBLIC_URL_TMPL='https://cdn.example.com/{{sha256}}{{ext}}'"
+        )
     })
 })
 

@@ -85,6 +85,16 @@ export const downloadWithRetry = async (
     onProgress?: (progress: DownloadProgress) => void,
     signal?: AbortSignal
 ): Promise<void> => {
+    // A registry can advertise a disk with an empty `url` (a build that ran
+    // without a public-URL template writes one). Bun's fetch() reports that as
+    // "URL must not be a blank string", which reads like a coport bug rather
+    // than a registry that cannot be installed from. Say which it is, and skip
+    // the retries — no amount of backoff fills in a missing field.
+    if (!url.trim())
+        throw new Error(
+            'registry entry has no download URL (the published registry is incomplete)'
+        )
+
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
             await download(url, destPath, onProgress, signal)
