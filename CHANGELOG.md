@@ -19,12 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   config file is checked before the template menu even opens. `--dry-run` runs
   the same checks; `--no-preflight` skips them.
 - **Storage content type.** The default `local` on a stock node carries
-  `iso,vztmpl,backup`, so picking it failed with
-  `storage 'local' does not support vm images`, one `400 Parameter
-verification failed` per template. coport reads `pvesm status` and refuses a
-  plan whose target storage is missing, cannot
-  hold VM images, or is offline, naming the storages on the node that would
-  have worked.
+  `iso,vztmpl,backup`, so picking it failed once per template with
+  `storage 'local' does not support vm images`. coport reads `pvesm status` and
+  refuses a plan whose target storage is missing, cannot hold VM images, or is
+  offline, naming the storages on the node that would have worked.
 - **Storage capacity, per backend.** A Windows template is a 7.5 GB download
   that declares a 30 GiB disk, and artifacts ship as compressed qcow2 — a
   622 MB Debian image imports to 1.8 GB — so neither number alone predicts the
@@ -56,6 +54,22 @@ verification failed` per template. coport reads `pvesm status` and refuses a
   storages that actually accept VM images, with their type and free space, so
   the wrong volume is not offerable in the first place. "Other…" still accepts
   a typed name, which goes through the same preflight.
+
+### Fixed
+
+- **The documented install command overwrites the binary it downloads.**
+  Without `wget -O`, a re-run saved the new build as `coport-linux-x64.1` and
+  left the original in place, so the `install` line that follows silently
+  reinstalled the stale binary with no error.
+
+### Internal
+
+- The `isWritable` test borrowed an unwritable directory from Linux
+  (`/proc/sys/kernel`) instead of creating one, so it failed on the
+  windows-latest CI leg, where the walk up a chain of missing parents reaches a
+  writable drive root. It now makes the condition with `chmod`, and stands
+  aside where directory mode bits cannot express it. No effect on the installed
+  binary, which only ever runs on a Proxmox node.
 
 ## [2.0.2] - 2026-09-05
 
