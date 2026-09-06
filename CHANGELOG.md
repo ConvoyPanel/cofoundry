@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-09-06
+
 ### Added
 
 - **Preflight checks before the first download.** Every failure listed below
@@ -274,7 +276,8 @@ Initial coport release.
 - Reduce progress log spam in non-TTY sessions.
 - Clarify VMID reassignment prompts so free fallback VMIDs are not presented as conflicts.
 
-[unreleased]: https://github.com/ConvoyPanel/cofoundry/compare/v2.0.2...HEAD
+[unreleased]: https://github.com/ConvoyPanel/cofoundry/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/ConvoyPanel/cofoundry/compare/v2.0.2...v2.1.0
 [2.0.2]: https://github.com/ConvoyPanel/cofoundry/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/ConvoyPanel/cofoundry/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/ConvoyPanel/cofoundry/compare/v1.3.0...v2.0.0
