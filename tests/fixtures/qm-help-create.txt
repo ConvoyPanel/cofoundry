@@ -1,0 +1,80 @@
+USAGE: qm create <vmid> [OPTIONS]
+
+  Create or restore a virtual machine.
+
+  --acpi     <boolean>	 (default=1)
+	     Enable/disable ACPI.
+
+  --agent    [enabled=]<1|0> [,freeze-fs=<1|0>]
+	     [,fstrim_cloned_disks=<1|0>] [,type=<virtio|isa>]
+	     Enable/disable communication with the QEMU Guest Agent and its
+	     properties.
+
+  --amd-sev  [type=]<sev-type> [,allow-smt=<1|0>] [,kernel-hashes=<1|0>]
+	     [,no-debug=<1|0>] [,no-key-sharing=<1|0>]
+	     Secure Encrypted Virtualization (SEV) features by AMD CPUs
+
+  --bios     <ovmf | seabios>	(default=seabios)
+	     Select BIOS implementation.
+
+  --cpu      [[cputype=]<string>] [,flags=<+FLAG[;-FLAG...]>]
+	     [,guest-phys-bits=<integer>] [,hidden=<1|0>]
+	     [,hv-vendor-id=<vendor-id>] [,level=<integer>]
+	     [,phys-bits=<8-64|host>] [,reported-model=<enum>]
+	     Emulated CPU type.
+
+  --efidisk0 [file=]<volume> [,efitype=<2m|4m>] [,format=<enum>]
+	     [,import-from=<source volume>] [,ms-cert=<enum>]
+	     [,pre-enrolled-keys=<1|0>] [,size=<DiskSize>]
+	     Configure a disk for storing EFI vars. Use the special syntax
+	     STORAGE_ID:SIZE_IN_GiB to allocate a new volume. Note that
+	     SIZE_IN_GiB is ignored here and that the default EFI vars are
+	     copied to the volume instead. Use STORAGE_ID:0 and the
+	     'import-from' parameter to import from an existing volume.
+
+  --machine  [[type=]<machine type>] [,aw-bits=<number>] [,enable-s3=<1|0>]
+	     [,enable-s4=<1|0>] [,viommu=<intel|virtio>]
+	     Specify the QEMU machine.
+
+  --ostype   <l24 | l26 | other | solaris | w2k | w2k3 | w2k8 | win10 |
+	     win11 | win7 | win8 | wvista | wxp>   (default=other)
+	     Specify guest operating system.
+
+  --scsi[n]  [file=]<volume> [,aio=<native|threads|io_uring>]
+	     [,backup=<1|0>] [,bps=<bps>] [,bps_max_length=<seconds>]
+	     [,bps_rd=<bps>] [,bps_rd_max_length=<seconds>] [,bps_wr=<bps>]
+	     [,bps_wr_max_length=<seconds>] [,cache=<enum>]
+	     [,detect_zeroes=<1|0>] [,discard=<ignore|on>] [,format=<enum>]
+	     [,import-from=<source volume>] [,iops=<iops>]
+	     [,iops_max=<iops>] [,iops_max_length=<seconds>]
+	     [,iops_rd=<iops>] [,iops_rd_max=<iops>]
+	     [,iops_rd_max_length=<seconds>] [,iops_wr=<iops>]
+	     [,iops_wr_max=<iops>] [,iops_wr_max_length=<seconds>]
+	     [,iothread=<1|0>] [,mbps=<mbps>] [,mbps_max=<mbps>]
+	     [,mbps_rd=<mbps>] [,mbps_rd_max=<mbps>] [,mbps_wr=<mbps>]
+	     [,mbps_wr_max=<mbps>] [,media=<cdrom|disk>]
+	     [,product=<product>] [,queues=<integer>] [,replicate=<1|0>]
+	     [,rerror=<ignore|report|stop>] [,ro=<1|0>] [,scsiblock=<1|0>]
+	     [,serial=<serial>] [,shared=<1|0>] [,size=<DiskSize>]
+	     [,snapshot=<1|0>] [,ssd=<1|0>] [,vendor=<vendor>]
+	     [,werror=<enum>] [,wwn=<wwn>]
+	     Use volume as SCSI hard disk or CD-ROM (n is 0 to 30). Use the
+	     special syntax STORAGE_ID:SIZE_IN_GiB to allocate a new
+	     volume. Use STORAGE_ID:0 and the 'import-from' parameter to
+	     import from an existing volume.
+
+  --scsihw   <lsi | lsi53c810 | megasas | pvscsi | virtio-scsi-pci |
+	     virtio-scsi-single>   (default=lsi)
+	     SCSI controller model
+
+  --serial[n] (/dev/[^,]+|socket)
+	     Create a serial device inside the VM (n is 0 to 3)
+
+  --tpmstate0 [file=]<volume> [,format=<raw|qcow2|vmdk>]
+	     [,import-from=<source volume>] [,size=<DiskSize>]
+	     [,version=<v1.2|v2.0>]
+	     Configure a Disk for storing TPM state. The format is fixed to
+	     'raw'. Use the special syntax STORAGE_ID:SIZE_IN_GiB to
+	     allocate a new volume. Note that SIZE_IN_GiB is ignored here
+	     and 4 MiB will be used instead. Use STORAGE_ID:0 and the
+	     'import-from' parameter to import from an existing volume.

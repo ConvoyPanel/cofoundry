@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { createArgs } from '@/registry/create.ts'
+import { parseQmCreateSchema } from '@/registry/qm-schema.ts'
 import type { Template } from '@/registry/schema.ts'
 
 const systemDiskEntry = {
@@ -75,6 +76,11 @@ const opts = {
         ['efidisk0', '/tmp/x.efivars.raw'],
     ]),
 }
+
+/** Verbatim excerpt of `qm help create --verbose` on Proxmox VE 9.2.2. */
+const help = await Bun.file(
+    new URL('./fixtures/qm-help-create.txt', import.meta.url)
+).text()
 
 /** Value that followed `--flag`, or undefined when the flag is absent. */
 const flag = (args: string[], name: string): string | undefined => {
@@ -165,5 +171,60 @@ describe('createArgs', () => {
         // format= would break block storages; citype is derived from ostype.
         expect(args).not.toContain('--format')
         expect(args).not.toContain('--citype')
+    })
+})
+
+describe('createArgs against an older node', () => {
+    // PVE 9.2 documents efidisk0's ms-cert; PVE 9.0, which a consumer may well
+    // be on, does not — and rejects the whole create over it:
+    //   400 Parameter verification failed.
+    //   efidisk0: ms-cert: property is not defined in schema
+    const schema = parseQmCreateSchema(help.replace(' [,ms-cert=<enum>]', ''))
+
+    test('drops a disk option the node cannot parse, keeping the rest', () => {
+        const args = createArgs(windows, { ...opts, schema })
+        expect(flag(args, 'efidisk0')).toBe(
+            'local-zfs:0,import-from=/tmp/x.efivars.raw,efitype=4m,pre-enrolled-keys=1'
+        )
+        // The imported bytes carry the certificates either way, so the system
+        // disk and its own options are untouched by the varstore's problem.
+        expect(flag(args, 'scsi0')).toBe(
+            'local-zfs:0,import-from=/tmp/x.qcow2,discard=on'
+        )
+    })
+
+    test('drops a hardware key the node has never heard of', () => {
+        const future = {
+            ...windows,
+            hardware: { ...windows.hardware, virtiofs0: 'dirid=share' },
+        }
+        const args = createArgs(future, { ...opts, schema })
+        expect(args).not.toContain('--virtiofs0')
+        expect(flag(args, 'ostype')).toBe('win11')
+    })
+
+    test('reports every drop rather than making it silently', () => {
+        const dropped: string[] = []
+        createArgs(
+            {
+                ...windows,
+                hardware: { ...windows.hardware, virtiofs0: 'dirid=share' },
+            },
+            { ...opts, schema, onUnsupported: line => dropped.push(line) }
+        )
+        expect(dropped).toEqual([
+            "dropped --virtiofs0: not in this node's qm create schema",
+            "dropped --efidisk0 ms-cert: not in this node's qm create schema",
+        ])
+    })
+
+    test('a node that documents the key installs it unchanged', () => {
+        const args = createArgs(windows, {
+            ...opts,
+            schema: parseQmCreateSchema(help),
+        })
+        expect(flag(args, 'efidisk0')).toBe(
+            'local-zfs:0,import-from=/tmp/x.efivars.raw,efitype=4m,pre-enrolled-keys=1,ms-cert=2023k'
+        )
     })
 })

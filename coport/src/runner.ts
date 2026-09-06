@@ -98,7 +98,17 @@ const install = async (
             let lastUpdate = 0
             await installTemplate(
                 template,
-                { vmid, storage, bridge, files, overwrite },
+                {
+                    vmid,
+                    storage,
+                    bridge,
+                    files,
+                    overwrite,
+                    // Visible rather than silent: on a node older than the
+                    // builder the VM comes up without these, and that is worth
+                    // knowing when its behaviour differs from the published one.
+                    onUnsupported: line => task.log(line),
+                },
                 pct => {
                     const now = Date.now()
                     if (now - lastUpdate < PROGRESS_THROTTLE_MS && pct < 100)

@@ -1,4 +1,9 @@
 import { createArgs, type CreateOptions } from '@/registry/create.ts'
+import {
+    parseQmCreateSchema,
+    QM_HELP_COMMAND,
+    type QmCreateSchema,
+} from '@/registry/qm-schema.ts'
 import type { Template } from '@/registry/schema.ts'
 
 export type { CreateOptions }
@@ -40,6 +45,35 @@ const run = async (
 }
 
 /**
+ * The local node's `qm create` schema, probed once per run: it cannot change
+ * under us, and an install of several templates would otherwise shell out for
+ * the same answer each time.
+ *
+ * Fails open. A probe that does not run, exits non-zero, or parses to nothing
+ * leaves the schema undefined, and the create is built exactly as it was
+ * before this existed.
+ */
+let probe: Promise<QmCreateSchema | undefined> | undefined
+
+export const nodeSchema = (): Promise<QmCreateSchema | undefined> => {
+    probe ??= (async () => {
+        try {
+            const proc = Bun.spawn(QM_HELP_COMMAND, {
+                stdout: 'pipe',
+                stderr: 'ignore',
+            })
+            const help = await new Response(proc.stdout).text()
+            if ((await proc.exited) !== 0) return undefined
+            const schema = parseQmCreateSchema(help)
+            return schema.size ? schema : undefined
+        } catch {
+            return undefined
+        }
+    })()
+    return probe
+}
+
+/**
  * Build a clonable template from downloaded images.
  *
  * `qm create --force` only applies to `archive` restores, so an overwrite has
@@ -63,6 +97,10 @@ export const installTemplate = async (
         ]).catch(() => {})
     }
 
-    await run(createArgs(template, options), onProgress, signal)
+    await run(
+        createArgs(template, { ...options, schema: await nodeSchema() }),
+        onProgress,
+        signal
+    )
     await run(['qm', 'template', String(options.vmid)], undefined, signal)
 }

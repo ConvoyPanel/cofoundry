@@ -246,8 +246,35 @@ qm disk resize 9001 scsi0 80G
 Growth on first boot is handled in-guest: Linux via `cloud-initramfs-growroot`,
 Windows via Cloudbase-Init's `ExtendVolumesPlugin`.
 
-Pass the `efidisk0` flags to match the source, as `coport` does. Do **not** pass
-`citype`: Proxmox derives it from `ostype`, and the sidecar already carries that.
+Pass the `efidisk0` flags to match the source, as `coport` does — subject to the
+version check below. Do **not** pass `citype`: Proxmox derives it from `ostype`,
+and the sidecar already carries that.
+
+### A consumer's node can be older than the builder's
+
+The profile is captured by a denylist so that hardware Proxmox adds later still
+reaches consumers. The cost is that a sidecar can name options the consumer's
+`qm create` has never heard of, and Proxmox rejects the whole create over one of
+them:
+
+```
+400 Parameter verification failed.
+efidisk0: invalid format - format error
+efidisk0: ms-cert: property is not defined in schema and the schema does not
+allow additional properties
+```
+
+`ms-cert` is the live example: PVE 9.1 added it, so a template built on 9.2 does
+not install on 9.0 unless the key is dropped. `coport` and `cf verify` therefore
+probe the target node with `qm help create --verbose`, parse the option names
+and their inner keys (`src/registry/qm-schema.ts`), and omit what that node does
+not document — reporting each omission on the template's row.
+
+Dropping is safe for everything a sidecar publishes. The disk options are image
+metadata and storage hints; with `import-from` the imported bytes define the
+varstore regardless, so a node without `ms-cert` still gets the certificates
+that were enrolled at build time. The probe fails open: if it cannot run or
+cannot be parsed, the create is built exactly as the sidecar describes it.
 
 ### Cloud-init capabilities follow `ostype`
 
@@ -289,6 +316,8 @@ layout.
 
 `coport` downloads the images, `qm create`s from the profile, then `qm template`s
 the result. Its VMID machinery stays, because a template still occupies a VMID.
+The node's `qm create` schema is probed once per run and shared across every
+template in it.
 
 ## Do not run other builds during a Windows export
 

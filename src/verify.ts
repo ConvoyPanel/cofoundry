@@ -8,6 +8,11 @@ import type { RecipeInfo } from '@/config.ts'
 import { shellQuote } from '@/util.ts'
 import { buildRemoteOutDir } from '@/build/paths.ts'
 import { createArgs, DEFAULT_BRIDGE } from '@/registry/create.ts'
+import {
+    parseQmCreateSchema,
+    QM_HELP_COMMAND,
+    type QmCreateSchema,
+} from '@/registry/qm-schema.ts'
 import type { DiskImage, Template } from '@/registry/schema.ts'
 import { acquireRunLease } from '@/build/lease.ts'
 import { captureRemote, registerCleanup } from '@/build/remote.ts'
@@ -72,6 +77,22 @@ const sshOk = async (target: string, cmd: string): Promise<boolean> => {
         stderr: 'inherit',
     })
     return res.exitCode === 0
+}
+
+/**
+ * What the build node's `qm create` accepts. Fails open: a probe that errors or
+ * parses to nothing leaves the create unfiltered.
+ */
+const probeQmCreateSchema = async (
+    target: string
+): Promise<QmCreateSchema | undefined> => {
+    const res = await execa('ssh', [target, QM_HELP_COMMAND.join(' ')], {
+        reject: false,
+        stdin: 'inherit',
+    })
+    if (res.exitCode !== 0) return undefined
+    const schema = parseQmCreateSchema(res.stdout)
+    return schema.size ? schema : undefined
 }
 
 export const reserveScratchVmidScript = (
@@ -292,6 +313,9 @@ const runVerifyLocked = async (
         // floor is what a consumer may configure, while these checks want the
         // resources the recipe was exercised with.
         task.setPhase(`qm create ${dim('→')} VMID ${accent(String(vmid))}`)
+        // Verify installs the way coport does, schema probe included, so the
+        // filtering a consumer's node relies on is exercised on every run.
+        const schema = await probeQmCreateSchema(env.SSH_TARGET)
         await ssh(
             env.SSH_TARGET,
             createArgs(template, {
@@ -302,6 +326,8 @@ const runVerifyLocked = async (
                 cores: recipe.buildCores,
                 memory: recipe.buildMemoryMb,
                 name: `cofoundry-verify-${recipe.name}`,
+                schema,
+                onUnsupported: line => task.log(line),
             })
                 .map(shellQuote)
                 .join(' ')

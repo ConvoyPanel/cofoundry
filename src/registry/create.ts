@@ -1,4 +1,9 @@
 import { systemDisk, type DiskImage, type Template } from '@/registry/schema.ts'
+import {
+    supportsFormatKey,
+    supportsOption,
+    type QmCreateSchema,
+} from '@/registry/qm-schema.ts'
 
 /**
  * Builds the `qm create` invocation that rebuilds a VM around a template's
@@ -33,10 +38,30 @@ export interface CreateOptions {
     memory?: number
     /** VM name; defaults to the template name. */
     name?: string
+    /**
+     * What the target node's `qm create` accepts, from
+     * `parseQmCreateSchema`. Omitted = install everything the template
+     * publishes, which is what a node older than the builder chokes on.
+     */
+    schema?: QmCreateSchema
+    /** Called once per option dropped as unknown to that node. */
+    onUnsupported?: (message: string) => void
 }
 
-const diskOptions = (disk: DiskImage): string =>
+/**
+ * The image's own options, minus any the node cannot parse. Dropping one costs
+ * nothing here: `import-from` writes the same bytes either way, and these keys
+ * only describe or tune what surrounds them.
+ */
+const diskOptions = (disk: DiskImage, options: CreateOptions): string =>
     Object.entries(disk.options ?? {})
+        .filter(([key]) => {
+            if (supportsFormatKey(options.schema, disk.slot, key)) return true
+            options.onUnsupported?.(
+                `dropped --${disk.slot} ${key}: not in this node's qm create schema`
+            )
+            return false
+        })
         .map(([key, value]) => `,${key}=${value}`)
         .join('')
 
@@ -67,6 +92,14 @@ export const createArgs = (
 
     for (const [key, value] of Object.entries(hardware)) {
         if (value === undefined || SYNTHESIZED.has(key)) continue
+        // Capture is a denylist, so a profile can name hardware a node this
+        // old has never heard of. Skipping it beats failing the create.
+        if (!supportsOption(options.schema, key)) {
+            options.onUnsupported?.(
+                `dropped --${key}: not in this node's qm create schema`
+            )
+            continue
+        }
         args.push(`--${key}`, String(value))
     }
 
@@ -82,7 +115,7 @@ export const createArgs = (
         if (!path) throw new Error(`no downloaded file for ${disk.slot}`)
         args.push(
             `--${disk.slot}`,
-            `${storage}:0,import-from=${path}${diskOptions(disk)}`
+            `${storage}:0,import-from=${path}${diskOptions(disk, options)}`
         )
     }
 

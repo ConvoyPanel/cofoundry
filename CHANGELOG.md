@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Install Windows templates on a node older than the one that built them.**
+  Every Windows template publishes `ms-cert=2023k` on its EFI varstore, a key
+  Proxmox added in PVE 9.1. On PVE 9.0 `qm create` rejects the entire
+  invocation over it — `400 Parameter verification failed. efidisk0: ms-cert:
+  property is not defined in schema` — so the install failed after the download
+  and import had already run. coport now asks the node what its `qm create`
+  accepts and omits the options it does not document, reporting each omission
+  on the template's row. Nothing is lost by the omission: `import-from` writes
+  the varstore byte for byte, so the enrolled Secure Boot keys and the
+  Microsoft CA arrive either way. The probe fails open — if it cannot run, the
+  create is built exactly as the registry describes it.
+
 ## [2.0.1] - 2026-09-05
 
 ### Fixed
