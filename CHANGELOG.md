@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-09-05
+
 ### Fixed
 
 - **Install Windows templates on a node older than the one that built them.**
@@ -224,7 +226,8 @@ Initial coport release.
 - Reduce progress log spam in non-TTY sessions.
 - Clarify VMID reassignment prompts so free fallback VMIDs are not presented as conflicts.
 
-[unreleased]: https://github.com/ConvoyPanel/cofoundry/compare/v2.0.1...HEAD
+[unreleased]: https://github.com/ConvoyPanel/cofoundry/compare/v2.0.2...HEAD
+[2.0.2]: https://github.com/ConvoyPanel/cofoundry/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/ConvoyPanel/cofoundry/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/ConvoyPanel/cofoundry/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/ConvoyPanel/cofoundry/compare/v1.2.0...v1.3.0
