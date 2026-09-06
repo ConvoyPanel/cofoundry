@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import {
+    chmodSync,
     mkdtempSync,
     mkdirSync,
     rmSync,
@@ -557,9 +558,25 @@ describe('isWritable', () => {
         rmSync(dir, { recursive: true, force: true })
     })
 
-    test('rejects a path under an unwritable directory', () => {
-        expect(isWritable('/proc/sys/kernel/coport-test')).toBe(false)
-    })
+    // Only POSIX, and only unprivileged, can observe an unwritable directory:
+    // Windows ignores directory mode bits (so the walk up from a missing path
+    // reaches a writable drive root) and root bypasses the W_OK check outright.
+    const modeBitsApply =
+        process.platform !== 'win32' && process.getuid?.() !== 0
+
+    test.skipIf(!modeBitsApply)(
+        'rejects a path under a directory that exists but is not writable',
+        () => {
+            const dir = mkdtempSync(join(tmpdir(), 'coport-ro-'))
+            try {
+                chmodSync(dir, 0o500)
+                expect(isWritable(join(dir, 'child'))).toBe(false)
+            } finally {
+                chmodSync(dir, 0o700)
+                rmSync(dir, { recursive: true, force: true })
+            }
+        }
+    )
 })
 
 // ---------------------------------------------------------------------------
