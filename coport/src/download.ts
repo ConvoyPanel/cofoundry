@@ -3,7 +3,7 @@ import { rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 
-const TEMP_ROOT = '/var/lib/vz/dump/coport-tmp'
+export const TEMP_ROOT = '/var/lib/vz/dump/coport-tmp'
 const MAX_RETRIES = 3
 let tempDir: string | undefined
 

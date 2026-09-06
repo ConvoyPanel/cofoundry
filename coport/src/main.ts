@@ -7,6 +7,12 @@ import { readCache } from './cache.ts'
 import { planInstall, staleItems, printInstalled } from './plan.ts'
 import { runInstalls } from './runner.ts'
 import { cleanupTempDirSync } from './download.ts'
+import {
+    preflight,
+    probeStorages,
+    reportPreflight,
+    storageProblem,
+} from './preflight.ts'
 import type { InstallItem } from './types.ts'
 
 // A piped registry occupies stdin, leaving no keyboard for the interactive menu.
@@ -71,6 +77,10 @@ program
     )
     .option('--verbose', 'Stream per-event logs instead of in-place TUI')
     .option(
+        '--no-preflight',
+        'Skip the pre-download checks (storage content types, free space)'
+    )
+    .option(
         '--config',
         'Print the resolved config (registry, storage) and exit'
     )
@@ -113,6 +123,20 @@ program
             opts.all || opts.upgrade || opts.select != null
         )
 
+        // A storage named up front (--storage, or the config file) is checked
+        // before anything else happens: there is no reason to make the user
+        // walk the template menu only to be told at the end that the volume
+        // cannot hold a disk image.
+        const namedStorage = opts.storage ?? defaultStorage
+        if (opts.preflight && namedStorage) {
+            const node = await probeStorages()
+            const problem = node && storageProblem(namedStorage, node)
+            if (problem) {
+                log.err(problem)
+                process.exit(2)
+            }
+        }
+
         // A piped registry can't coexist with the interactive menu (both want
         // stdin). Fail fast with guidance instead of hanging on a dead keyboard.
         if (source.kind === RegistryKind.Stdin && !nonInteractive) {
@@ -151,6 +175,26 @@ program
             if (items.length === 0) {
                 log.warn('No templates selected.')
                 process.exit(0)
+            }
+        }
+
+        // Everything the plan needs, checked before the first byte lands:
+        // the node's tooling, every target storage (present, image-capable,
+        // online, roomy enough), the VMIDs and any occupant --overwrite has to
+        // destroy, temp space, the bridge, and that every artifact URL is
+        // actually published. Each of these would otherwise surface only after
+        // the whole transfer.
+        if (opts.preflight) {
+            const result = await preflight(items, {
+                downloadConcurrency: Number(opts.downloadConcurrency),
+                restoreConcurrency: Number(opts.restoreConcurrency),
+                bridge: opts.bridge,
+                execute: !opts.dryRun,
+                signal: abort.signal,
+            })
+            if (!reportPreflight(result, log)) {
+                log.err('Preflight failed; nothing was downloaded.')
+                process.exit(2)
             }
         }
 

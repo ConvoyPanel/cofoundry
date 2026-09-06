@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Preflight checks before the first download.** Every failure listed below
+  used to surface only from `qm create` — after multi-gigabyte transfers had
+  already finished, and on a multi-template run once per template while the
+  rest kept downloading. They are now checked against the finished plan before
+  anything is fetched, and a storage passed with `--storage` or set in the
+  config file is checked before the template menu even opens. `--dry-run` runs
+  the same checks; `--no-preflight` skips them.
+- **Storage content type.** The default `local` on a stock node carries
+  `iso,vztmpl,backup`, so picking it failed with
+  `storage 'local' does not support vm images`, one `400 Parameter
+verification failed` per template. coport reads `pvesm status` and refuses a
+  plan whose target storage is missing, cannot
+  hold VM images, or is offline, naming the storages on the node that would
+  have worked.
+- **Storage capacity, per backend.** A Windows template is a 7.5 GB download
+  that declares a 30 GiB disk, and artifacts ship as compressed qcow2 — a
+  622 MB Debian image imports to 1.8 GB — so neither number alone predicts the
+  cost. Plain LVM reserves the full virtual size at creation and is refused
+  below it; every other backend is refused below the download floor, or warned
+  when it clears the floor but not the ceiling. Compressing backends only ever
+  warn. The cloud-init and TPM state volumes are counted.
+- **`--overwrite` targets.** `installTemplate` runs `qm destroy` best-effort
+  and ignores its exit code, so a destroy Proxmox refuses was silent and the
+  run died later at `qm create` with `VM N already exists`. coport now refuses
+  up front when the occupant is running, locked, an LXC container, or owned by
+  another node.
+- **Artifact availability.** Every distinct disk URL is HEADed before any is
+  fetched, so a registry pointing at an unpublished image fails immediately
+  rather than between gigabytes of successful transfers. A `Content-Length`
+  that disagrees with the registry warns.
+- **Temp space and writability** of `/var/lib/vz/dump/coport-tmp`, measured
+  against the run's peak resident images rather than the whole batch.
+- **Node tooling** — `qm` on PATH, and running as root. Skipped for
+  `--dry-run`, which executes nothing.
+- **Bridge existence**, as a warning: Proxmox validates a NIC's bridge when a
+  VM starts, not when it is created, so a wrong `--bridge` installs cleanly and
+  bites whoever clones the template.
+- **Every probe fails open.** If `pvesm`, `/etc/pve`, `/sys/class/net`, or a
+  HEAD cannot answer, the checks it feeds are skipped with a warning rather
+  than blocking an install. A probe that does not run is not evidence of a
+  problem; only one that answers "this will not work" stops a run.
+- **The interactive storage prompt is now a picker.** It lists the node's
+  storages that actually accept VM images, with their type and free space, so
+  the wrong volume is not offerable in the first place. "Other…" still accepts
+  a typed name, which goes through the same preflight.
+
 ## [2.0.2] - 2026-09-05
 
 ### Fixed
@@ -15,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Every Windows template publishes `ms-cert=2023k` on its EFI varstore, a key
   Proxmox added in PVE 9.1. On PVE 9.0 `qm create` rejects the entire
   invocation over it — `400 Parameter verification failed. efidisk0: ms-cert:
-  property is not defined in schema` — so the install failed after the download
+property is not defined in schema` — so the install failed after the download
   and import had already run. coport now asks the node what its `qm create`
   accepts and omits the options it does not document, reporting each omission
   on the template's row. Nothing is lost by the omission: `import-from` writes

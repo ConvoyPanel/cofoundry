@@ -3,6 +3,7 @@ import type { Registry, Template } from '@/registry/schema.ts'
 import { resolveVmids } from './vmid.ts'
 import { collectGroups, flatten, selectBySpec } from './select.ts'
 import { isStale, type Cache } from './cache.ts'
+import { probeStorages, usableStorages } from './preflight.ts'
 import type { InstallItem } from './types.ts'
 
 // Lazily load the clack-based prompt module (skips loading clack for fully
@@ -109,7 +110,11 @@ const resolveStorage = async (
             'Storage is required in non-interactive mode. Pass --storage <name>.'
         )
     }
-    return (await loadPrompts()).promptStorage()
+    // Offer only the storages that can actually hold an imported disk. An
+    // empty list (no probe, or nothing suitable) falls back to free text and
+    // lets the preflight say why.
+    const node = await probeStorages()
+    return (await loadPrompts()).promptStorage(node ? usableStorages(node) : [])
 }
 
 // `--upgrade` flow: reinstall only the cached templates whose registry version

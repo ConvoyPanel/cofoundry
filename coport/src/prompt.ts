@@ -4,6 +4,7 @@ import type { Registry, Template } from '@/registry/schema.ts'
 import type { VmidAssignment } from './vmid.ts'
 import { vmidTaken } from './vmid.ts'
 import { collectGroups } from './select.ts'
+import { storageHint, type StorageStatus } from './preflight.ts'
 
 // main.ts imports this module dynamically, so clack is only loaded for runs that
 // actually prompt (interactive selection / VMID review), not for --all/--select.
@@ -17,7 +18,9 @@ const orCancel = <T>(value: T | symbol): T => {
     return value
 }
 
-export const promptStorage = async (): Promise<string> => {
+const OTHER = '\0other'
+
+const typeStorage = async (): Promise<string> => {
     const answer = orCancel(
         await clack.text({
             message: 'Proxmox storage volume',
@@ -27,6 +30,35 @@ export const promptStorage = async (): Promise<string> => {
         })
     )
     return answer.trim()
+}
+
+/**
+ * Pick the storage to import into.
+ *
+ * `candidates` are the node's storages that actually accept VM images, so the
+ * common mistake — choosing the default `local`, whose content types are
+ * `iso,vztmpl,backup` — is not offerable rather than merely diagnosed. A free
+ * text entry stays available for setups the probe cannot see, and anything
+ * typed there still goes through the preflight.
+ */
+export const promptStorage = async (
+    candidates: StorageStatus[] = []
+): Promise<string> => {
+    if (candidates.length === 0) return typeStorage()
+    const choice = orCancel(
+        await clack.select<string>({
+            message: 'Proxmox storage volume',
+            options: [
+                ...candidates.map(s => ({
+                    value: s.name,
+                    label: s.name,
+                    hint: storageHint(s),
+                })),
+                { value: OTHER, label: 'Other…', hint: 'type a name' },
+            ],
+        })
+    )
+    return choice === OTHER ? typeStorage() : choice
 }
 
 export const promptTemplateSelection = async (
