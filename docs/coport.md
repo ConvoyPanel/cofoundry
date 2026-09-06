@@ -10,8 +10,10 @@ Run it **on the Proxmox node** — it calls `qm` and reads
 ## Install
 
 ```sh
-# on the Proxmox node:
-wget https://github.com/ConvoyPanel/cofoundry/releases/latest/download/coport-linux-x64
+# on the Proxmox node. -O matters: without it a re-run saves the new binary as
+# coport-linux-x64.1 and the install below silently reinstalls the stale one.
+wget -O coport-linux-x64 \
+    https://github.com/ConvoyPanel/cofoundry/releases/latest/download/coport-linux-x64
 install -m 755 coport-linux-x64 /usr/local/bin/coport
 ```
 
