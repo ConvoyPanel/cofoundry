@@ -128,6 +128,10 @@ cf check debian-12 # one recipe
 cf check --json    # changed recipe names as JSON, for CI
 ```
 
+`--json` lists only recipes CI can build. Pinned third-party downloads
+(`virtio-win`) are checked too, but they have no `.pkr.hcl`, so drift in one is
+reported on stderr for a maintainer to act on rather than handed to a build.
+
 ## Publish a manifest
 
 Aggregates sidecars into `./registry.json` for

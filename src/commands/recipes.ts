@@ -118,14 +118,32 @@ const checkCommand = async (
     const changed = results
         .filter(result => result.changed && !result.error)
         .map(result => result.name)
-    if (opts.json) console.log(JSON.stringify(changed))
+
+    // A synthetic entry has no .pkr.hcl, so it cannot be built. Emitting one
+    // into `--json` put it straight into CI's build matrix, where the build
+    // failed with ENOENT on a recipe that was never meant to exist -- weekly,
+    // for as long as the pin was stale. Drift in one of these is a message to a
+    // maintainer ("bump the pin in the recipes that consume it"), so it is
+    // reported on stderr and kept out of the machine-readable list.
+    const syntheticNames = new Set(SYNTHETIC_RECIPES.map(recipe => recipe.name))
+    const buildable = changed.filter(name => !syntheticNames.has(name))
+    const pinned = changed.filter(name => syntheticNames.has(name))
+
+    if (pinned.length > 0) {
+        log.warn(
+            `Pinned download(s) changed upstream: ${pinned.join(', ')}. ` +
+                'Bump the pin in the recipes that consume them; there is nothing to build.'
+        )
+    }
+
+    if (opts.json) console.log(JSON.stringify(buildable))
     else {
         log.blank()
-        if (changed.length > 0)
+        if (buildable.length > 0)
             log.ok(
-                `${changed.length} recipe(s) have a new upstream ISO: ${changed.join(', ')}`
+                `${buildable.length} recipe(s) have a new upstream ISO: ${buildable.join(', ')}`
             )
-        else log.ok('All recipes are up to date.')
+        else if (pinned.length === 0) log.ok('All recipes are up to date.')
     }
 }
 

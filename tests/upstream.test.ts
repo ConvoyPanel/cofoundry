@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { SYNTHETIC_RECIPES, checkRecipes, hasChanged } from '../src/upstream.ts'
 
@@ -75,6 +77,19 @@ describe('SYNTHETIC_RECIPES', () => {
         const virtio = SYNTHETIC_RECIPES.find(r => r.name === 'virtio-win')
         expect(virtio).toBeDefined()
         expect(virtio!.isoUrl).toContain('stable-virtio/virtio-win.iso')
+    })
+
+    /**
+     * `cf check --json` feeds CI's build matrix directly, and a synthetic entry
+     * has no `.pkr.hcl` to build. Emitting one failed the weekly run with
+     * `ENOENT ... recipes/virtio-win.pkr.hcl` for as long as the pin was stale.
+     */
+    test('none of them name a real recipe file', () => {
+        for (const recipe of SYNTHETIC_RECIPES) {
+            expect(existsSync(join('recipes', `${recipe.name}.pkr.hcl`))).toBe(
+                false
+            )
+        }
     })
 })
 
