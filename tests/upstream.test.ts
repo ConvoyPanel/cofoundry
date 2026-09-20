@@ -1,7 +1,12 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { SYNTHETIC_RECIPES, checkRecipes, hasChanged } from '../src/upstream.ts'
+import {
+    SYNTHETIC_RECIPES,
+    checkRecipes,
+    classifyCheckResults,
+    hasChanged,
+} from '../src/upstream.ts'
 
 describe('hasChanged', () => {
     test('returns true when nothing is stored yet', () => {
@@ -149,5 +154,46 @@ describe('checkRecipes', () => {
         expect(results[0]).toMatchObject({ name: 'fresh', changed: true })
         expect(store.fresh.etag).toBe('W/"v1"')
         expect(store.fresh.contentLength).toBe('42')
+    })
+})
+
+describe('classifyCheckResults', () => {
+    /**
+     * The bug this exists to stop repeating: the command reported
+     * `changed && !error`, so a recipe whose ISO URL had 404'd was neither
+     * changed nor an error anyone saw. debian-13 sat on a deleted URL for weeks
+     * while the weekly workflow reported success.
+     */
+    test('an errored recipe is reported, not silently dropped', () => {
+        const report = classifyCheckResults([
+            { name: 'debian-13', changed: false, error: 'HTTP 404' },
+            { name: 'debian-12', changed: false },
+        ])
+
+        expect(report.errors).toEqual([
+            { name: 'debian-13', error: 'HTTP 404' },
+        ])
+        expect(report.buildable).toEqual([])
+        expect(report.pinned).toEqual([])
+    })
+
+    test('a synthetic entry never reaches the build matrix', () => {
+        const report = classifyCheckResults([
+            { name: 'virtio-win', changed: true },
+            { name: 'debian-12', changed: true },
+        ])
+
+        expect(report.buildable).toEqual(['debian-12'])
+        expect(report.pinned).toEqual(['virtio-win'])
+    })
+
+    /** An error outranks a change: we cannot know what changed. */
+    test('a recipe that both changed and errored counts only as an error', () => {
+        const report = classifyCheckResults([
+            { name: 'ubuntu-24.04', changed: true, error: 'HTTP 500' },
+        ])
+
+        expect(report.buildable).toEqual([])
+        expect(report.errors).toHaveLength(1)
     })
 })

@@ -34,6 +34,42 @@ export interface CheckResult {
     error?: string
 }
 
+/**
+ * Split a check into the three things a caller has to treat differently.
+ *
+ * Pulled out and tested because collapsing them is what went wrong: the command
+ * reported `changed && !error`, so a recipe whose URL had 404'd was neither
+ * "changed" nor an error anybody saw. debian-13 sat on a deleted ISO for weeks
+ * while the weekly workflow reported success.
+ *
+ *  - `buildable` is what CI can put in a build matrix: changed, no error, and a
+ *    real recipe behind it.
+ *  - `pinned` is a synthetic entry that drifted. There is nothing to build; a
+ *    maintainer bumps the pin in the recipes that consume it.
+ *  - `errors` is "could not tell", which is not the same as "up to date".
+ */
+export interface CheckReport {
+    buildable: string[]
+    pinned: string[]
+    errors: { name: string; error: string }[]
+}
+
+export const classifyCheckResults = (results: CheckResult[]): CheckReport => {
+    const synthetic = new Set(SYNTHETIC_RECIPES.map(recipe => recipe.name))
+
+    return {
+        buildable: results
+            .filter(r => r.changed && !r.error && !synthetic.has(r.name))
+            .map(r => r.name),
+        pinned: results
+            .filter(r => r.changed && !r.error && synthetic.has(r.name))
+            .map(r => r.name),
+        errors: results
+            .filter(r => r.error)
+            .map(r => ({ name: r.name, error: r.error! })),
+    }
+}
+
 export const loadChecksums = async (): Promise<ChecksumStore> => {
     try {
         return JSON.parse(

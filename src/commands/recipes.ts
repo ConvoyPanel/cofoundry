@@ -1,9 +1,15 @@
+import { writeFile } from 'node:fs/promises'
 import type { Command } from 'commander'
 import PQueue from 'p-queue'
 import pc from 'picocolors'
 import { listRecipes, loadRecipe } from '@/config.ts'
 import { resolveIsoUpdate, applyIsoUpdate } from '@/update.ts'
-import { checkRecipes, SYNTHETIC_RECIPES, saveChecksums } from '@/upstream.ts'
+import {
+    checkRecipes,
+    classifyCheckResults,
+    SYNTHETIC_RECIPES,
+    saveChecksums,
+} from '@/upstream.ts'
 import { log } from '@/log.ts'
 
 const listCommand = async (): Promise<void> => {
@@ -79,7 +85,7 @@ const updateCommand = async (names: string[]): Promise<void> => {
 
 const checkCommand = async (
     name: string | undefined,
-    opts: { json?: boolean }
+    opts: { json?: boolean; report?: string }
 ): Promise<void> => {
     const recipes = name ? [await loadRecipe(name)] : await listRecipes()
     const synthetic = SYNTHETIC_RECIPES.map(recipe => ({
@@ -115,24 +121,26 @@ const checkCommand = async (
     }
 
     await saveChecksums(store)
-    const changed = results
-        .filter(result => result.changed && !result.error)
-        .map(result => result.name)
 
-    // A synthetic entry has no .pkr.hcl, so it cannot be built. Emitting one
-    // into `--json` put it straight into CI's build matrix, where the build
-    // failed with ENOENT on a recipe that was never meant to exist -- weekly,
-    // for as long as the pin was stale. Drift in one of these is a message to a
-    // maintainer ("bump the pin in the recipes that consume it"), so it is
-    // reported on stderr and kept out of the machine-readable list.
-    const syntheticNames = new Set(SYNTHETIC_RECIPES.map(recipe => recipe.name))
-    const buildable = changed.filter(name => !syntheticNames.has(name))
-    const pinned = changed.filter(name => syntheticNames.has(name))
+    // Classified in one place so the three outcomes cannot be collapsed again;
+    // see classifyCheckResults for what each means and why it matters.
+    const { buildable, pinned, errors } = classifyCheckResults(results)
 
-    if (pinned.length > 0) {
+    for (const name of pinned) {
         log.warn(
-            `Pinned download(s) changed upstream: ${pinned.join(', ')}. ` +
-                'Bump the pin in the recipes that consume them; there is nothing to build.'
+            `Pinned download changed upstream: ${name}. ` +
+                'Bump the pin in the recipes that consume it; there is nothing to build.'
+        )
+    }
+
+    for (const failure of errors) {
+        log.warn(`${failure.name} could not be checked: ${failure.error}`)
+    }
+
+    if (opts.report) {
+        await writeFile(
+            opts.report,
+            JSON.stringify({ buildable, pinned, errors }, null, 2) + '\n'
         )
     }
 
@@ -143,7 +151,15 @@ const checkCommand = async (
             log.ok(
                 `${buildable.length} recipe(s) have a new upstream ISO: ${buildable.join(', ')}`
             )
-        else if (pinned.length === 0) log.ok('All recipes are up to date.')
+        // Only when nothing drifted AND everything could actually be checked.
+        // Saying "up to date" over a recipe whose URL 404'd is the claim this
+        // whole path exists to stop making.
+        else if (pinned.length === 0 && errors.length === 0)
+            log.ok('All recipes are up to date.')
+        else if (errors.length > 0)
+            log.warn(
+                `${errors.length} recipe(s) could not be checked: ${errors.map(e => e.name).join(', ')}`
+            )
     }
 }
 
@@ -164,5 +180,9 @@ export const registerRecipeCommands = (program: Command): void => {
         .command('check [name]')
         .description('Check upstream ISO URLs for changes')
         .option('--json', 'Output changed recipe names as a JSON array')
+        .option(
+            '--report <path>',
+            'Write {buildable, pinned, errors} as JSON, for CI to act on'
+        )
         .action(checkCommand)
 }
