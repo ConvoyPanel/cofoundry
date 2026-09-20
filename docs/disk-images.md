@@ -105,7 +105,7 @@ Windows Server 2025, derived from `qm config 2002`:
             "role": "system",
             "format": "qcow2",
             "file": "windows-server-2025-amd64-<sha256>.qcow2",
-            "url": "https://cofoundry.cdn.convoypanel.com/images/…qcow2",
+            "url": "https://cofoundry.cdn.convoypanel.com/templates/…qcow2",
             "sha256": "…",
             "size": 7900000000,
             "virtual_size": "32G",
@@ -116,7 +116,7 @@ Windows Server 2025, derived from `qm config 2002`:
             "role": "efivars",
             "format": "raw",
             "file": "windows-server-2025-amd64-<sha256>.efivars.raw",
-            "url": "https://cofoundry.cdn.convoypanel.com/images/…efivars.raw",
+            "url": "https://cofoundry.cdn.convoypanel.com/templates/…efivars.raw",
             "sha256": "…",
             "size": 540672,
             "options": {
