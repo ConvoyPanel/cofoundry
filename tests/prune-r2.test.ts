@@ -14,7 +14,7 @@ const generation = (
     hashes: string[]
 ): R2Generation => ({ key, lastModified, template, hashes })
 
-const PREFIX = 'templates/debian/debian-12-amd64'
+const PREFIX = 'images/debian/debian-12-amd64'
 
 describe('planR2Prune', () => {
     test('keeps the newest generations and deletes the images they drop', () => {
@@ -50,7 +50,7 @@ describe('planR2Prune', () => {
         // The regression the old string-substitution pairing could not express:
         // a Windows template is a system disk AND a varstore, with different
         // hashes, so `key.replace(/\.vma\.zst$/, '.json')` could never find both.
-        const win = 'templates/windows-server/windows-server-2025-amd64'
+        const win = 'images/windows-server/windows-server-2025-amd64'
         const plan = planR2Prune(
             [
                 object(`${win}/sysNEW.qcow2`, '2026-02-01'),
@@ -88,7 +88,7 @@ describe('planR2Prune', () => {
     test('keeps an image a live generation still shares with a stale one', () => {
         // A rebuild that produced an identical varstore: the old generation is
         // dropped, but its varstore is still referenced and must survive.
-        const win = 'templates/windows-server/windows-server-2025-amd64'
+        const win = 'images/windows-server/windows-server-2025-amd64'
         const plan = planR2Prune(
             [
                 object(`${win}/sysNEW.qcow2`, '2026-02-01'),
@@ -149,8 +149,8 @@ describe('planR2Prune', () => {
         // mirrored registry.json.
         const plan = planR2Prune(
             [
-                object('templates/registry.json', '2026-01-01'),
-                object('templates/notes.txt', '2026-01-01'),
+                object('images/registry.json', '2026-01-01'),
+                object('images/notes.txt', '2026-01-01'),
             ],
             [],
             1

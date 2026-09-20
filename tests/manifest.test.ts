@@ -24,7 +24,7 @@ const sc = (
     lastModified: string,
     extra: Record<string, unknown> = {}
 ): R2Sidecar => ({
-    key: `templates/${name}/${lastModified}.json`,
+    key: `images/${name}/${lastModified}.json`,
     lastModified,
     sidecar: {
         name,
@@ -192,7 +192,7 @@ describe('buildManifest', () => {
     test('backfills a blank URL from the configured public URL template', async () => {
         const previous = process.env.CF_PUBLIC_URL_TMPL
         process.env.CF_PUBLIC_URL_TMPL =
-            'https://cdn.example.com/templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}{{ext}}'
+            'https://cdn.example.com/images/{{group}}/{{recipe}}-{{arch}}/{{sha256}}{{ext}}'
         try {
             const sidecar = JSON.parse(
                 await readFile(join(sourceDir, 'debian-12.json'), 'utf8')
@@ -209,7 +209,7 @@ describe('buildManifest', () => {
                 .flatMap((g: any) => g.templates)
                 .find((t: any) => t.name === 'debian-12-amd64')
             expect(debian.disks[0].url).toBe(
-                'https://cdn.example.com/templates/debian/debian-12-amd64/aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa7777bbbb8888.qcow2'
+                'https://cdn.example.com/images/debian/debian-12-amd64/aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa7777bbbb8888.qcow2'
             )
         } finally {
             if (previous === undefined) delete process.env.CF_PUBLIC_URL_TMPL
@@ -278,7 +278,7 @@ describe('selectNewestSidecars', () => {
         const newest = selectNewestSidecars([
             { ...sc('debian-12-amd64', '2026-01-01T00:00:00.000Z') },
             {
-                key: 'templates/registry.json',
+                key: 'images/registry.json',
                 lastModified: '2026-02-01T00:00:00.000Z',
                 sidecar: { name: '' } as R2Sidecar['sidecar'],
             },
@@ -321,7 +321,7 @@ describe('withPublicUrls', () => {
         }) as Sidecar
 
     const TMPL =
-        'https://cofoundry.cdn.convoypanel.com/templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}{{ext}}'
+        'https://cofoundry.cdn.convoypanel.com/images/{{group}}/{{recipe}}-{{arch}}/{{sha256}}{{ext}}'
 
     test('reconstructs the address each artifact was actually uploaded to', () => {
         // Both URLs are the live objects: the images published fine, only the
@@ -330,8 +330,8 @@ describe('withPublicUrls', () => {
         // system disk's hash and a `.qcow2` extension.
         const filled = withPublicUrls(blank(), TMPL)
         expect(filled.disks.map(d => d.url)).toEqual([
-            'https://cofoundry.cdn.convoypanel.com/templates/windows-server/windows-server-2022-amd64/315736a10b7601b804d3d801aefb23fa73e71ebc6b3d6e04db35a67284b48268.qcow2',
-            'https://cofoundry.cdn.convoypanel.com/templates/windows-server/windows-server-2022-amd64/64adaaed8f01e3007adff4e9ad0409d48a5e11d1980d06a9e22e492729ea9265.efivars.raw',
+            'https://cofoundry.cdn.convoypanel.com/images/windows-server/windows-server-2022-amd64/315736a10b7601b804d3d801aefb23fa73e71ebc6b3d6e04db35a67284b48268.qcow2',
+            'https://cofoundry.cdn.convoypanel.com/images/windows-server/windows-server-2022-amd64/64adaaed8f01e3007adff4e9ad0409d48a5e11d1980d06a9e22e492729ea9265.efivars.raw',
         ])
     })
 

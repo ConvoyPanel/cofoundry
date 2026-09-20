@@ -129,11 +129,11 @@ describe('[upload] derivation', () => {
         const rows = resolveConfig(dir)
         expect(find(rows, 'CF_UPLOAD_CMD')).toMatchObject({
             source: 'derived',
-            value: 'aws --endpoint-url $R2_ENDPOINT s3 cp {{file}} s3://$R2_BUCKET/templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}{{ext}}',
+            value: 'aws --endpoint-url $R2_ENDPOINT s3 cp {{file}} s3://$R2_BUCKET/images/{{group}}/{{recipe}}-{{arch}}/{{sha256}}{{ext}}',
         })
         expect(find(rows, 'CF_SIDECAR_UPLOAD_CMD')?.value).toEndWith('.json')
         expect(find(rows, 'CF_PUBLIC_URL_TMPL')).toMatchObject({
-            value: 'https://cdn.example.com/templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}{{ext}}',
+            value: 'https://cdn.example.com/images/{{group}}/{{recipe}}-{{arch}}/{{sha256}}{{ext}}',
         })
     })
 
@@ -143,7 +143,7 @@ describe('[upload] derivation', () => {
             `[upload]\nendpoint = "https://r2.example.com"\nbucket = "b"\nlayout = "flat"\n`
         )
         expect(find(resolveConfig(dir), 'CF_UPLOAD_CMD')?.value).toContain(
-            'templates/{{recipe}}-{{arch}}/{{sha256}}{{ext}}'
+            'images/{{recipe}}-{{arch}}/{{sha256}}{{ext}}'
         )
     })
 

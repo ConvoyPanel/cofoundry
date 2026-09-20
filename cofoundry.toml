@@ -39,6 +39,6 @@ build_dns    = "1.1.1.1"   # resolver for ISO-installer build VMs
 # one key, so they can never drift.
 endpoint   = "${R2_ENDPOINT}"   # sensitive (contains the R2 account id) → from env
 bucket     = "${R2_BUCKET}"     # deployment-specific → from env
-layout     = "grouped"          # templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}
+layout     = "grouped"          # <prefix>/{{group}}/{{recipe}}-{{arch}}/{{sha256}}
 public_url = "https://cofoundry.cdn.convoypanel.com"   # public CDN base (change when forking)
-prefix     = "templates/"       # bucket prefix `cf publish --r2` scans
+prefix     = "images/"          # bucket prefix; also the path keys are written under

@@ -2,6 +2,7 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { log } from '@/log.ts'
 import { CONFIG_FILENAME, CONFIG_LOCAL_FILENAME } from '@/config-file.ts'
+import { DEFAULT_PREFIX } from '@/config-file/upload.ts'
 import pc from 'picocolors'
 
 // Sensitive coordinates are never inlined by `cf init --from-env` — they stay as
@@ -68,9 +69,9 @@ build_dns    = ${q(val('CF_BUILD_DNS', fromEnv, '1.1.1.1'))}
 # Placeholders: {{recipe}} {{arch}} {{group}} {{sha256}}.
 endpoint   = ${q(val('R2_ENDPOINT', fromEnv, '${R2_ENDPOINT}'))}   # sensitive (account id) → from env
 bucket     = ${q(val('R2_BUCKET', fromEnv, 'cofoundry-templates'))}
-layout     = "grouped"   # templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}
+layout     = "grouped"   # <prefix>/{{group}}/{{recipe}}-{{arch}}/{{sha256}}
 public_url = ${q(publicBase(fromEnv))}
-prefix     = ${q(val('R2_PREFIX', fromEnv, 'templates/'))}   # what \`cf publish --r2\` scans
+prefix     = ${q(val('R2_PREFIX', fromEnv, DEFAULT_PREFIX))}   # scanned by \`cf publish --r2\`, and where keys are written
 
 [build]
 ${attempts}

@@ -12,9 +12,32 @@ export type DerivedUpload = {
     publicUrl?: string
 }
 
+/**
+ * Where published artifacts live in the bucket, and so in the public URL.
+ *
+ * `images/`, not `templates/`: these are qcow2 disk images that a consumer
+ * imports with `import-from`. A Proxmox "template" is a guest flagged
+ * `template: 1` that you clone, which is a different thing that these files
+ * never become.
+ */
+export const DEFAULT_PREFIX = 'images/'
+
+/**
+ * The part of the key below the prefix. The prefix itself is prepended from
+ * `[upload].prefix`, which `cf publish --r2` also scans: naming it in both
+ * places meant they could disagree, and a publish would then scan a path
+ * nothing had been written to and quietly find nothing.
+ */
 const LAYOUT_KEY: Record<UploadLayout, string> = {
-    grouped: 'templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}',
-    flat: 'templates/{{recipe}}-{{arch}}/{{sha256}}',
+    grouped: '{{group}}/{{recipe}}-{{arch}}/{{sha256}}',
+    flat: '{{recipe}}-{{arch}}/{{sha256}}',
+}
+
+/** `images/`, `/images`, `images` all mean the same thing. */
+const normalizePrefix = (value: unknown): string => {
+    const trimmed = String(value ?? DEFAULT_PREFIX).replace(/^\/+|\/+$/g, '')
+
+    return trimmed ? `${trimmed}/` : ''
 }
 
 export const uploadPathTemplate = (layout: UploadLayout): string =>
@@ -32,7 +55,7 @@ const resolveKeyTemplate = (upload: Record<string, unknown>): string => {
         throw new Error(
             `cofoundry.toml [upload].layout must be "grouped" or "flat" (got "${layout}"); or set [upload].key for a custom path`
         )
-    return LAYOUT_KEY[layout]
+    return normalizePrefix(upload.prefix) + LAYOUT_KEY[layout]
 }
 
 export const deriveUpload = (merged: Toml): DerivedUpload => {

@@ -107,7 +107,7 @@ const assembleRegistry = (
 
     return {
         schema_version: '2',
-        name: 'Cofoundry Templates',
+        name: 'Cofoundry Images',
         description: 'Proxmox VM disk images built with Cofoundry',
         generated_at: new Date().toISOString(),
         groups,
