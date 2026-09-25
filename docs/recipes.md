@@ -154,6 +154,12 @@ without `git clean`. The hostname line uses `__PACKER_RECIPE_NAME__`, replaced b
 the same script, so the preseed files stay identical across Debian releases
 (enforced by `tests/recipe-consistency.test.ts`).
 
+An answer that only one release needs goes on that recipe's `boot_command`
+instead, where the installer reads it as a preseed value. `debian-11` passes
+`apt-setup/services-select=updates` there: the bullseye-security index still
+lists packages whose binaries security.debian.org no longer serves, so
+selecting the security suite fails the package step.
+
 ## AlmaLinux and Rocky Linux kickstart
 
 Copy the nearest `ks.cfg` and update repository and release details. These builds
