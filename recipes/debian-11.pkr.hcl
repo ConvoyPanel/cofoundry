@@ -173,6 +173,14 @@ source "proxmox-iso" "debian-11" {
     "console-setup/ask_detect=false <wait>",
     "console-keymaps-at/keymap=us <wait>",
     "grub-installer/bootdev=/dev/sda <wait>",
+    # Install from main and bullseye-updates only. Debian has removed every
+    # bullseye binary from security.debian.org while the bullseye-security
+    # index still lists them, so selecting that suite makes pkgsel fetch 404s
+    # and the install stops at "Select and install software". Passed here
+    # rather than in preseed.cfg, which the Debian recipes share byte for
+    # byte. Bullseye's cloud.cfg sets apt_preserve_sources_list, so clones
+    # keep this sources.list instead of cloud-init re-adding the suite.
+    "apt-setup/services-select=updates <wait>",
     "<enter><wait>",
   ]
 
