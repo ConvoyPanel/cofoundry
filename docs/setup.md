@@ -149,7 +149,7 @@ the committed **`cofoundry.toml`**, which CI checks out and reads directly. It i
 
 Commit a `cofoundry.toml` (see [part 4](#4-local-development-optional), or run
 `cf init`). Its `[upload]` block controls the R2 layout; `layout = "grouped"`
-produces `templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}{{ext}}`. See
+produces `images/{{group}}/{{recipe}}-{{arch}}/{{sha256}}{{ext}}`. See
 [Usage → CDN upload](usage.md#cdn-upload).
 
 **Secrets** (Settings → Secrets and variables → Actions → Secrets):
@@ -225,14 +225,14 @@ cpu_budget = 8
    `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`; the S3 endpoint shown on that page
    is `R2_ENDPOINT`.
 4. **Add a lifecycle rule** as a safety net — Settings → Object Lifecycle Rules,
-   prefix `templates/`, delete after 60 days. This catches orphans whose recipe
+   prefix `images/`, delete after 60 days. This catches orphans whose recipe
    was deleted; the pipeline's own `cf prune --r2 --keep 5` handles the tight
    per-recipe windows.
 
 With the grouped layout, published URLs look like:
 
 ```
-https://templates.example.com/templates/<group>/<recipe>-<arch>/<sha256>.qcow2
+https://templates.example.com/images/<group>/<recipe>-<arch>/<sha256>.qcow2
 https://templates.example.com/registry.json
 ```
 
@@ -242,12 +242,17 @@ sidecar (`.json`), each content-addressed by its own hash.
 
 ### Path scheme
 
-- **Images** — `templates/<name>-<arch>/<sha256>.qcow2` and, on OVMF recipes,
+- **Images** — `images/<name>-<arch>/<sha256>.qcow2` and, on OVMF recipes,
   `…/<sha256>.efivars.raw`. Content-addressed, immutable.
-- **Sidecars** — `templates/<name>-<arch>/<sha256>.json`, addressed by the
+- **Sidecars** — `images/<name>-<arch>/<sha256>.json`, addressed by the
   **system disk's** hash, so each build publishes a distinct key rather than
   overwriting the last. That history is what `cf publish --r2` picks
   newest-per-template from and what `cf prune --r2` retains N of.
+- **Legacy** — `templates/…`, the prefix uploads used before `images/`. Nothing
+  is written there and `cf prune --r2` never touches it, but `cf publish --r2`
+  still reads its sidecars, so a template not rebuilt since the move stays in
+  the registry at its original URL. A rebuild under `images/` supersedes it. A
+  lifecycle rule on `templates/` deletes images the registry still points at.
 - **Registry** — `registry.json` at the root, short TTL (60s), one canonical
   pointer file. `git log registry.json` is the audit log; rollback is a
   `git revert` and CI re-mirrors.

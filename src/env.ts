@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { addSensitiveValues } from '@/util.ts'
+import { DEFAULT_PREFIX } from '@/config-file/upload.ts'
 
 // CI passes unset secrets/vars as empty strings, which would defeat
 // `.default(...)` (Zod only applies defaults when the value is undefined).
@@ -98,7 +99,7 @@ const EnvSchema = z.object({
 
     R2_ENDPOINT: z.string().optional(),
     R2_BUCKET: z.string().optional(),
-    R2_PREFIX: z.string().default('templates/'),
+    R2_PREFIX: z.string().default(DEFAULT_PREFIX),
 })
 
 export type Env = z.infer<typeof EnvSchema>

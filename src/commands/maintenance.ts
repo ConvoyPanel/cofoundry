@@ -4,6 +4,7 @@ import { runBootstrap } from '@/bootstrap.ts'
 import { runVerify } from '@/verify.ts'
 import { listRecipes, loadRecipe } from '@/config.ts'
 import { loadEnv, loadEnvPartial } from '@/env.ts'
+import { DEFAULT_PREFIX } from '@/config-file/upload.ts'
 
 export const registerMaintenanceCommands = (program: Command): void => {
     program
@@ -16,7 +17,7 @@ export const registerMaintenanceCommands = (program: Command): void => {
         .description('Reclaim space on the Proxmox node or in R2')
         .option('--days <n>', 'Treat files older than N days as stale', '30')
         .option('--dry-run', 'Enumerate targets without deleting', false)
-        .option('--r2', 'Prune R2 templates/ objects instead of node files')
+        .option('--r2', 'Prune R2 image objects instead of node files')
         .option(
             '--keep <n>',
             'With --r2: keep newest N per template prefix',
@@ -44,7 +45,7 @@ export const registerMaintenanceCommands = (program: Command): void => {
                         {
                             endpoint: env.R2_ENDPOINT,
                             bucket: env.R2_BUCKET,
-                            prefix: env.R2_PREFIX ?? 'templates/',
+                            prefix: env.R2_PREFIX ?? DEFAULT_PREFIX,
                         },
                         {
                             keep: Number.parseInt(opts.keep, 10),

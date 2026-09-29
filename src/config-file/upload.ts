@@ -23,6 +23,15 @@ export type DerivedUpload = {
 export const DEFAULT_PREFIX = 'images/'
 
 /**
+ * Prefixes uploads used to be written under. Nothing is written there any more,
+ * but objects already there stay put (published URLs are absolute and consumers
+ * store them verbatim), so `cf publish --r2` still has to read them: scanning
+ * only the current prefix drops every template not rebuilt since the move.
+ * Newest-per-template selection lets a rebuild under the current prefix win.
+ */
+export const LEGACY_PREFIXES: readonly string[] = ['templates/']
+
+/**
  * The part of the key below the prefix. The prefix itself is prepended from
  * `[upload].prefix`, which `cf publish --r2` also scans: naming it in both
  * places meant they could disagree, and a publish would then scan a path

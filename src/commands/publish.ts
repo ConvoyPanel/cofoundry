@@ -2,6 +2,7 @@ import type { Command } from 'commander'
 import { runUpload } from '@/upload.ts'
 import { buildManifest, buildManifestFromR2 } from '@/manifest.ts'
 import { loadEnv, loadEnvPartial } from '@/env.ts'
+import { DEFAULT_PREFIX } from '@/config-file/upload.ts'
 
 type UploadOptions = {
     remote?: boolean
@@ -49,7 +50,7 @@ export const registerPublishCommands = (program: Command): void => {
                         {
                             endpoint: env.R2_ENDPOINT,
                             bucket: env.R2_BUCKET,
-                            prefix: env.R2_PREFIX ?? 'templates/',
+                            prefix: env.R2_PREFIX ?? DEFAULT_PREFIX,
                         },
                         opts.out,
                         opts.prefix

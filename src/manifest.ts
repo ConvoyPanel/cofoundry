@@ -14,6 +14,7 @@ import {
     type Template,
 } from '@/registry/schema.ts'
 import { renderUploadTemplate, uploadVariables } from '@/upload/template.ts'
+import { LEGACY_PREFIXES } from '@/config-file/upload.ts'
 
 interface GroupDef {
     id: string
@@ -207,6 +208,20 @@ const normalizeR2Prefix = (prefix: string): string => {
     return trimmed ? `${trimmed}/` : ''
 }
 
+/**
+ * Every prefix `cf publish --r2` lists: the configured one, then each legacy
+ * prefix it does not already cover. An empty prefix lists the whole bucket, so
+ * nothing else is needed.
+ */
+export const publishPrefixes = (prefix: string): string[] => {
+    const current = normalizeR2Prefix(prefix)
+    if (!current) return ['']
+    const legacy = LEGACY_PREFIXES.map(normalizeR2Prefix).filter(
+        p => !p.startsWith(current) && !current.startsWith(p)
+    )
+    return [current, ...legacy]
+}
+
 export interface R2Sidecar {
     key: string
     lastModified: string
@@ -218,7 +233,7 @@ export interface R2Sidecar {
  * sidecar CONTENT (`name` is already `recipe-arch` and constant across
  * versions), never from the R2 key. Key layout is user-configurable via
  * `[upload].layout` / `[upload].key`, so any scheme that parses the key path
- * breaks on some layout — e.g. `grouped` (templates/<group>/<recipe>-<arch>/…)
+ * breaks on some layout — e.g. `grouped` (images/<group>/<recipe>-<arch>/…)
  * would collapse a whole group to one entry, and a custom
  * `{{recipe}}/{{recipe}}-{{arch}}-{{sha256}}` would collapse archs of the same
  * recipe. Grouping on content is correct for every layout.
@@ -237,9 +252,11 @@ export const selectNewestSidecars = (items: R2Sidecar[]): R2Sidecar[] => {
 /**
  * Aggregate sidecar JSONs from R2 into a registry, advertising the newest
  * artifact per template (not the full history). Every `.json` under the prefix
- * is fetched and parsed: the template identity lives in the sidecar content,
- * not the layout-dependent key, so we can't select newest-per-template from the
- * listing alone. Object count is bounded by the retention `cf prune --r2` keeps.
+ * and each legacy prefix (see `publishPrefixes`) is fetched and parsed: the
+ * template identity lives in the sidecar content, not the layout-dependent key,
+ * so we can't select newest-per-template from the listing alone. Object count
+ * is bounded by the retention `cf prune --r2` keeps, and legacy prefixes no
+ * longer grow.
  */
 export const buildManifestFromR2 = async (
     location: { endpoint: string; bucket: string; prefix: string },
@@ -247,17 +264,20 @@ export const buildManifestFromR2 = async (
     prefix = location.prefix
 ): Promise<string> => {
     const { endpoint, bucket } = location
-    const normalizedPrefix = normalizeR2Prefix(prefix)
+    const prefixes = publishPrefixes(prefix)
 
     log.section(
-        `Publish ${pc.dim('·')} ${pc.cyan(`s3://${bucket}/${normalizedPrefix}`)}`
+        `Publish ${pc.dim('·')} ${prefixes.map(p => pc.cyan(`s3://${bucket}/${p}`)).join(pc.dim(' + '))}`
     )
-    log.step(`listing objects`)
-    const listArgs = ['list-objects-v2', '--bucket', bucket]
-    if (normalizedPrefix) listArgs.push('--prefix', normalizedPrefix)
-    const raw = await s3api(endpoint, listArgs)
-    const parsed = raw.trim() ? JSON.parse(raw) : { Contents: [] }
-    const objects: R2Object[] = parsed.Contents ?? []
+    const objects: R2Object[] = []
+    for (const p of prefixes) {
+        log.step(`listing objects${p ? ` under ${p}` : ''}`)
+        const listArgs = ['list-objects-v2', '--bucket', bucket]
+        if (p) listArgs.push('--prefix', p)
+        const raw = await s3api(endpoint, listArgs)
+        const parsed = raw.trim() ? JSON.parse(raw) : { Contents: [] }
+        objects.push(...(parsed.Contents ?? []))
+    }
 
     // The mirrored registry.json also ends in .json; never treat it as a sidecar.
     const sidecarObjects = objects.filter(
