@@ -52,6 +52,15 @@ builds at 4/8192 for the `WU.ps1` rounds — and publishing that would floor eve
 consumer's plan at the build's size. There is deliberately no minimum disk size;
 see [Disk images](disk-images.md#sidecar-schema-2).
 
+`# display` and `# notice` are read again at publish time, so changing either
+reaches the registry on the next `cf publish` without a rebuild; a sidecar
+keeps whatever display name it was built with, but the registry does not.
+`# notice` is a one-line warning for anyone choosing the template, such as a
+release that no longer receives security updates. It is published as the
+template's `description`, and coport prints it before installing. A release at
+end of life also says so in its display name, since that is the one field every
+consumer shows, and in `/etc/motd`, for whoever logs in to a clone later.
+
 Keep disks small. Linux installers currently fit in 5G. For Windows, retain the
 temporary build/final shrink design and change the final size only after checking
 the installed minimum with `qemu-img info --output=json` on the exported image,

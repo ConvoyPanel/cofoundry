@@ -1,4 +1,5 @@
 # display: Recipe With ISO
+# notice: Unsupported; do not use.
 # build_vmid: 9101
 # final_disk_size: 16G
 # iso_url: https://example.com/foo-1.2.3-amd64.iso

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Template notices.** A template whose registry entry carries a description,
+  such as a release at end of life, prints it as a warning as soon as the
+  template is chosen, before VMIDs are confirmed. This covers the picker,
+  `--all`, `--select` and `--upgrade`.
+
 ## [2.1.0] - 2026-09-06
 
 ### Added

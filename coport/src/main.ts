@@ -4,7 +4,7 @@ import pkg from '../package.json' with { type: 'json' }
 import { resolveConfig, describeSource, RegistryKind } from './config.ts'
 import { fetchRegistry } from './registry.ts'
 import { readCache } from './cache.ts'
-import { planInstall, staleItems, printInstalled } from './plan.ts'
+import { planInstall, staleItems, printInstalled, warnNotices } from './plan.ts'
 import { runInstalls } from './runner.ts'
 import { cleanupTempDirSync } from './download.ts'
 import {
@@ -164,6 +164,7 @@ program
                 log.ok('Everything up to date — nothing to upgrade.')
                 return
             }
+            warnNotices(items.map(i => i.template))
         } else {
             items = await planInstall(
                 registry,
