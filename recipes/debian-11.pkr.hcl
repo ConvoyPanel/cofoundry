@@ -1,4 +1,5 @@
-# display: Debian 11 (Bullseye)
+# display: Debian 11 (Bullseye, EOL)
+# notice: End of life: Debian publishes no more security updates for bullseye. Use Debian 12 or 13 for anything reachable from a network.
 # group: debian
 # mirror: archive.debian.org
 # build_vmid: 4000
@@ -82,7 +83,7 @@ variable "packer_ssh_private_key_file" {
 locals {
   build_vmid     = var.build_vmid
   recipe_name    = "debian-11"
-  recipe_display = "Debian 11 (Bullseye)"
+  recipe_display = "Debian 11 (Bullseye, EOL)"
 }
 
 source "proxmox-iso" "debian-11" {
@@ -228,6 +229,14 @@ build {
       "cat /etc/apt/sources.list",
       "grep -Eq '^deb http://archive.debian.org/debian/? bullseye main' /etc/apt/sources.list || { echo 'sources.list does not use archive.debian.org' >&2; exit 1; }",
       "! grep -Eq '^deb .*bullseye-security' /etc/apt/sources.list || { echo 'sources.list still enables bullseye-security' >&2; exit 1; }",
+    ]
+  }
+
+  # The registry notice reaches whoever picks the template; this reaches
+  # whoever logs in to a clone of it, possibly long after.
+  provisioner "shell" {
+    inline = [
+      "printf '\\n%s\\n%s\\n\\n' 'Debian 11 (bullseye) is end of life and receives no security updates.' 'Move this machine to Debian 12 or 13.' | sudo tee -a /etc/motd >/dev/null",
     ]
   }
 

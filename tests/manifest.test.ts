@@ -14,11 +14,13 @@ import {
     buildManifest,
     disksMissingUrls,
     publishPrefixes,
+    withRecipeMetadata,
     selectNewestSidecars,
     withPublicUrls,
     type R2Sidecar,
 } from '../src/manifest.ts'
 import type { Registry, Sidecar } from '../src/registry/schema.ts'
+import type { RecipeInfo } from '../src/config.ts'
 
 const sc = (
     name: string,
@@ -323,6 +325,60 @@ describe('selectNewestSidecars', () => {
             },
         ])
         expect(names(newest)).toEqual(['debian-12-amd64'])
+    })
+})
+
+describe('withRecipeMetadata', () => {
+    const built = (): Sidecar =>
+        ({
+            name: 'debian-11-amd64',
+            display: 'Debian 11 (Bullseye)',
+            arch: 'amd64',
+            group: 'debian',
+        }) as Sidecar
+    const recipes = (
+        extra: Partial<RecipeInfo> = {}
+    ): Map<string, RecipeInfo> =>
+        new Map([
+            [
+                'debian-11-amd64',
+                {
+                    name: 'debian-11',
+                    path: 'recipes/debian-11.pkr.hcl',
+                    display: 'Debian 11 (Bullseye, EOL)',
+                    arch: 'amd64',
+                    ...extra,
+                },
+            ],
+        ])
+
+    // An image built before a release was relabelled must not keep advertising
+    // the old name until someone rebuilds it.
+    test('takes the display name from the recipe, not the sidecar', () => {
+        expect(withRecipeMetadata(built(), recipes()).display).toBe(
+            'Debian 11 (Bullseye, EOL)'
+        )
+    })
+
+    test('publishes the recipe notice as the description', () => {
+        const out = withRecipeMetadata(
+            built(),
+            recipes({ notice: 'End of life.' })
+        )
+        expect(out.description).toBe('End of life.')
+    })
+
+    test('adds no description when the recipe has no notice', () => {
+        const out = withRecipeMetadata(
+            { ...built(), description: 'stale' },
+            recipes()
+        )
+        expect('description' in out).toBe(false)
+    })
+
+    test('leaves a sidecar with no recipe as built', () => {
+        const sidecar = built()
+        expect(withRecipeMetadata(sidecar, new Map())).toBe(sidecar)
     })
 })
 

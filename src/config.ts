@@ -11,6 +11,12 @@ export interface RecipeInfo {
     path: string
     /** Display name from `# display: ...` comment */
     display: string
+    /**
+     * Warning shown to anyone choosing this template, from `# notice: ...` —
+     * e.g. that the release no longer receives security updates. Published as
+     * the template's registry `description`.
+     */
+    notice?: string
     /** VMID from `# build_vmid: <n>` comment */
     buildVmid?: number
     /** RAM assigned to the Packer build VM, parsed from `memory = <MiB>`. */
@@ -118,6 +124,7 @@ export const loadRecipe = async (
         name,
         path,
         display: parseMeta(raw, 'display') ?? name,
+        notice: parseMeta(raw, 'notice'),
         buildVmid: parseMetaInt(raw, 'build_vmid'),
         buildMemoryMb: parseHclInt(raw, 'memory'),
         buildCores: parseHclInt(raw, 'cores'),

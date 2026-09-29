@@ -15,6 +15,7 @@ import {
 } from '@/registry/schema.ts'
 import { renderUploadTemplate, uploadVariables } from '@/upload/template.ts'
 import { LEGACY_PREFIXES } from '@/config-file/upload.ts'
+import { listRecipes, type RecipeInfo } from '@/config.ts'
 
 interface GroupDef {
     id: string
@@ -66,6 +67,32 @@ export const withPublicUrls = (
     }
 }
 
+/**
+ * Take a template's presentation from its recipe, not the sidecar.
+ *
+ * A sidecar freezes the display name it was built with, so relabelling a
+ * release (marking it end-of-life, say) would otherwise wait for a rebuild that
+ * may never come. The recipe is the current truth; the sidecar only knows what
+ * was true at build time. A sidecar with no matching recipe is left as built.
+ */
+export const withRecipeMetadata = (
+    sidecar: Sidecar,
+    recipes: ReadonlyMap<string, RecipeInfo>
+): Sidecar => {
+    const recipe = recipes.get(sidecar.name)
+    if (!recipe) return sidecar
+    const { description: _stale, ...rest } = sidecar
+    return {
+        ...rest,
+        display: recipe.display,
+        ...(recipe.notice ? { description: recipe.notice } : {}),
+    }
+}
+
+/** Recipes keyed by the template name their sidecars carry. */
+const loadRecipesByTemplate = async (): Promise<Map<string, RecipeInfo>> =>
+    new Map((await listRecipes()).map(r => [`${r.name}-${r.arch}`, r]))
+
 /** Every `template/slot` still lacking a download URL. */
 export const disksMissingUrls = (registry: Registry): string[] =>
     registry.groups.flatMap(group =>
@@ -78,13 +105,14 @@ export const disksMissingUrls = (registry: Registry): string[] =>
 
 const assembleRegistry = (
     sidecars: Sidecar[],
-    groupDefs: Map<string, GroupDef>
+    groupDefs: Map<string, GroupDef>,
+    recipes: ReadonlyMap<string, RecipeInfo>
 ): Registry => {
     sidecars.sort((a, b) => a.name.localeCompare(b.name))
 
     const groupMap = new Map<string, Template[]>()
     for (const raw of sidecars) {
-        const s = withPublicUrls(raw)
+        const s = withRecipeMetadata(withPublicUrls(raw), recipes)
         const gid = s.group ?? 'other'
         if (!groupMap.has(gid)) groupMap.set(gid, [])
         // `group` and `schema_version` identify the sidecar, not the template;
@@ -194,7 +222,10 @@ export const buildManifest = async (
         )
     }
 
-    return writeRegistry(outPath, assembleRegistry(sidecars, groupDefs))
+    return writeRegistry(
+        outPath,
+        assembleRegistry(sidecars, groupDefs, await loadRecipesByTemplate())
+    )
 }
 
 export interface R2Object {
@@ -312,5 +343,8 @@ export const buildManifestFromR2 = async (
         )
     }
 
-    return writeRegistry(outPath, assembleRegistry(sidecars, groupDefs))
+    return writeRegistry(
+        outPath,
+        assembleRegistry(sidecars, groupDefs, await loadRecipesByTemplate())
+    )
 }

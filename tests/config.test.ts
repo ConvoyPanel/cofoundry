@@ -9,6 +9,7 @@ describe('loadRecipe', () => {
         const r = await loadRecipe('recipe-minimal', FIXTURES)
         expect(r.name).toBe('recipe-minimal')
         expect(r.display).toBe('Minimal Recipe')
+        expect(r.notice).toBeUndefined()
         expect(r.buildVmid).toBe(9999)
         expect(r.buildCores).toBe(2)
         expect(r.buildMemoryMb).toBe(4096)
@@ -19,6 +20,7 @@ describe('loadRecipe', () => {
     test('parses iso_url and iso_target_path from recipe metadata', async () => {
         const r = await loadRecipe('recipe-with-iso', FIXTURES)
         expect(r.display).toBe('Recipe With ISO')
+        expect(r.notice).toBe('Unsupported; do not use.')
         expect(r.buildVmid).toBe(9101)
         expect(r.isoUrl).toBe('https://example.com/foo-1.2.3-amd64.iso')
         expect(r.isoTargetPath).toBe(

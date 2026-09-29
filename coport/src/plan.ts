@@ -50,6 +50,16 @@ const selectTemplates = async (
 
 // Default flow: pick templates (interactive or via -a/--select), resolve + review
 // VMIDs, and resolve the storage volume.
+/**
+ * Repeat each chosen template's notice (end of life, say) before anything is
+ * confirmed. The display name carries a short marker, but the reason and the
+ * alternative only fit here; the picker's hint is one terminal line.
+ */
+export const warnNotices = (templates: Template[]): void => {
+    for (const t of templates)
+        if (t.description) log.warn(`${t.display}: ${t.description}`)
+}
+
 export const planInstall = async (
     registry: Registry,
     cache: Cache,
@@ -59,6 +69,7 @@ export const planInstall = async (
 ): Promise<InstallItem[]> => {
     const selected = await selectTemplates(registry, opts)
     if (selected.length === 0) return []
+    warnNotices(selected)
 
     const vmidStart = Number(opts.vmidStart)
     const preferred = new Map(
