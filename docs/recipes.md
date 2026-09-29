@@ -154,6 +154,20 @@ without `git clean`. The hostname line uses `__PACKER_RECIPE_NAME__`, replaced b
 the same script, so the preseed files stay identical across Debian releases
 (enforced by `tests/recipe-consistency.test.ts`).
 
+An answer that only one release needs goes on that recipe's `boot_command`
+instead, where the installer reads it as a preseed value, but only for a key
+`preseed.cfg` does not set. The installer loads the file after applying boot
+parameters, so the file wins any key both name. `debian-11` passes
+`apt-setup/services-select=updates` there: the bullseye-security index still
+lists packages whose binaries security.debian.org no longer serves, so
+selecting the security suite fails the package step.
+
+The package mirror is a key the preseed does set, so it is a placeholder
+instead: `__PACKER_DEBIAN_MIRROR__`, filled by `scripts/inject-placeholders.sh`
+from the recipe's `# mirror:` header and defaulting to `deb.debian.org`. A
+release Debian has archived sets `# mirror: archive.debian.org`, which keeps
+serving it after `deb.debian.org` drops it.
+
 ## AlmaLinux and Rocky Linux kickstart
 
 Copy the nearest `ks.cfg` and update repository and release details. These builds
