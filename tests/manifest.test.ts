@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 import {
     buildManifest,
     disksMissingUrls,
+    publishPrefixes,
     selectNewestSidecars,
     withPublicUrls,
     type R2Sidecar,
@@ -232,6 +233,26 @@ describe('buildManifest', () => {
     })
 })
 
+describe('publishPrefixes', () => {
+    // Uploads moved from templates/ to images/ and only rebuilt templates
+    // followed; scanning images/ alone published a one-template registry.
+    test('also scans the legacy prefix the unmoved images live under', () => {
+        expect(publishPrefixes('images/')).toEqual(['images/', 'templates/'])
+    })
+
+    test('normalizes slashes on the configured prefix', () => {
+        expect(publishPrefixes('/images')).toEqual(['images/', 'templates/'])
+    })
+
+    test('does not scan a legacy prefix twice when it is the configured one', () => {
+        expect(publishPrefixes('templates/')).toEqual(['templates/'])
+    })
+
+    test('lists the whole bucket once when the prefix is empty', () => {
+        expect(publishPrefixes('')).toEqual([''])
+    })
+})
+
 describe('selectNewestSidecars', () => {
     const names = (items: R2Sidecar[]): string[] =>
         items.map(i => i.sidecar.name).sort()
@@ -272,6 +293,24 @@ describe('selectNewestSidecars', () => {
             }),
         ])
         expect(names(newest)).toEqual(['debian-12-amd64', 'debian-12-arm64'])
+    })
+
+    test('a rebuild under the new prefix supersedes the legacy copy', () => {
+        const newest = selectNewestSidecars([
+            {
+                ...sc('debian-13-amd64', '2026-09-04T05:40:11.000Z'),
+                key: 'templates/debian/debian-13-amd64/old.json',
+            },
+            sc('debian-13-amd64', '2026-09-21T11:24:17.000Z'),
+            {
+                ...sc('debian-12-amd64', '2026-09-04T05:42:35.000Z'),
+                key: 'templates/debian/debian-12-amd64/old.json',
+            },
+        ])
+        expect(newest.map(i => i.key).sort()).toEqual([
+            'images/debian-13-amd64/2026-09-21T11:24:17.000Z.json',
+            'templates/debian/debian-12-amd64/old.json',
+        ])
     })
 
     test('ignores sidecars with no name', () => {

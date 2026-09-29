@@ -193,19 +193,19 @@ and sidecar automatically.
 [upload]
 endpoint   = "${R2_ENDPOINT}"   # from env (contains the account id)
 bucket     = "${R2_BUCKET}"
-layout     = "grouped"          # templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}
+layout     = "grouped"          # images/{{group}}/{{recipe}}-{{arch}}/{{sha256}}
 public_url = "https://cdn.example.com"
-prefix     = "templates/"       # what `cf publish --r2` scans
+prefix     = "images/"          # what `cf publish --r2` scans
 ```
 
 The upload command, sidecar command, and public URL are **generated from the same
 key**, so they cannot drift. Both layouts are prune-safe, since each template
 gets its own directory:
 
-| `layout`  | object key                                           |
-| --------- | ---------------------------------------------------- |
-| `grouped` | `templates/{{group}}/{{recipe}}-{{arch}}/{{sha256}}` |
-| `flat`    | `templates/{{recipe}}-{{arch}}/{{sha256}}`           |
+| `layout`  | object key                                        |
+| --------- | ------------------------------------------------- |
+| `grouped` | `images/{{group}}/{{recipe}}-{{arch}}/{{sha256}}` |
+| `flat`    | `images/{{recipe}}-{{arch}}/{{sha256}}`           |
 
 For a custom path set `key` directly instead of `layout` — e.g.
 `key = "{{recipe}}/{{recipe}}-{{arch}}-{{sha256}}"`. For a fully hand-written
