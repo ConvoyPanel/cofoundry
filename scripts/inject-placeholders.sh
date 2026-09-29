@@ -21,6 +21,13 @@ rm -f "$VARS_FILE"
 
 RECIPE_DIR="recipes/${RECIPE}"
 
+# Debian package mirror, from the recipe's `# mirror:` header. It has to reach
+# the preseed file rather than the boot command: the installer loads the file
+# with debconf-set-selections after applying boot parameters, so a key the
+# shared preseed sets would silently override a boot-command value.
+DEBIAN_MIRROR="$(sed -nE 's/^#[[:space:]]*mirror:[[:space:]]*([^[:space:]]+).*/\1/p' "recipes/${RECIPE}.pkr.hcl" 2>/dev/null | head -n1 || true)"
+DEBIAN_MIRROR="${DEBIAN_MIRROR:-deb.debian.org}"
+
 # ── Detect installer files and generate ephemeral SSH keypair ────────────────
 PRESEED="${RECIPE_DIR}/http/preseed.cfg"
 USER_DATA="${RECIPE_DIR}/http/user-data"
@@ -47,6 +54,7 @@ if [ "$NEEDS_KEY" = "1" ]; then
       "s|__PACKER_SSH_PUBLIC_KEY__|${PUB_KEY}|g; \
        s|ssh-ed25519 AAAA[^ ]+ packer-${RECIPE}-[^ '\"]*|${PUB_KEY}|g; \
        s|__PACKER_RECIPE_NAME__|${RECIPE}|g; \
+       s|__PACKER_DEBIAN_MIRROR__|${DEBIAN_MIRROR}|g; \
        s|__PACKER_BUILD_IP__|${CF_BUILD_IP:-}|g; \
        s|__PACKER_BUILD_GW__|${CF_BUILD_GW:-}|g; \
        s|__PACKER_BUILD_DNS__|${CF_BUILD_DNS:-1.1.1.1}|g" \

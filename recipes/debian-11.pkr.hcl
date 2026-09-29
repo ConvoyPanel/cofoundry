@@ -1,6 +1,7 @@
 # display: Debian 11 (Bullseye, EOL)
 # notice: End of life: Debian publishes no more security updates for bullseye. Use Debian 12 or 13 for anything reachable from a network.
 # group: debian
+# mirror: archive.debian.org
 # build_vmid: 4000
 # min_cores: 1
 # min_memory: 1024
@@ -174,6 +175,17 @@ source "proxmox-iso" "debian-11" {
     "console-setup/ask_detect=false <wait>",
     "console-keymaps-at/keymap=us <wait>",
     "grub-installer/bootdev=/dev/sda <wait>",
+    # Install from main and bullseye-updates only. Debian has removed every
+    # bullseye binary from security.debian.org while the bullseye-security
+    # index still lists them, so selecting that suite makes pkgsel fetch 404s
+    # and the install stops at "Select and install software". Passed here
+    # rather than in preseed.cfg, which the Debian recipes share byte for
+    # byte; this works only because preseed.cfg never sets the key, since the
+    # installer loads that file after the boot parameters and it would win.
+    # The mirror is archive.debian.org (`# mirror:` above), where bullseye
+    # stays after deb.debian.org drops it. Bullseye's cloud.cfg sets
+    # apt_preserve_sources_list, so clones keep this sources.list.
+    "apt-setup/services-select=updates <wait>",
     "<enter><wait>",
   ]
 
@@ -206,6 +218,17 @@ build {
       "sudo cloud-init clean",
       "sudo rm -f /etc/cloud/cloud.cfg.d/subiquity-disable-cloudinit-networking.cfg",
       "sudo sync",
+    ]
+  }
+
+  # A mirror that silently fell back to deb.debian.org would build fine today
+  # and break the day Debian drops bullseye from it, so check what landed.
+  provisioner "shell" {
+    inline = [
+      "echo '==> Verifying apt sources'",
+      "cat /etc/apt/sources.list",
+      "grep -Eq '^deb http://archive.debian.org/debian/? bullseye main' /etc/apt/sources.list || { echo 'sources.list does not use archive.debian.org' >&2; exit 1; }",
+      "! grep -Eq '^deb .*bullseye-security' /etc/apt/sources.list || { echo 'sources.list still enables bullseye-security' >&2; exit 1; }",
     ]
   }
 
