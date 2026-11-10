@@ -111,6 +111,47 @@ describe('Finalize.ps1 ordering invariants', () => {
         )
     })
 
+    test('makes C: the last partition before shrinking it', () => {
+        // 2026-11-10: Server 2025 creates a recovery partition at the end of the
+        // build disk. Its GPT entry survived the truncation and capped every
+        // clone's C: near 99 GiB, while system-volume-extended -- which grows
+        // the clone by only 4G -- kept passing.
+        expect(finalize).toContain('function Remove-PartitionsBehindSystem')
+        const callAt = finalize.search(/^Remove-PartitionsBehindSystem\s*$/m)
+        const shrinkAt = finalize.search(
+            /^\s*Shrink-SystemPartition \$env:CF_FINAL_DISK_SIZE/m
+        )
+        expect(callAt).toBeGreaterThan(-1)
+        expect(shrinkAt).toBeGreaterThan(callAt)
+        expect(callAt).toBeLessThan(sysprepAt)
+        // Unconditional: a partition behind C: caps a clone whether or not the
+        // disk is truncated, so the call must sit above the size guard, not in it.
+        const guardAt = finalize.lastIndexOf(
+            'if ($env:CF_FINAL_DISK_SIZE)',
+            shrinkAt
+        )
+        expect(guardAt).toBeGreaterThan(callAt)
+    })
+
+    test('removes only recovery partitions, and only once WinRE is back on C:', () => {
+        const start = finalize.indexOf('function Remove-PartitionsBehindSystem')
+        const fn = finalize.slice(
+            start,
+            finalize.indexOf('function Zero-FreeSpace', start)
+        )
+        const refusalAt = fn.indexOf('not a recovery partition')
+        // The trailing space keeps this off the function's own name.
+        const removeAt = fn.indexOf('Remove-Partition ')
+        expect(refusalAt).toBeGreaterThan(-1)
+        expect(removeAt).toBeGreaterThan(refusalAt)
+        // Deleting the partition first would take the recovery image with it.
+        const reagentcAt = fn.indexOf('reagentc.exe')
+        expect(reagentcAt).toBeGreaterThan(-1)
+        expect(reagentcAt).toBeLessThan(removeAt)
+        // A partition that survives must fail the build, not ship.
+        expect(fn.indexOf('is still behind C:')).toBeGreaterThan(removeAt)
+    })
+
     test('dumps sysprep diagnostics on a failed generalize attempt', () => {
         // 2026-08-03: two consecutive 3h04m windows-server-2025 attempts failed
         // to arm, and the error told the reader to check setuperr.log on a VM

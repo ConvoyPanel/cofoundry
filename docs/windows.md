@@ -22,6 +22,7 @@ reading its section reintroduces a failure that is expensive to rediscover.
 | `restart_check` tests `PackagesPending` as well as `RebootPending`         | all three `.pkr.hcl`                     | A cumulative can clear `RebootPending` and leave `PackagesPending`; Finalize then refuses at the pre-sysprep gate, ~4h in |
 | `max_retries = 2` on every powershell provisioner                          | all three `.pkr.hcl`                     | A lost upload after a cumulative update costs the whole build instead of one provisioner                                  |
 | `<Compact>false</Compact>`                                                 | `windows-server-2025` answer file        | Deterministic phase 71 / DISM `0x80071160` during servicing                                                               |
+| `Remove-PartitionsBehindSystem` runs before the shrink                     | `Finalize.ps1`                           | A partition entry behind C: survives the truncation and caps every clone's C: near 99 GiB; verify does not catch it       |
 | `ostype` from the Proxmox enum, never from the release name                | all three `.pkr.hcl`                     | There is no `win2k19`/`win2k22`/`win2k25`                                                                                 |
 
 `Finalize.ps1` is the one provisioner deliberately **without** `max_retries`: it
@@ -83,6 +84,24 @@ partition, then the host-side post-processor truncates the virtual disk to the
 declared final size. The `# final_disk_size` metadata and `local.final_disk_size`
 must match.
 
+### C: is the last partition
+
+The truncation only cuts the virtual disk; it does not rewrite the partition
+table. A partition that lies behind C: therefore loses its contents and keeps its
+entry in the primary GPT, and on a clone `ExtendVolumesPlugin` can grow C: only
+into the free space up to that entry.
+
+The answer files define EFI, MSR and C:. Server 2025 creates a fourth partition
+on its own during installation — a recovery partition at the very end of the 100G
+build disk. 2019 and 2022 do not. `Finalize.ps1` (`Remove-PartitionsBehindSystem`)
+moves the recovery environment back onto C: with `reagentc /disable`, removes the
+partition, and fails the build if anything is still behind C: or if what is there
+is not a recovery partition. Sysprep's specialize pass re-enables the recovery
+environment on the clone, on C:.
+
+`system-volume-extended` cannot detect a stale entry: verify grows the clone by
+4G, and the entry sits near 99 GiB.
+
 For networked builds `cf` derives the live VMID as
 `base_build_vmid * 100 + slot_index`; the HCL base is only the default for a
 manual Packer invocation. Find failed builds by `packer-<recipe>` name rather
@@ -128,8 +147,9 @@ The same key is repeated inline at the top of the deletion block in
 4. Two Windows Update rounds run as a SYSTEM scheduled task. Packer performs a
    conditional reboot after each round.
 5. `PreFinalize.ps1` disables hibernation and the pagefile for compaction.
-6. `Finalize.ps1` cleans the component store, installs Cloudbase-Init, shrinks the
-   partition, zeros free space, runs sysprep, then tears down WinRM.
+6. `Finalize.ps1` cleans the component store, installs Cloudbase-Init, removes any
+   recovery partition behind C:, shrinks the partition, zeros free space, runs
+   sysprep, then tears down WinRM.
 7. The host asserts the image is generalized and armed, truncates the disk, exports
    the artifact, and destroys the build VM.
 
@@ -471,6 +491,7 @@ experiments was recovered after the fact.
 | `sysprep did not arm the image for OOBE after 2 attempts`, no detail                                  | The message pointed at a log on a VM packer deletes seconds later                                                                                   | `Finalize.ps1` dumps `setuperr.log`/`setupact.log` and the arming registry state to packer's stdout                               |
 | MTUPlugin fails `[WinError 10013]`                                                                    | The plugin binds UDP/68 to read DHCP option 26; the DHCP Client service already owns it                                                             | `mtu_use_dhcp_config=false` in both confs                                                                                         |
 | `winget` missing from a 2025 clone                                                                    | The Appx cleanup dropped `DesktopAppInstaller`'s provisioning, so fresh profiles never get it                                                       | Finalize re-provisions dropped families from on-disk payload; `winget-present` verify check (2025 only)                           |
+| Clone's C: stops near 99 GiB on a larger disk; `Get-PartitionSupportedSize` reports no room to grow   | A recovery partition's GPT entry sits behind C:, left by a template built before `Remove-PartitionsBehindSystem`; its contents were truncated away  | Rebuild the template. On an existing clone, remove the empty recovery partition and extend C: — it has no filesystem to lose      |
 
 ## Rejected approaches — do not retry
 
@@ -533,6 +554,13 @@ ConnectServer` / `RunExternalDlls` as a generalize-corruption signal was
   mechanism by which packer concluded success was never pinned down. It was not
   worth a build cycle, because `assert-generalized.sh` makes the outcome safe
   either way. Do not "explain" it here without evidence.
+- **`Remove-PartitionsBehindSystem` is unconfirmed on a live build**, and no
+  verify check covers what it fixes. Confirm on the next 2025 build that the step
+  finds the recovery partition, that `reagentc /disable` exits 0 and the partition
+  is removed, and that a clone with a disk above 100G extends C: to the end. A
+  check that fails when any partition lies behind C: would catch a regression at
+  any clone size; growing the verify clone past 100G would too, at the cost of the
+  space.
 - **`WU.ps1`'s async progress reporting and throughput mode are unconfirmed on a
   live build.** Confirm the log shows download/install percentages rather than the
   `async ... unavailable ... using synchronous batch` fallback, and that it contains

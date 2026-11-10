@@ -10,6 +10,51 @@ build cycle is worth exactly as much as the fix that followed it.
 
 ---
 
+## 2026-11-10 — clones cap C: near 99 GiB: a recovery partition's GPT entry survives the truncation
+
+A clone with a 250G disk reported C: at 99.0 GB. Proxmox and the guest both saw a
+250G disk. `Get-Partition` listed EFI, MSR, C: at 99.01 GB, and a 0.88 GB Recovery
+partition at offset 99.12 GB with no filesystem, with 150 GB unallocated behind
+it. `Get-PartitionSupportedSize -DriveLetter C` gave a maximum equal to the
+current size, and `reagentc /info` placed the recovery environment on partition 3,
+which is C:.
+
+That clone came from an out-of-tree image that uses the same answer-file disk
+layout and the same shared `Finalize.ps1`. Reading the primary GPT of the three
+templates built from this repo shows which of them carry the same entry (all
+three headers still describe a 100 GiB disk, as expected after the truncation):
+
+```text
+windows-server-2019  image 30 GiB  EFI 0.00-0.10  MSR 0.10-0.11  Basic 0.11-29.11
+windows-server-2022  image 30 GiB  EFI 0.00-0.10  MSR 0.10-0.11  Basic 0.11-29.11
+windows-server-2025  image 32 GiB  EFI 0.00-0.10  MSR 0.10-0.11  Basic 0.11-31.11  Recovery 99.10-100.00
+```
+
+The disk sections of the 2022 and 2025 answer files are identical, so the fourth
+partition is not something the recipe asks for: 2025 creates it during
+installation, at the end of the 100G build disk. `Shrink-SystemPartition` then
+shrinks C: and the host truncates the image at 32G. The partition's contents are
+gone; its entry is not. `ExtendVolumesPlugin` grows C: into the free space that
+follows it, and that space ends at the entry.
+
+`system-volume-extended` passed throughout. Verify grows the clone by 4G, so C:
+reaches ~36G with nothing in its way; the entry only matters on a disk larger than
+about 99 GiB.
+
+**Fix:** `Finalize.ps1` gains `Remove-PartitionsBehindSystem`, run before the
+shrink and regardless of `CF_FINAL_DISK_SIZE`. It runs `reagentc /disable` so
+`Winre.wim` is back in `System32\Recovery`, removes the recovery partition, and
+throws if anything is still behind C: or if what lies there is not a recovery
+partition.
+
+On the affected clone, removing the empty partition and `Resize-Partition` to
+`SizeMax` took C: from 99.0 to 249.9 GB online, without a reboot.
+
+**Not yet done:** a full 2025 build with the change, and inspecting a 2025 clone
+directly — the 2025 evidence here is the template's partition table. Whether
+`Remove-Partition` behaves the same on the live recovery partition of a build VM
+as it did on the empty one of a clone is what that build will show.
+
 ## 2026-08-27 — `cipassword` starting with a YAML indicator breaks every clone
 
 Proxmox interpolates `--cipassword` into its cloud-init user-data unquoted
