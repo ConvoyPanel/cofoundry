@@ -53,6 +53,63 @@ function Shrink-SystemPartition($FinalSize) {
   Write-Step ("C: shrunk {0:N0} -> {1:N0} bytes (final disk {2})" -f $current, $after, $FinalSize)
 }
 
+# C: must be the last partition on its disk before it is shrunk and the host
+# truncates the disk behind it.
+#
+# The answer files lay out EFI, MSR and C:, in that order. Server 2025's setup
+# adds a fourth on its own: a recovery partition at the very end of the 100G
+# build disk (2019 and 2022 do not). Shrink-SystemPartition then shrinks C: and
+# the host cuts the image off at the final size, so the recovery partition's
+# contents never reach a clone -- but its entry in the primary GPT does. On a
+# clone, ExtendVolumesPlugin can only grow C: into the free space that follows
+# it, and that space ends at the stale entry: C: stops near 99 GiB whatever the
+# size of the clone's disk. The `system-volume-extended` verify check cannot see
+# this, because verify grows the clone by 4G and the entry sits far behind that.
+#
+# So the recovery environment is moved onto C: first -- `reagentc /disable` puts
+# Winre.wim back into System32\Recovery, which is what sysprep's generalize does
+# anyway, and the specialize pass on the clone re-enables it on C: when there is
+# no recovery partition -- and then the partition is removed. Anything behind C:
+# that is not a recovery partition is not this script's to delete, and a
+# partition that survives the removal would cap every clone: both fail the build.
+function Remove-PartitionsBehindSystem {
+  $system = Get-Partition -DriveLetter C
+  $behind = @(Get-Partition -DiskNumber $system.DiskNumber | Where-Object { $_.Offset -gt $system.Offset })
+  if ($behind.Count -eq 0) {
+    Write-Step "  C: is the last partition on disk $($system.DiskNumber)"
+    return
+  }
+  foreach ($partition in $behind) {
+    Write-Step ("  behind C:: partition {0}, type {1}, {2:N0} bytes at offset {3:N0}" -f `
+        $partition.PartitionNumber, $partition.Type, $partition.Size, $partition.Offset)
+  }
+  $foreign = @($behind | Where-Object { $_.Type -ne 'Recovery' })
+  if ($foreign.Count -gt 0) {
+    throw ("partition {0} behind C: is of type '{1}', not a recovery partition -- the disk layout is not the answer file's; refusing to remove it" -f `
+        $foreign[0].PartitionNumber, $foreign[0].Type)
+  }
+
+  $reagentc = Start-Process -FilePath "reagentc.exe" -ArgumentList "/disable" -Wait -PassThru
+  Write-Step "  reagentc /disable exit $($reagentc.ExitCode)"
+  $winre = Join-Path $env:windir "System32\Recovery\Winre.wim"
+  if (Test-Path -LiteralPath $winre) {
+    Write-Step "  the recovery image is on C: ($winre)"
+  } else {
+    # Logged, not fatal: a clone without a recovery environment still works; a
+    # clone whose C: cannot grow does not do what its disk size says.
+    Write-Step "  WARNING: $winre is missing after reagentc /disable; clones will have no recovery environment"
+  }
+
+  foreach ($partition in $behind) {
+    Remove-Partition -DiskNumber $partition.DiskNumber -PartitionNumber $partition.PartitionNumber -Confirm:$false
+  }
+  $left = @(Get-Partition -DiskNumber $system.DiskNumber | Where-Object { $_.Offset -gt $system.Offset })
+  if ($left.Count -gt 0) {
+    throw ("partition {0} is still behind C: after removal; a clone's C: could not grow past it" -f $left[0].PartitionNumber)
+  }
+  Write-Step "  removed $($behind.Count) recovery partition(s); C: is the last partition"
+}
+
 # Overwrite free space with zeros so the exported qcow2 compresses. Stops short
 # of actually filling the volume, and proves the fill file is gone afterwards.
 #
@@ -384,6 +441,11 @@ plugins=cloudbaseinit.plugins.common.mtu.MTUPlugin
 types=vfat,iso
 locations=cdrom,hdd,partition
 "@ | Set-Content -Path (Join-Path $cloudbaseConfDir "cloudbase-init-unattend.conf") -Encoding ASCII
+
+# Not conditional on CF_FINAL_DISK_SIZE: a partition behind C: stops a clone's C:
+# from growing whether or not the disk is truncated afterwards.
+Write-Step "make C: the last partition on its disk"
+Remove-PartitionsBehindSystem
 
 if ($env:CF_FINAL_DISK_SIZE) {
   Write-Step "shrink C: for final disk $($env:CF_FINAL_DISK_SIZE)"
