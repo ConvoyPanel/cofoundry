@@ -85,6 +85,24 @@ reproduced the build's state exactly: name gone, space still allocated.
   and the gate's message named the held fill file instead of `C:\Windows`. Free
   space returned to 12.4 GB when the holder exited.
 
+## 2026-11-11 — PR #39 verified: C: extends to the end of a large disk
+
+Full `windows-server-2025` build of PR #39 (`Remove-PartitionsBehindSystem`).
+The new step logged the Recovery partition behind C: (926,941,184 bytes at
+offset 106,445,144,064), `reagentc /disable exit 0`, `Winre.wim` on C:, and the
+removal; generalize armed, and the export has three partitions with C: last.
+
+- **150 GiB clone of the PR artifact:** C: 149.89 GiB, nothing unallocated,
+  WinRE enabled on C:.
+- **150 GiB clone of the September template:** C: stops at 99.01 GiB with 50 GiB
+  stranded behind a Recovery entry at 99.13–100.00 GiB. That entry lies past the
+  end of the 32 GiB export and holds no data; the clone already ran WinRE from C:.
+- **In-place remedy on that clone** (the PR's commands, run live): C: grew from
+  99.01 to 149.89 GiB.
+
+`system-volume-extended` passed on both, because it only checks that C: reaches
+the shipped size; it cannot see this cap.
+
 ## 2026-11-10 — clones cap C: near 99 GiB: a recovery partition's GPT entry survives the truncation
 
 A clone with a 250G disk reported C: at 99.0 GB. Proxmox and the guest both saw a
