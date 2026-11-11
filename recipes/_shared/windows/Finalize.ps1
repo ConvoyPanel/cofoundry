@@ -317,6 +317,15 @@ New-Item -ItemType Directory -Force -Path $cloudbaseConfDir | Out-Null
 # nothing else precisely because it never requests a reboot, which is what
 # stopped clones looping on "The computer restarted unexpectedly".
 mtu_use_dhcp_config=false
+# log_licensing_info gates exactly two calls in WindowsLicensingPlugin
+# (Cloudbase-Init 1.1.8, plugins/windows/licensing.py): a WMI
+# SoftwareLicensingService.RefreshLicenseStatus() and an slmgr /dlv dump into
+# this log. Server 2025 from build 26100.33822 (the November 2026 cumulative)
+# rejects that WMI call with "Invalid parameter" (-2147217400), failing the
+# plugin on every clone. Off, the plugin still sets a KMS host, product key, or
+# activation if one is configured; only the log dump is lost, and cf verify
+# reads the rearm count from slmgr itself.
+log_licensing_info=false
 username=Administrator
 groups=Administrators
 inject_user_password=true

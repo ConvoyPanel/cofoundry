@@ -46,6 +46,33 @@ const unattendConf = (): string => {
     return conf[0] as string
 }
 
+/** The service config: the post-OOBE run whose log cf verify parses. */
+const serviceConf = (): string => {
+    const blocks = [...finalize.matchAll(/@"\r?\n([\s\S]*?)\r?\n"@/g)].map(
+        m => m[1] as string
+    )
+    const conf = blocks.filter(b => /^logfile=cloudbase-init\.log$/m.test(b))
+    expect(conf).toHaveLength(1)
+    return conf[0] as string
+}
+
+describe('cloudbase-init service config', () => {
+    test('keeps WindowsLicensingPlugin off RefreshLicenseStatus', () => {
+        // Server 2025 26100.33822 rejects RefreshLicenseStatus with WMI "Invalid
+        // parameter", and the plugin calls it whenever log_licensing_info is
+        // true (the default), failing cloudbase-init-completed on every clone.
+        expect(serviceConf()).toMatch(/^log_licensing_info=false$/m)
+    })
+
+    test('still runs the licensing plugin for KMS and activation settings', () => {
+        // The fix is the option, not dropping the plugin: an operator who sets
+        // kms_host or activate_windows still needs it in the list.
+        expect(serviceConf()).toMatch(
+            /^plugins=.*cloudbaseinit\.plugins\.windows\.licensing\.WindowsLicensingPlugin/m
+        )
+    })
+})
+
 describe('cloudbase-init specialize-pass config', () => {
     test('disables self-reboot (else it crashes stopping its own service)', () => {
         // Anchored: the config also *mentions* this key in a comment, and a

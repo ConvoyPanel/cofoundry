@@ -10,6 +10,39 @@ build cycle is worth exactly as much as the fix that followed it.
 
 ---
 
+## 2026-11-11 — the November cumulative breaks `WindowsLicensingPlugin` on 2025
+
+Found while verifying the PR #39 (recovery partition) build of
+`windows-server-2025`. `cf verify`: 16 passed, 1 warned (`rearm-headroom`), 1
+failed — `cloudbase-init-completed`, on `WindowsLicensingPlugin` raising
+`x_wmi: Invalid parameter (-2147217400)` from `licensing.py:95 execute` →
+`refresh_status()` → `SoftwareLicensingService.RefreshLicenseStatus()`.
+
+The PR changed the partition layout and the build picked up two months of
+updates (26100.33438 → 26100.33822, KB5131079/KB5131080/KB5127690), so either
+could be to blame. Controlled tests:
+
+- **Partition removal alone does not break it.** On a running clone of the
+  September template, `reagentc /disable`, removing the Recovery partition,
+  `reagentc /enable`, and an `sppsvc` restart left `RefreshLicenseStatus` working.
+  Not conclusive on its own, since it skips sysprep.
+- **The cumulative alone does.** A fresh clone of the September template
+  succeeded on 26100.33438. Windows Update installed the November cumulative on
+  that clone by itself (the shipped WU policy is Windows' default), and after the
+  reboot into 26100.33822 the call failed identically, through both CIM and WMI.
+  The first attempt at this experiment was lost for two hours to a harness bug,
+  not a Windows one: the boot wait was piped through `head -1`, so the update task
+  was registered while the guest was still booting and never existed.
+
+Cloudbase-Init 1.1.8's plugin calls `refresh_status()` only under
+`log_licensing_info` (default true), alongside an `slmgr /dlv` dump into its log.
+On a lab clone of the PR artifact, rerunning the plugin with the shipped conf
+reproduced the failure; with `log_licensing_info=false` added it ran clean and was
+recorded as done. Fix: `log_licensing_info=false` in `cloudbase-init.conf`. The
+plugin stays listed so a configured KMS host or activation still applies.
+
+No public report of the regression turned up.
+
 ## 2026-11-10 — clones cap C: near 99 GiB: a recovery partition's GPT entry survives the truncation
 
 A clone with a 250G disk reported C: at 99.0 GB. Proxmox and the guest both saw a
