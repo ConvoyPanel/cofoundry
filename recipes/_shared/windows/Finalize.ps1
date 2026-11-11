@@ -128,7 +128,9 @@ function Zero-FreeSpace($DriveLetter) {
   $root   = "${DriveLetter}:\"
   $target = Join-Path $root "zero.fill"
   $free   = { (Get-PSDrive $DriveLetter).Free }
-  if ((& $free) -le $reserveBytes) {
+  $freeBefore = & $free
+  $script:ZeroFillHeldBytes = [long]0
+  if ($freeBefore -le $reserveBytes) {
     Write-Step ("  only {0:N1} GB free; skipping zero pass" -f ((& $free) / 1GB))
     return
   }
@@ -156,14 +158,34 @@ function Zero-FreeSpace($DriveLetter) {
   if (Test-Path $target) {
     throw "could not delete $target after the zero pass - C: would go into sysprep full"
   }
-  # Report what was WRITTEN, not the free space afterwards. Reading free space
-  # here races NTFS's reclaim of a multi-GB delete: the same code logged "13.9 GB
-  # free" on one run and "1.0 GB free" on the next, purely on reclaim timing,
-  # while the gate before generalize measured 13.8 GB both times. Worse, the free
-  # figure never showed whether the fill actually happened -- it reads the same
-  # whether 13 GB was zeroed and released or nothing was written at all. Bytes
-  # written is the thing this function is actually responsible for.
-  Write-Step ("  zero pass done; {0:N1} GB zeroed and released on {1}:" -f ($written / 1GB), $DriveLetter)
+  # Report what was WRITTEN. A free-space figure cannot show whether the fill
+  # happened at all -- it reads the same whether 13 GB was zeroed and released or
+  # nothing was written.
+  Write-Step ("  zero pass done; {0:N1} GB zeroed on {1}:" -f ($written / 1GB), $DriveLetter)
+
+  # The name being gone does not mean the space is back. NTFS deletes with POSIX
+  # semantics: while any other handle is open on the fill file, the delete moves
+  # it to $Extend\$Deleted with every cluster still allocated, until that handle
+  # closes or the volume is next mounted. Usually the holder lets go within
+  # minutes -- one build logged "1.0 GB free" here and 13.8 GB at the generalize
+  # gate. On 2026-11-11 it never did: the build reached generalize with 1.1 GB
+  # free and exported 12.2 GB parked in $Deleted. Clones purge it on first boot,
+  # so the template was fine, but sysprep ran on an almost-full volume, and a
+  # failure at the gate would have blamed the largest directories, none of which
+  # holds it. The holder was never identified: Defender's MPLog does not mention
+  # the file, and a clone releases it at once. So wait for the space, and say
+  # plainly when it does not come back.
+  $slackBytes = 1GB
+  $deadline = (Get-Date).AddSeconds(300)
+  while ((& $free) -lt ($freeBefore - $slackBytes) -and (Get-Date) -lt $deadline) {
+    Start-Sleep -Seconds 5
+  }
+  $script:ZeroFillHeldBytes = [math]::Max([long]0, $freeBefore - (& $free))
+  if ($script:ZeroFillHeldBytes -gt $slackBytes) {
+    Write-Step ("  WARNING {0:N1} GB of the deleted {1} is still allocated after 300s: another handle holds it in `$Extend\`$Deleted. Clones reclaim it on first boot; sysprep runs without it." -f ($script:ZeroFillHeldBytes / 1GB), $target)
+  } else {
+    Write-Step ("  {0:N1} GB free on {1}: again; the fill file's space is released" -f ((& $free) / 1GB), $DriveLetter)
+  }
 }
 
 Write-Step "stop Windows Update service and purge download cache"
@@ -724,6 +746,11 @@ if ($freeGB -lt 0.75) {
       [pscustomobject]@{ Path = $_.FullName; GB = [math]::Round($b / 1GB, 1) }
     } | Sort-Object GB -Descending | Select-Object -First 8
   foreach ($h in $hogs) { Write-Step ("    {0,6:N1} GB  {1}" -f $h.GB, $h.Path) }
+  # No directory listing can show this: the deleted fill file sits in
+  # $Extend\$Deleted, outside the namespace, until its last handle closes.
+  if ($script:ZeroFillHeldBytes -gt 1GB) {
+    throw ("only {0:N1} GB free on C: - sysprep needs room to generalize. Another {1:N1} GB is still allocated to the zero pass's deleted fill file, which another process holds open in `$Extend\`$Deleted; the directories above are not the cause." -f $freeGB, ($script:ZeroFillHeldBytes / 1GB))
+  }
   throw ("only {0:N1} GB free on C: - sysprep needs room to generalize. Largest directories are listed above; if this is C:\Windows.old the reclaim step above failed, otherwise raise final_disk_size." -f $freeGB)
 }
 
