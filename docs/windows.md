@@ -578,13 +578,11 @@ ConnectServer` / `RunExternalDlls` as a generalize-corruption signal was
   mechanism by which packer concluded success was never pinned down. It was not
   worth a build cycle, because `assert-generalized.sh` makes the outcome safe
   either way. Do not "explain" it here without evidence.
-- **`Remove-PartitionsBehindSystem` is unconfirmed on a live build**, and no
-  verify check covers what it fixes. Confirm on the next 2025 build that the step
-  finds the recovery partition, that `reagentc /disable` exits 0 and the partition
-  is removed, and that a clone with a disk above 100G extends C: to the end. A
-  check that fails when any partition lies behind C: would catch a regression at
-  any clone size; growing the verify clone past 100G would too, at the cost of the
-  space.
+- **No verify check covers a partition behind C:.** `system-volume-extended`
+  only checks that C: reaches the shipped size, and verify grows the clone by
+  4G, so the ~99 GiB cap never shows. A check that fails when any partition lies
+  behind C: would catch a regression at any clone size; growing the verify clone
+  past 100G would too, at the cost of the space.
 - **What holds `zero.fill` open after the zero pass is unknown.** One 2025 build
   carried the deleted file in `$Extend\$Deleted` from the zero pass through
   shutdown. Defender's `MPLog` does not mention it, and the same code on an idle
