@@ -257,6 +257,36 @@ describe('Zero-FreeSpace leaves the volume usable', () => {
         expect(fn).toMatch(/if \(Test-Path \$target\) \{[\s\S]*?throw/)
     })
 
+    // 2026-11-11: the delete succeeded, but another handle was still open on the
+    // fill file, so NTFS parked it in $Extend\$Deleted with all 12.2 GB still
+    // allocated. The build reached generalize with 1.1 GB free, and no directory
+    // listing could have said why.
+    test('waits for the deleted fill file to release its space', () => {
+        const fn = body()
+        expect(fn).toMatch(/\$freeBefore = & \$free/)
+        // Measured against the pre-fill figure, bounded, and polled.
+        expect(fn).toMatch(
+            /while \(\(& \$free\) -lt \(\$freeBefore - \$slackBytes\) -and \(Get-Date\) -lt \$deadline\) \{\s*Start-Sleep/
+        )
+    })
+
+    test('reports space the fill file still holds instead of staying silent', () => {
+        const fn = body()
+        expect(fn).toMatch(/\$script:ZeroFillHeldBytes = \[math\]::Max/)
+        expect(fn).toMatch(
+            /if \(\$script:ZeroFillHeldBytes -gt \$slackBytes\) \{\s*Write-Step \("  WARNING/
+        )
+    })
+
+    test('the generalize gate names a held fill file rather than directories', () => {
+        const sysprepAt = finalize.indexOf('Write-Step "sysprep and shutdown"')
+        const runAt = finalize.indexOf('Sysprep.exe')
+        const preamble = finalize.slice(sysprepAt, runAt)
+        expect(preamble).toMatch(
+            /if \(\$script:ZeroFillHeldBytes -gt 1GB\) \{\s*throw \("only \{0:N1\} GB free on C: - [^"]*fill file/
+        )
+    })
+
     test('asserts free space before generalize', () => {
         const sysprepAt = finalize.indexOf('Write-Step "sysprep and shutdown"')
         const runAt = finalize.indexOf('Sysprep.exe')

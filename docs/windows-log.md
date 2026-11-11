@@ -43,6 +43,48 @@ plugin stays listed so a configured KMS host or activation still applies.
 
 No public report of the regression turned up.
 
+## 2026-11-11 — `zero.fill` parked in `$Extend\$Deleted` through generalize
+
+Same build. `Finalize.ps1` logged `zero pass done; 12.2 GB zeroed and released`
+and then `C: has 1.1 GB free before generalize` — 0.35 GB above the gate. The
+exported image looked equally wrong offline: `df` reported 31.5 GB used against
+18.0 GB of files (the September image: 17.6 against 17.2).
+
+Mounting with ntfs3's `showmeta` found it: a 13,086,228,480-byte file in
+`$Extend\$Deleted`, timestamped at the zero pass. `Remove-Item` had succeeded and
+`Test-Path` was false, but another handle was still open on the file, so NTFS's
+POSIX delete moved it out of the namespace with its clusters allocated. It
+survived to export. The qcow2 grew only 630 MB because the clusters are zeros;
+that growth is the cumulative's files, not WinRE (both images carry the same
+~760 MB `Winre.wim` on C:).
+
+- **Clones are unaffected.** A 32 GiB clone of the artifact read 11.97 GiB free
+  on first boot and 12.91 GiB once settled: Windows purges `$Deleted` on mount.
+- **The holder was not identified.** Defender's `MPLog` never mentions
+  `zero.fill`. On an idle lab clone the verbatim `Zero-FreeSpace` released its
+  11.4 GB at once, with and without `Flush($true)` before the close. A third run
+  with Defender real-time protection off was spoiled: the guest agent dropped the
+  call while the script kept running, and the harness rebooted mid-fill, leaving
+  an 8.24 GB `zero.fill` (removed by hand).
+- **Likely the same phenomenon as before.** The comment it replaces recorded one
+  run logging "1.0 GB free" right after the delete and 13.8 GB at the gate, and
+  called it reclaim timing. That reads as a holder which let go in time.
+
+Fix: `Zero-FreeSpace` now waits up to 300s for free space to return to its
+pre-fill figure less 1 GB and logs a `WARNING` with the held amount if it does
+not; the generalize gate, if it fails, names the held file instead of listing
+directories. Exercised on the lab clone with the functions cut verbatim from
+`Finalize.ps1`, plus a test-only `Remove-Item` wrapper that has a second process
+hold `zero.fill` open (with delete sharing) at the moment of the delete. That
+reproduced the build's state exactly: name gone, space still allocated.
+
+- **40s hold:** the space returned after 46s and was reported released; the gate
+  kept its directory-listing message.
+- **330s hold:** `WARNING 11.6 GB ... still allocated after 300s`, then 0.7 GB
+  free at the gate — under its 0.75 GB threshold, so the real gate would fail —
+  and the gate's message named the held fill file instead of `C:\Windows`. Free
+  space returned to 12.4 GB when the holder exited.
+
 ## 2026-11-10 — clones cap C: near 99 GiB: a recovery partition's GPT entry survives the truncation
 
 A clone with a 250G disk reported C: at 99.0 GB. Proxmox and the guest both saw a
