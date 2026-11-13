@@ -152,10 +152,13 @@ confident wrong conclusion:
 Length -Sum` returns **0 for an ACL-protected populated tree**, identically to
   an empty one, because the errors are silenced. Count enumeration errors before
   believing a size.
-- Reading free space _after_ deleting a multi-GB file races NTFS's reclaim: the
-  same code logged "13.9 GB free" and "1.0 GB free" on consecutive runs. Worse,
-  neither value could distinguish "13 GB was zeroed and released" from "nothing
-  was written". Report the thing you are responsible for — bytes written.
+- Free space read right after deleting a multi-GB file cannot say whether the
+  file was ever written. The same code logged "13.9 GB free" and "1.0 GB free" on
+  consecutive runs, and neither value distinguished "13 GB was zeroed and
+  released" from "nothing was written". Report the thing you are responsible for
+  — bytes written. The swing itself was most likely another handle holding the
+  deleted file open, which keeps its space allocated in `$Extend\$Deleted` until
+  that handle closes; see [windows.md](windows.md).
 
 The same trap has a scheduling flavour: **"the check failed" and "the check never
 ran" are different states, and a retry budget is what keeps them apart.**
