@@ -565,12 +565,11 @@ ConnectServer` / `RunExternalDlls` as a generalize-corruption signal was
   `HKLM\SYSTEM\CurrentControlSet\Services\<name>\DelayedAutostart` (or `sc.exe qc`)
   would classify these properly. Warning on every build trains readers to ignore
   warnings.
-- **`rearm-headroom` warns on 2025, passes on 2019 and 2022.** It cannot yet
-  distinguish "0 rearms left" (a real defect for anyone sysprepping a clone) from
-  "could not read the count from `slmgr /dlv`" (a probe that does not match this
-  release). All three builds ran sysprep once, so a mismatched probe is much the
-  likelier explanation. Verify now prints warning output (`200a11d`); resolve on
-  the next 2025 verify.
+- **The 2025 template ships with no licensing rearms left.** `rearm-headroom`
+  reads `remaining Windows rearm count: 0` from `slmgr /dlv` on 2025 and warns;
+  2019 and 2022 pass. The probe matches the release, so this is the template, not
+  the check: a 2025 clone cannot be sysprepped again. Each build generalizes once
+  on the happy path. Whether the build can keep a rearm is unexamined.
 - **Intermittent `ERROR_BADDB` during specialize** reproduced with verified install
   media, adequate free space, and no competing build. Treat host RAM or the storage
   path as the leading untested hypothesis — not a reason to revisit CompactOS.

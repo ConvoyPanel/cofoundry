@@ -10,6 +10,32 @@ build cycle is worth exactly as much as the fix that followed it.
 
 ---
 
+## 2026-11-13 — PR #40 verified: full 2025 build passes `cf verify`
+
+A full `windows-server-2025` build of PR #40's head (`f1dac45`, stacked on #39)
+took 3h31m. The image is 26100.33822 (SOFTWARE hive `UBR` `0x841e`), the
+November cumulative that broke `WindowsLicensingPlugin`. `cf verify`: 17 passed,
+1 warned, 0 failed (19m26s).
+
+- **Licensing:** `cloudbase-init-completed` passed with `log_licensing_info=false`.
+  This is the check the #39 build failed.
+- **Recovery partition:** `reagentc /disable exit 0`, one partition removed, and
+  `Winre.wim` on C:. The export has EFI, MSR and C: only.
+- **Zero pass:** `12.5 GB zeroed`, and the space came straight back: the next
+  line read `the fill file's space is released` with 13.5 GB free, and the
+  generalize gate saw the same. The export's
+  `$Extend\$Deleted` is empty, and `df` reads 16.61 GiB used against September's
+  16.43. The hold did not recur, so only the lab reproduction has exercised the
+  `WARNING` and the gate's new message.
+- **`rearm-headroom`** warned with `remaining Windows rearm count: 0`. It is the
+  first 2025 verify to print the check's output, and it settles the open issue:
+  the probe matches 2025, and the template ships with no rearms left.
+- **Appx:** Finalize reported Edge, Feedback Hub and Terminal provisioning dropped
+  and not re-provisioned. This is not a regression: offline reads of the September
+  and #39 exports also provision only `DesktopAppInstaller` and `SecHealthUI`.
+  Edge's Win32 install ships either way (`msedge.exe` 157.0.4341.46 and its
+  all-users Start menu shortcut).
+
 ## 2026-11-11 — the November cumulative breaks `WindowsLicensingPlugin` on 2025
 
 Found while verifying the PR #39 (recovery partition) build of
