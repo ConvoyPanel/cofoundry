@@ -229,16 +229,35 @@ for all users (`0x80073cf2`), so `Finalize.ps1` unregisters per-user,
 non-provisioned packages before sysprep. The rules that make that cleanup safe,
 each learned from a build it broke:
 
-- **Skip only packages with no per-user registration** (`PackageUserInformation`
-  with `InstallState = Installed`). Skipping anything merely present in
-  `Get-AppxProvisionedPackage` misses Edge, which appears there under the very full
-  name sysprep rejects.
+- **Skip packages with no per-user registration** (`PackageUserInformation` with
+  `InstallState = Installed`). They cannot block generalize.
 - **Skip `$pkg.IsFramework` and `$pkg.NonRemovable`.** Frameworks can never be
   removed while dependents remain, and non-removable packages refuse every route.
+- **Keep a registered package that provisioning delivers.** Registered for the
+  build user and provisioned for all users is the state generalize accepts.
+  Removing such a package with `-AllUsers` also drops its provisioning, Windows
+  then deletes the payload, and the re-provision step has nothing to restore from.
+  That is how Windows Terminal and Feedback Hub went missing from 2025 templates.
+- **Match a bundle through its manifest, not its full name.** A bundle is
+  provisioned under its own name
+  (`Microsoft.WindowsTerminal_3001.18.10301.0_neutral_~_8wekyb3d8bbwe`) while a
+  profile registers the architecture package inside it
+  (`Microsoft.WindowsTerminal_1.18.10301.0_x64__8wekyb3d8bbwe`). The bundle's
+  `AppxMetadata\AppxBundleManifest.xml` under `%ProgramFiles%\WindowsApps` lists
+  the application packages it carries; match on name, version and architecture.
+  A per-user version the bundle does not carry still goes.
+- **Edge's identity package always goes, provisioned or not.** Generalize refuses
+  the per-user `Microsoft.MicrosoftEdge.Stable` registration even though
+  `Get-AppxProvisionedPackage` lists the very full name it rejects. Removing it
+  drops only Edge's sparse package identity: the browser is the Win32
+  `msedge.exe` under `Program Files (x86)`, with its own all-users Start menu
+  shortcut, and ships either way. Finalize reports the drop as intended rather
+  than as an `ABSENT` warning.
 - **Never deprovision an entry whose `PackageName` equals the registered
-  `PackageFullName`.** Deprovisioning a non-removable package strips its
-  provisioning while leaving the payload — manufacturing the exact
-  registered-but-not-provisioned state generalize refuses.
+  `PackageFullName`, or one that covers a package being kept.** Deprovisioning a
+  non-removable package strips its provisioning while leaving the payload, and
+  deprovisioning a kept package's bundle leaves that package registered but not
+  provisioned. Both manufacture the state generalize refuses.
 - **Stop Edge processes first** (`msedge`, `msedgewebview2`, `MicrosoftEdgeUpdate`);
   the package cannot be unregistered while they run.
 - **Match on the package family**, not the full name, so coexisting versions (2025
@@ -513,6 +532,7 @@ experiments was recovered after the fact.
 | `sysprep did not arm the image for OOBE after 2 attempts`, no detail                                    | The message pointed at a log on a VM packer deletes seconds later                                                                                   | `Finalize.ps1` dumps `setuperr.log`/`setupact.log` and the arming registry state to packer's stdout                               |
 | MTUPlugin fails `[WinError 10013]`                                                                      | The plugin binds UDP/68 to read DHCP option 26; the DHCP Client service already owns it                                                             | `mtu_use_dhcp_config=false` in both confs                                                                                         |
 | `winget` missing from a 2025 clone                                                                      | The Appx cleanup dropped `DesktopAppInstaller`'s provisioning, so fresh profiles never get it                                                       | Finalize re-provisions dropped families from on-disk payload; `winget-present` verify check (2025 only)                           |
+| Windows Terminal or Feedback Hub missing from a 2025 clone                                              | The Appx cleanup unregistered a package its provisioned bundle covers; `-AllUsers` removal dropped the provisioning and the payload with it         | Finalize keeps packages a provisioned bundle's manifest lists; `terminal-present` and `edge-present` verify checks (2025 only)    |
 | Clone's C: stops near 99 GiB on a larger disk; `Get-PartitionSupportedSize` reports no room to grow     | A recovery partition's GPT entry sits behind C:, left by a template built before `Remove-PartitionsBehindSystem`; its contents were truncated away  | Rebuild the template. On an existing clone, remove the empty recovery partition and extend C: — it has no filesystem to lose      |
 | `cloudbase-init-completed` fails: `WindowsLicensingPlugin` ... `x_wmi: Invalid parameter (-2147217400)` | Server 2025 26100.33822+ rejects `RefreshLicenseStatus`, which the plugin calls when `log_licensing_info` is on                                     | `log_licensing_info=false` in `cloudbase-init.conf`                                                                               |
 | ~1 GB free at the generalize gate right after a multi-GB zero pass; `df` far above `du` on the export   | Another handle held `zero.fill` at delete time, so NTFS parked it in `$Extend\$Deleted` with its clusters allocated                                 | The zero pass waits up to 300s for the space and warns with the held amount; the gate names it instead of listing directories     |
