@@ -72,6 +72,54 @@ if ($alias) {
     timeoutS: 120,
 }
 
+/**
+ * windows-server-2025 only, for the same reason as `winget-present`: Terminal
+ * is inbox on 2025. Finalize's Appx cleanup used to unregister it with
+ * -AllUsers, which dropped its provisioning and let Windows delete the payload,
+ * so every 2025 clone shipped without it. Provisioning is the gate, as for
+ * winget.
+ */
+export const terminalPresentCheck: GuestCheck = {
+    id: 'terminal-present',
+    description: 'Windows Terminal is provisioned so new profiles receive it',
+    script: `$prov = @(Get-AppxProvisionedPackage -Online |
+  Where-Object { $_.DisplayName -eq 'Microsoft.WindowsTerminal' })
+if (-not $prov) {
+  Write-Output 'Microsoft.WindowsTerminal is NOT provisioned - every clone profile will lack Terminal'
+  exit 1
+}
+Write-Output "provisioned: $($prov[0].PackageName)"
+$alias = @(Get-ChildItem 'C:\\Users\\*\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe' -ErrorAction SilentlyContinue)
+if ($alias) {
+  Write-Output "alias present for $($alias.Count) profile(s): $($alias[0].FullName)"
+} else {
+  Write-Output 'note: no per-profile wt.exe alias yet (provisioning is the gate that matters)'
+}`,
+    severity: 'fail',
+    phase: 'post-logon',
+    timeoutS: 120,
+}
+
+/**
+ * windows-server-2025 only: the release this was established on. Finalize
+ * deliberately removes Edge's Appx package identity (generalize refuses it), so
+ * this asserts the thing users actually run -- the Win32 browser and its
+ * all-users Start menu entry -- rather than any Appx state.
+ */
+export const edgePresentCheck: GuestCheck = {
+    id: 'edge-present',
+    description: 'the Edge browser and its Start menu entry ship',
+    script: `$exe = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+$lnk = 'C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Microsoft Edge.lnk'
+if (-not (Test-Path $exe)) { Write-Output "missing: $exe"; exit 1 }
+Write-Output "msedge.exe $((Get-Item $exe).VersionInfo.ProductVersion)"
+if (-not (Test-Path $lnk)) { Write-Output "missing: $lnk"; exit 1 }
+Write-Output "start menu: $lnk"`,
+    severity: 'fail',
+    phase: 'post-logon',
+    timeoutS: 120,
+}
+
 export const windowsSuite: CheckSuite = {
     shell: 'powershell',
     // A painted desktop has a taskbar, icons, and window chrome, so it never

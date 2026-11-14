@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { linuxSuite } from '@/verify/checks/linux.ts'
-import { windowsSuite, wingetPresentCheck } from '@/verify/checks/windows.ts'
+import {
+    edgePresentCheck,
+    terminalPresentCheck,
+    windowsSuite,
+    wingetPresentCheck,
+} from '@/verify/checks/windows.ts'
 import type { GuestCheck } from '@/verify/checks/types.ts'
 
 /**
@@ -21,7 +26,7 @@ const scriptsOf = (checks: GuestCheck[]): [string, string][] =>
 const allScripts: [string, string][] = [
     ...scriptsOf(windowsSuite.checks),
     ...scriptsOf(linuxSuite.checks),
-    ...scriptsOf([wingetPresentCheck]),
+    ...scriptsOf([wingetPresentCheck, terminalPresentCheck, edgePresentCheck]),
 ]
 
 describe('verify check scripts', () => {
