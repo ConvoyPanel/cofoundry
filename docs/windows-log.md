@@ -10,6 +10,53 @@ build cycle is worth exactly as much as the fix that followed it.
 
 ---
 
+## 2026-11-13 — 2025 keeps Windows Terminal and Feedback Hub
+
+The Appx cleanup had been removing both from every 2025 template. Each was
+registered for the build user as an architecture package
+(`Microsoft.WindowsTerminal_1.18.10301.0_x64__8wekyb3d8bbwe`) and provisioned as
+the bundle that carries it
+(`Microsoft.WindowsTerminal_3001.18.10301.0_neutral_~_8wekyb3d8bbwe`). The
+"provisioned?" test compared full names, never matched a bundle, and sent both to
+`Remove-AppxPackage -AllUsers`. That dropped their provisioning too, and Windows
+deleted the payload with it. The PR #40 build shows both halves: the `WARNING the
+cleanup dropped provisioning ... ABSENT on every clone` list names both bundles,
+then `could not re-provision Microsoft.WindowsTerminal : no package payload found
+under C:\Program Files\WindowsApps` (and the same for Feedback Hub).
+
+Change: Finalize reads each provisioned bundle's
+`AppxMetadata\AppxBundleManifest.xml`, keys its application packages by name,
+version and architecture, and keeps a registered package that a provisioned entry
+covers. Edge's identity package is exempt and still goes: it is the package that
+blocked sysprep in the 2026-08-01 "failed sysprep shipped a successful template"
+entry. The deprovision fallback may no longer take an entry that covers a kept
+package. The matching was first run in a mac `pwsh` harness against
+`DesktopAppInstaller`'s real bundle manifest from the PR #40 export, with mocked
+Appx objects; it picked out the `x64` application packages and ignored the
+resource and `b5` stub entries.
+
+Full `windows-server-2025` build of PR #40's `f1dac45` plus the change: 3h16m,
+26100.33822 (`KB5131080`).
+
+- **Appx:** 5 provisioned packages. Finalize kept Terminal (`1.18.10301.0_x64`,
+  provisioned via bundle `3001.18.10301.0`) and Feedback Hub
+  (`1.2401.20253.0_x64`, via bundle `2024.125.1522.0`), unregistered Edge's
+  identity package, and went from 5 provisioned packages to 4 with no `ABSENT`
+  warning.
+- **Generalize** armed on attempt 1 of 2 with both packages still registered for
+  the build user; `assert-generalized` OK. Keeping a covered registration does not
+  trip `0x80073cf2`.
+- **`cf verify`:** 19 passed, 1 warned (`rearm-headroom`, count 0), 18m52s. The
+  new `terminal-present` and `edge-present` checks passed after logon. Feedback Hub
+  has no check; the build log is the only evidence it ships.
+- **Zero pass:** 12.6 GB zeroed and released at once, 13.6 GB free at the gate.
+  Second full build in a row with no hold.
+- **WU round two exited 1 once.** After the round that installed the cumulative,
+  `WU.ps1` died about 4 min into its search with no message, and `max_retries`
+  re-ran it; the retry found one Defender platform update and finished. That is the
+  round-two signature `restart_check` is meant to wait out. Nothing captured the
+  guest, so the cause is unconfirmed.
+
 ## 2026-11-13 — truncating `zero.fill` before the close; the holder reproduced on a lab clone
 
 Lab: a clone of the PR #40 `windows-server-2025` template (26100.33822) on
