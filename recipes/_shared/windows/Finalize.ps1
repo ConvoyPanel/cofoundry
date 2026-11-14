@@ -136,21 +136,54 @@ function Zero-FreeSpace($DriveLetter) {
   }
   $buffer  = New-Object byte[] (1024 * 1024)
   $written = [long]0
+  $truncated = $false
+  # FileShare.None (File.Open's default): no other user-mode process can open
+  # the fill file until this stream closes.
   $stream  = [System.IO.File]::Open($target, [System.IO.FileMode]::CreateNew)
   try {
-    # Re-check free space periodically rather than per-MB: Get-PSDrive is far
-    # more expensive than the write itself.
-    while ($true) {
-      for ($i = 0; $i -lt 64; $i++) {
-        $stream.Write($buffer, 0, $buffer.Length)
-        $written += $buffer.Length
+    try {
+      # Re-check free space periodically rather than per-MB: Get-PSDrive is far
+      # more expensive than the write itself.
+      while ($true) {
+        for ($i = 0; $i -lt 64; $i++) {
+          $stream.Write($buffer, 0, $buffer.Length)
+          $written += $buffer.Length
+        }
+        $stream.Flush()
+        if ((& $free) -le $reserveBytes) { break }
       }
-      $stream.Flush()
-      if ((& $free) -le $reserveBytes) { break }
+    } catch [System.IO.IOException] {
+      # Something else on the box consumed the reserve while we ran. Not fatal --
+      # the gate below is what decides.
     }
-  } catch [System.IO.IOException] {
-    # Something else on the box consumed the reserve while we ran. Not fatal --
-    # the gate below is what decides.
+
+    # Give the space back BEFORE closing, while this stream is the only handle
+    # any user-mode process can hold. Truncating to zero frees every cluster at
+    # once; whatever opens the file after the close -- the delete, or whatever
+    # held it on 2026-11-11 -- then holds a zero-byte file, which pins nothing in
+    # $Extend\$Deleted. The zeros stay on disk: freeing clusters does not
+    # overwrite them.
+    #
+    # Flush to disk first. Flush() alone only empties .NET's buffer into the OS
+    # cache, and truncating discards dirty cached pages past the new end of
+    # file, so zeros still in the cache would never be written. A failed flush
+    # (the disk filled mid-write) must not stop the truncate: the space matters
+    # more than the zeros.
+    try {
+      $stream.Flush($true)
+    } catch {
+      Write-Step ("  could not flush {0} to disk before truncating: {1}" -f $target, $_.Exception.Message)
+    }
+    # Not covered: a handle that maps a view of the file. SetEndOfFile then
+    # fails with ERROR_USER_MAPPED_FILE (1224), and the delete-and-wait below
+    # is the backstop. Kernel-mode opens, such as a filter driver's, ignore
+    # FileShare.None, so the holder may already be attached at this point.
+    try {
+      $stream.SetLength(0)
+      $truncated = $true
+    } catch {
+      Write-Step ("  could not truncate {0} before the delete, so its space is freed only when every handle closes: {1}" -f $target, $_.Exception.Message)
+    }
   } finally {
     $stream.Close()
   }
@@ -161,20 +194,24 @@ function Zero-FreeSpace($DriveLetter) {
   # Report what was WRITTEN. A free-space figure cannot show whether the fill
   # happened at all -- it reads the same whether 13 GB was zeroed and released or
   # nothing was written.
-  Write-Step ("  zero pass done; {0:N1} GB zeroed on {1}:" -f ($written / 1GB), $DriveLetter)
+  Write-Step ("  zero pass done; {0:N1} GB zeroed on {1}: ({2})" -f ($written / 1GB), $DriveLetter, $(if ($truncated) { 'truncated before the delete' } else { 'NOT truncated' }))
 
   # The name being gone does not mean the space is back. NTFS deletes with POSIX
   # semantics: while any other handle is open on the fill file, the delete moves
   # it to $Extend\$Deleted with every cluster still allocated, until that handle
-  # closes or the volume is next mounted. Usually the holder lets go within
-  # minutes -- one build logged "1.0 GB free" here and 13.8 GB at the generalize
-  # gate. On 2026-11-11 it never did: the build reached generalize with 1.1 GB
-  # free and exported 12.2 GB parked in $Deleted. Clones purge it on first boot,
-  # so the template was fine, but sysprep ran on an almost-full volume, and a
-  # failure at the gate would have blamed the largest directories, none of which
-  # holds it. The holder was never identified: Defender's MPLog does not mention
-  # the file, and a clone releases it at once. So wait for the space, and say
-  # plainly when it does not come back.
+  # closes or the volume is next mounted. One build logged "1.0 GB free" here
+  # and 13.8 GB at the generalize gate, so that holder let go in time. On
+  # 2026-11-11 one never did: the build reached generalize with 1.1 GB free and
+  # exported 12.2 GB parked in $Deleted. Clones purge it on first boot, so the
+  # template was fine, but sysprep ran on an almost-full volume, and a failure
+  # at the gate would have blamed the largest directories, none of which holds
+  # it. The holder was never identified. On a lab clone (2026-11-13) it caught
+  # 3 of 7 untruncated fills and kept each until a reboot, watched for 2 to 27
+  # minutes. No handle in any process that can be opened was it, which leaves a
+  # protected process (MsMpEng) or the kernel. The truncate above keeps any such
+  # holder from pinning the space; this wait is the backstop for when the
+  # truncate could not run, and it says plainly when the space does not come
+  # back.
   $slackBytes = 1GB
   $deadline = (Get-Date).AddSeconds(300)
   while ((& $free) -lt ($freeBefore - $slackBytes) -and (Get-Date) -lt $deadline) {
