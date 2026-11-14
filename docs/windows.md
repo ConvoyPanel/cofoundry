@@ -515,7 +515,7 @@ experiments was recovered after the fact.
 | `winget` missing from a 2025 clone                                                                      | The Appx cleanup dropped `DesktopAppInstaller`'s provisioning, so fresh profiles never get it                                                       | Finalize re-provisions dropped families from on-disk payload; `winget-present` verify check (2025 only)                           |
 | Clone's C: stops near 99 GiB on a larger disk; `Get-PartitionSupportedSize` reports no room to grow     | A recovery partition's GPT entry sits behind C:, left by a template built before `Remove-PartitionsBehindSystem`; its contents were truncated away  | Rebuild the template. On an existing clone, remove the empty recovery partition and extend C: — it has no filesystem to lose      |
 | `cloudbase-init-completed` fails: `WindowsLicensingPlugin` ... `x_wmi: Invalid parameter (-2147217400)` | Server 2025 26100.33822+ rejects `RefreshLicenseStatus`, which the plugin calls when `log_licensing_info` is on                                     | `log_licensing_info=false` in `cloudbase-init.conf`                                                                               |
-| ~1 GB free at the generalize gate right after a multi-GB zero pass; `df` far above `du` on the export   | Another handle held `zero.fill` at delete time, so NTFS parked it in `$Extend\$Deleted` with its clusters allocated                                 | The zero pass waits up to 300s for the space and warns with the held amount; the gate names it instead of listing directories     |
+| ~1 GB free at the generalize gate right after a multi-GB zero pass; `df` far above `du` on the export   | Another handle held `zero.fill` at delete time, so NTFS parked it in `$Extend\$Deleted` with its clusters allocated                                 | The zero pass truncates the fill file before closing it; a 300s wait, a warning, and the gate message back it up                  |
 
 ## Rejected approaches — do not retry
 
@@ -582,12 +582,16 @@ ConnectServer` / `RunExternalDlls` as a generalize-corruption signal was
   4G, so the ~99 GiB cap never shows. A check that fails when any partition lies
   behind C: would catch a regression at any clone size; growing the verify clone
   past 100G would too, at the cost of the space.
-- **What holds `zero.fill` open after the zero pass is unknown.** One 2025 build
-  carried the deleted file in `$Extend\$Deleted` from the zero pass through
-  shutdown. Defender's `MPLog` does not mention it, and the same code on an idle
-  clone releases the space immediately. If the zero pass's `WARNING ... still
-allocated after 300s` appears, preserve the VM and identify the holder before
-  changing anything; the wait only covers a holder that lets go in time.
+- **What pins a deleted fill file is unknown.** It strikes idle clones too: on
+  a lab clone it caught 3 of 7 untruncated fills, each until a reboot. No handle
+  in any process that can be opened is it, which leaves a protected process
+  (MsMpEng, System) or a lingering section: a file mapped at the moment of its
+  delete stays allocated after the mapping is released. The zero pass now
+  truncates the fill file before closing it, so whatever catches it afterwards
+  pins nothing. A plain handle opened during the write does not stop the
+  truncate; a mapped view does. The build log then says `NOT truncated`, and the
+  300s wait and its `WARNING ... still allocated` follow. If that appears,
+  preserve the VM and identify the mapper.
 - **`WU.ps1`'s async progress reporting and throughput mode are unconfirmed on a
   live build.** Confirm the log shows download/install percentages rather than the
   `async ... unavailable ... using synchronous batch` fallback, and that it contains

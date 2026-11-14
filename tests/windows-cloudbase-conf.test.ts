@@ -257,6 +257,39 @@ describe('Zero-FreeSpace leaves the volume usable', () => {
         expect(fn).toMatch(/if \(Test-Path \$target\) \{[\s\S]*?throw/)
     })
 
+    // Static guards over the script text (no PowerShell runtime here). A handle
+    // that opens the fill file after the close used to pin all of it in
+    // $Extend\$Deleted; truncating while this stream is the only user-mode
+    // handle frees the clusters first, so such a holder pins a zero-byte file.
+    test('truncates the fill file before closing it', () => {
+        const fn = body()
+        const truncateAt = fn.indexOf('$stream.SetLength(0)')
+        expect(truncateAt).toBeGreaterThan(-1)
+        expect(truncateAt).toBeLessThan(fn.indexOf('$stream.Close()'))
+        expect(fn).toMatch(/\} finally \{\s*\$stream\.Close\(\)/)
+    })
+
+    test('flushes to disk before truncating, and a failed flush cannot skip it', () => {
+        // Truncation discards dirty cached pages past the new end of file, so
+        // only Flush($true) (FlushFileBuffers) guarantees the zeros were written.
+        const fn = body()
+        const flushAt = fn.indexOf('$stream.Flush($true)')
+        expect(flushAt).toBeGreaterThan(-1)
+        expect(flushAt).toBeLessThan(fn.indexOf('$stream.SetLength(0)'))
+        // Its own try: a disk that filled mid-write must still get truncated.
+        expect(fn).toMatch(
+            /try \{\s*\$stream\.Flush\(\$true\)\s*\} catch \{\s*Write-Step[^\n]*\n\s*\}\s*(#[^\n]*\n\s*)*try \{\s*\$stream\.SetLength\(0\)/
+        )
+    })
+
+    test('a failed truncate falls back to the delete-and-wait instead of throwing', () => {
+        // A mapped view makes SetEndOfFile fail (ERROR_USER_MAPPED_FILE). The
+        // build must carry on to the delete; the wait below is the backstop.
+        expect(body()).toMatch(
+            /\$stream\.SetLength\(0\)\s*\$truncated = \$true\s*\} catch \{\s*Write-Step/
+        )
+    })
+
     // 2026-11-11: the delete succeeded, but another handle was still open on the
     // fill file, so NTFS parked it in $Extend\$Deleted with all 12.2 GB still
     // allocated. The build reached generalize with 1.1 GB free, and no directory

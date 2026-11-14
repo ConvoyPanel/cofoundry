@@ -10,6 +10,87 @@ build cycle is worth exactly as much as the fix that followed it.
 
 ---
 
+## 2026-11-13 — truncating `zero.fill` before the close; the holder reproduced on a lab clone
+
+Lab: a clone of the PR #40 `windows-server-2025` template (26100.33822) on
+us-west, VM 9711: 4 cores and 8 GB like the build VM, no NIC, Defender real-time
+protection on, and `discard=ignore` on the system disk so TRIM cannot zero freed
+clusters behind the test's back. `Zero-FreeSpace` variants were cut verbatim from
+`Finalize.ps1`. Two instruments:
+
+- **Free-cluster scanner.** `FSCTL_GET_VOLUME_BITMAP`, then unbuffered reads of
+  every free cluster on `\\.\C:`, counting the ones holding non-zero data. Free
+  space alone cannot tell "space freed" from "zeros written"; this can.
+- **Holder.** A second process opens `zero.fill` with delete sharing, either at
+  the delete (a `Remove-Item` shim, as in the 2026-11-11 lab) or during the write
+  (harness-only `FileShare` change), optionally mapping a 4 KiB view.
+
+Holder runs:
+
+| Run | Code             | Holder                               | Result                                                                                                    |
+| --- | ---------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| E2  | PR #40           | plain handle at the delete, 60s      | Waited 65s for the space; released when the holder closed                                                 |
+| E4  | flush + truncate | plain handle at the delete, 120s     | Holder opened a 0-byte file; 12.6 GB free 0.2s after the pass; returned while the holder still held it    |
+| E8  | flush + truncate | plain handle opened during the write | Truncate succeeded under the open handle; space back at once                                              |
+| E9e | flush + truncate | 4 KiB mapped view during the write   | `SetLength` failed ("user-mapped section open"); logged `NOT truncated`; `WARNING 11.6 GB ... after 300s` |
+
+Zeros on disk, as non-zero data left in free space (12.6 GB free):
+
+| State                                       | Non-zero free |
+| ------------------------------------------- | ------------- |
+| After a dirtying pass (0xA5, then delete)   | 11.97 GB      |
+| E4: `Flush($true)`, then truncate           | 0.47 GB       |
+| E6: truncate after only `Flush()` (control) | 1.67 GB       |
+| E2: PR #40 code, after the holder let go    | 0.57 GB       |
+
+So the zeros survive the truncate only when flushed to disk first: without
+`Flush($true)` about 1.2 GB of zeros still in the cache were discarded with the
+truncated range.
+
+The natural holder appeared without any harness:
+
+- **3 of 7 untruncated fills held**: two dirtying passes and one verbatim PR #40
+  run, which printed `WARNING 11.6 GB of the deleted C:\zero.fill is still
+allocated after 300s` exactly as the 2026-11-11 build state. Each stayed held
+  until a reboot (watched for 2 to 27 minutes). "The same code on an idle clone
+  releases the space immediately" was true only of the runs before.
+- **No handle in any openable process.** A handle-table scan duplicated 891 file
+  handles and none was the file. The processes it could not open are all
+  protected: System, MsMpEng, MpDefenderCoreService, NisSrv, sppsvc, csrss, smss,
+  wininit, services. MsMpEng was idle (0.4s CPU in 10s), and `MPLog` never
+  mentions the file.
+- **Real-time protection off for 90s released nothing.** Inconclusive: the status
+  readback lagged on both toggles.
+- **A mapping present at delete time pins the file past its own release.** In E9e
+  the holder unmapped and closed 26s after the delete, and the space was still
+  held 4.5 minutes later, until a reboot. A plain handle at the delete (E2) gave
+  the space back the moment it closed, and a file mapped and fully released
+  _before_ the delete was freed at once (2 of 2, controls 2 of 2). A lingering
+  section with no handle fits every natural observation; who maps it is still
+  unproven.
+- **No natural hold caught a truncated run that we could see.** Truncated runs
+  released 8 of 8, but by construction a holder of a truncated file pins nothing,
+  and an offline listing of `$Extend\$Deleted` after three truncated runs and one
+  PR #40 run was empty.
+
+Harness failures, kept so nobody repeats them:
+
+- The first E8/E9 ran on 0.99 GB free: the dirtying pass before them had been
+  caught by the natural holder, so the zero pass skipped.
+- The first mapped-view runs never mapped anything. PowerShell passes `$null` to a
+  `string` parameter as `""`, so `CreateFromFile` threw "Map name cannot be an
+  empty string"; the holder had no `Stop` preference and logged success
+  unconditionally. `[NullString]::Value` fixed it; the holder now fails loudly.
+- A zsh loop over `set -- $s` passed each step as one word (zsh does not
+  word-split); the steps run from a bash script now.
+
+Fix: `Zero-FreeSpace` calls `Flush($true)` and then `SetLength(0)` before closing
+the fill file, each in its own `try`, and logs whether it truncated. PR #40's
+300s wait, warning, and gate message stay as the backstop for a truncate that
+fails, which on this evidence means something mapped the file during the write.
+Not measured: the build VM's own `discard=on` disk, where TRIM may also zero the
+freed clusters.
+
 ## 2026-11-13 — PR #40 verified: full 2025 build passes `cf verify`
 
 A full `windows-server-2025` build of PR #40's head (`f1dac45`, stacked on #39)
