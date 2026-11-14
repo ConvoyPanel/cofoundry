@@ -225,6 +225,48 @@ describe('Appx cleanup does not manufacture generalize blockers', () => {
         // precisely the state sysprep refuses.
         expect(cleanup()).toMatch(/\$_\.PackageName -ne \$pkg\.PackageFullName/)
     })
+
+    // Static guards over the script text: there is no Appx runtime in the test
+    // process. Through 2026-11 the cleanup unregistered every removable package
+    // registered to a user, and -AllUsers removal also dropped provisioning, so
+    // Windows Terminal and Feedback Hub were absent from every 2025 clone.
+    test('keeps registered packages that provisioning covers', () => {
+        const fn = cleanup()
+        expect(fn).toMatch(
+            /\$cover = Get-ProvisionedCover \$pkg\s*if \(\$cover\) \{\s*Write-Step "  keeping[^"]*"\s*continue/
+        )
+        // The keep decision precedes the removal it prevents.
+        expect(fn.indexOf('$cover = Get-ProvisionedCover $pkg')).toBeLessThan(
+            fn.indexOf('Write-Step "  unregistering')
+        )
+    })
+
+    test('matches bundle-provisioned packages through the bundle manifest', () => {
+        // A bundle is provisioned under its own name; the user registers the
+        // architecture package inside it, so full-name equality never matches.
+        const fn = cleanup()
+        expect(fn).toContain('AppxMetadata\\AppxBundleManifest.xml')
+        expect(fn).toMatch(/\$bp\.Type -ne 'application'/)
+        expect(fn).toMatch(
+            /"\{0\}\|\{1\}\|\{2\}" -f \$Pkg\.Name, \$Pkg\.Version, \$Pkg\.Architecture/
+        )
+    })
+
+    test("never treats Edge's identity package as covered", () => {
+        // Generalize refused Edge's per-user registration on 2026-08-01 even
+        // with the exact full name provisioned, so it must still be removed.
+        expect(cleanup()).toMatch(
+            /function Get-ProvisionedCover\(\$Pkg\) \{\s*if \(\$Pkg\.Name -eq 'Microsoft\.MicrosoftEdge\.Stable'\) \{ return \$null \}/
+        )
+    })
+
+    test("the deprovision fallback spares a kept package's provisioning", () => {
+        // Stripping it would leave the kept package registered but not
+        // provisioned -- the 2026-08-03 SecHealthUI failure again.
+        expect(cleanup()).toMatch(
+            /-not \$keptCover\.ContainsKey\(\$_\.PackageName\)/
+        )
+    })
 })
 
 /**

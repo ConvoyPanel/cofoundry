@@ -571,9 +571,60 @@ Write-Step "  $($provisionedPkgs.Count) provisioned package(s) on this image"
 Get-Process -Name msedge, msedgewebview2, MicrosoftEdgeUpdate -ErrorAction SilentlyContinue |
   Stop-Process -Force -ErrorAction SilentlyContinue
 
+# Which packages provisioning actually delivers to a new profile, keyed
+# name|version|architecture. A bundle is provisioned under its own name
+# (Microsoft.WindowsTerminal_3001.18.10301.0_neutral_~_8wekyb3d8bbwe) while a
+# profile registers the architecture package inside it
+# (Microsoft.WindowsTerminal_1.18.10301.0_x64__8wekyb3d8bbwe), so comparing full
+# names never matches a bundle. Its AppxBundleManifest.xml lists what it carries.
+$provisionedPayload = @{}
+foreach ($pp in $provisionedPkgs) {
+  $candidates = @(
+    [Environment]::ExpandEnvironmentVariables([string]$pp.InstallLocation),
+    "$env:ProgramFiles\WindowsApps\$($pp.PackageName)\AppxMetadata\AppxBundleManifest.xml"
+  )
+  $manifest = $candidates |
+    Where-Object { $_ -like '*AppxBundleManifest.xml' -and (Test-Path -LiteralPath $_) } |
+    Select-Object -First 1
+  if (-not $manifest) { continue }
+  try {
+    $bundleXml = [xml](Get-Content -LiteralPath $manifest -Raw -ErrorAction Stop)
+    foreach ($bp in @($bundleXml.Bundle.Packages.Package)) {
+      if ($bp.Type -ne 'application') { continue }
+      $key = ("{0}|{1}|{2}" -f $bundleXml.Bundle.Identity.Name, $bp.Version, $bp.Architecture).ToLowerInvariant()
+      $provisionedPayload[$key] = $pp.PackageName
+    }
+  } catch {
+    Write-Step "  (could not read bundle manifest $manifest : $($_.Exception.Message))"
+  }
+}
+
+# The provisioned entry that delivers $Pkg to new profiles, or $null. Edge never
+# counts: generalize refused its per-user registration on 2026-08-01 even though
+# Get-AppxProvisionedPackage listed the exact same full name. Removing that
+# registration drops only Edge's package identity -- the browser itself is the
+# Win32 install under Program Files (x86), with its own all-users Start menu
+# shortcut, and ships either way.
+function Get-ProvisionedCover($Pkg) {
+  if ($Pkg.Name -eq 'Microsoft.MicrosoftEdge.Stable') { return $null }
+  if ($provisioned -contains $Pkg.PackageFullName) { return $Pkg.PackageFullName }
+  $key = ("{0}|{1}|{2}" -f $Pkg.Name, $Pkg.Version, $Pkg.Architecture).ToLowerInvariant()
+  if ($provisionedPayload.ContainsKey($key)) { return $provisionedPayload[$key] }
+  return $null
+}
+
 $blockers = @()
 try {
-  foreach ($pkg in Get-AppxPackage -AllUsers -ErrorAction Stop) {
+  $allPkgs = @(Get-AppxPackage -AllUsers -ErrorAction Stop)
+  # Provisioned entries that a package we keep depends on. The deprovision
+  # fallback below must never take one: that would leave the kept package
+  # registered but not provisioned, the exact state generalize refuses.
+  $keptCover = @{}
+  foreach ($pkg in $allPkgs) {
+    $cover = Get-ProvisionedCover $pkg
+    if ($cover) { $keptCover[$cover] = $true }
+  }
+  foreach ($pkg in $allPkgs) {
     # Being provisioned is NOT sufficient to skip. That was the 2026-08-01 13:26Z
     # failure: Edge appears in $provisioned under the exact full name sysprep then
     # rejected, so it was skipped and never unregistered. Provisioning covers a
@@ -607,6 +658,20 @@ try {
     # fallback had just stripped.
     if ($pkg.NonRemovable) { continue }
 
+    # Keep what provisioning delivers. Registered for the build user AND
+    # provisioned for all users is the state generalize accepts. Removing such a
+    # package with -AllUsers also drops its provisioning, Windows then deletes the
+    # payload, and the re-provision step below has nothing to restore from. That
+    # is how Windows Terminal and Feedback Hub went missing from every 2025
+    # template through 2026-11. A version provisioning does not cover (a stale
+    # or WU-updated per-user copy) still goes, and so does Edge's identity
+    # package; see Get-ProvisionedCover.
+    $cover = Get-ProvisionedCover $pkg
+    if ($cover) {
+      Write-Step "  keeping $($pkg.PackageFullName): provisioned via $cover"
+      continue
+    }
+
     Write-Step "  unregistering $($pkg.PackageFullName)"
     try {
       Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction Stop
@@ -635,7 +700,8 @@ try {
       # own blocker and cost two 3h04m builds.
       $match = @($provisionedPkgs | Where-Object {
         ($_.DisplayName -eq $pkg.Name -or $_.PackageName -like "$($pkg.Name)_*") -and
-        $_.PackageName -ne $pkg.PackageFullName
+        $_.PackageName -ne $pkg.PackageFullName -and
+        -not $keptCover.ContainsKey($_.PackageName)
       })
       Write-Step "    $($match.Count) provisioned entr(y/ies) match $($pkg.Name)"
       foreach ($pp in $match) {
@@ -693,6 +759,14 @@ try {
 $afterNames = @($provisionedAfter | ForEach-Object { $_.PackageName })
 $dropped = @($provisioned | Where-Object { $afterNames -notcontains $_ })
 Write-Step ("  provisioned packages: {0} -> {1}" -f $provisionedPkgs.Count, $provisionedAfter.Count)
+# Edge's identity package goes on purpose (see Get-ProvisionedCover), and no
+# payload exists to re-provision it from. Reporting it as ABSENT on every build
+# would teach readers to skip the warning that matters.
+$edgeIdentity = @($dropped | Where-Object { $_ -like 'Microsoft.MicrosoftEdge.Stable_*' })
+$dropped = @($dropped | Where-Object { $_ -notlike 'Microsoft.MicrosoftEdge.Stable_*' })
+if ($edgeIdentity.Count) {
+  Write-Step "  dropped Edge's package identity as intended ($($edgeIdentity -join ', ')); the Win32 browser in Program Files (x86) ships"
+}
 if ($dropped.Count) {
   Write-Step "  WARNING the cleanup dropped provisioning for $($dropped.Count) package(s); these will be ABSENT on every clone:"
   foreach ($d in $dropped) { Write-Step "    $d" }
