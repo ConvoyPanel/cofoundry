@@ -189,6 +189,36 @@ exit $rc`,
             phase: 'first-boot',
         },
         {
+            // Installers that run with a static build address write it into
+            // the NIC config they leave behind. On a Proxmox clone Debian's
+            // leftover `iface ens18 inet static` is inert only because
+            // cloud-init renames the NIC to eth0, so the clone's addresses
+            // cannot show it — the file has to be read. Anywhere the NIC
+            // keeps its predictable name, the clone takes the build address
+            // and a second default gateway. cloud-init owns the NIC; a
+            // template's own config may cover loopback and nothing else.
+            id: 'no-installer-network-config',
+            description:
+                'no installer-written NIC config ships; cloud-init alone configures the network',
+            script: `rc=0
+if [ -f /etc/network/interfaces ]; then
+  left=$(grep -E '^[[:space:]]*(auto|allow-[a-z]+|iface)[[:space:]]' /etc/network/interfaces |
+    grep -Ev '[[:space:]]lo([[:space:]]|$)')
+  if [ -n "$left" ]; then
+    echo '/etc/network/interfaces configures a NIC itself:'
+    printf '%s\\n' "$left"
+    rc=1
+  fi
+fi
+if [ -e /etc/netplan/00-installer-config.yaml ]; then
+  echo 'installer netplan config left behind: /etc/netplan/00-installer-config.yaml'
+  rc=1
+fi
+exit $rc`,
+            severity: 'fail',
+            phase: 'first-boot',
+        },
+        {
             // Verify grows the disk beyond its shipped size before boot, so
             // leftover unallocated space proves growpart did not run.
             //

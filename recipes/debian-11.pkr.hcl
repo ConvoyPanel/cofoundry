@@ -217,6 +217,17 @@ build {
       "echo '==> Cleaning cloud-init state'",
       "sudo cloud-init clean",
       "sudo rm -f /etc/cloud/cloud.cfg.d/subiquity-disable-cloudinit-networking.cfg",
+      # The installer configured ens18 statically with the build address
+      # (boot_command's netcfg/ answers) and mapped the hostname to it in
+      # /etc/hosts. Neither belongs in a template. On Proxmox clones both are
+      # inert only because cloud-init renames the NIC to eth0 and rewrites
+      # /etc/hosts; wherever the NIC stays ens18, a clone would take the build
+      # address and a second default gateway. cloud-init owns the NIC, in
+      # interfaces.d/. `! cmd` alone never trips `sh -e`, hence the `||`.
+      "echo '==> Removing installer network config'",
+      "printf '%s\\n' '# Network interfaces are configured by cloud-init in /etc/network/interfaces.d/.' '# See interfaces(5).' '' 'source /etc/network/interfaces.d/*' '' 'auto lo' 'iface lo inet loopback' | sudo tee /etc/network/interfaces >/dev/null",
+      "printf '127.0.0.1\\tlocalhost\\n127.0.1.1\\t%s\\n\\n::1\\tlocalhost ip6-localhost ip6-loopback\\nff02::1\\tip6-allnodes\\nff02::2\\tip6-allrouters\\n' \"$(hostname)\" | sudo tee /etc/hosts >/dev/null",
+      "! grep -qF '${var.build_ip}' /etc/network/interfaces /etc/hosts || { echo 'build address ${var.build_ip} still in /etc/network/interfaces or /etc/hosts' >&2; exit 1; }",
       "sudo sync",
     ]
   }
