@@ -112,6 +112,13 @@ const assembleRegistry = (
 
     const groupMap = new Map<string, Template[]>()
     for (const raw of sidecars) {
+        // Deleting a recipe retires its template. Its sidecars stay in R2
+        // until retention or the lifecycle rule removes them, and the registry
+        // must not keep advertising a release nobody builds any more.
+        if (!recipes.has(raw.name)) {
+            log.warn(`Skipping ${raw.name}: no recipe builds it`)
+            continue
+        }
         const s = withRecipeMetadata(withPublicUrls(raw), recipes)
         const gid = s.group ?? 'other'
         if (!groupMap.has(gid)) groupMap.set(gid, [])
