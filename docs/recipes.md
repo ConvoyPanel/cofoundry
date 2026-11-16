@@ -61,6 +61,12 @@ template's `description`, and coport prints it before installing. A release at
 end of life also says so in its display name, since that is the one field every
 consumer shows, and in `/etc/motd`, for whoever logs in to a clone later.
 
+To retire a release outright, delete its recipe along with its entries in
+`upstream-checksums.json` and the build-failure issue template. `cf publish`
+lists only templates that a recipe still builds, so the next publish drops it
+from the registry. Its images stay in R2 until the lifecycle rule deletes them.
+Clones already made from it are unaffected.
+
 Keep disks small. Linux installers currently fit in 5G. For Windows, retain the
 temporary build/final shrink design and change the final size only after checking
 the installed minimum with `qemu-img info --output=json` on the exported image,

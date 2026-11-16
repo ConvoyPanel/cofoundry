@@ -163,6 +163,28 @@ describe('buildManifest', () => {
         ).toBeUndefined()
     })
 
+    // R2 keeps a retired recipe's sidecars until retention or the lifecycle
+    // rule removes them, so publish is the only place that can stop
+    // advertising the template once the recipe is gone.
+    test('drops a template whose recipe no longer exists', async () => {
+        const debian = JSON.parse(
+            await readFile(join(sourceDir, 'debian-12.json'), 'utf8')
+        )
+        await writeFile(
+            join(sourceDir, 'retired-1.0.json'),
+            JSON.stringify({ ...debian, name: 'retired-1.0-amd64' })
+        )
+        await buildManifest(sourceDir, outPath)
+        const manifest = JSON.parse(await readFile(outPath, 'utf8'))
+        const allNames = manifest.groups.flatMap((g: any) =>
+            g.templates.map((t: any) => t.name)
+        )
+        expect(allNames.sort()).toEqual([
+            'almalinux-9-amd64',
+            'debian-12-amd64',
+        ])
+    })
+
     test('refuses to publish a registry no consumer can download from', async () => {
         // A registry entry with a blank `url` is unusable: coport hands the
         // value to fetch() and every install of that template fails. Publishing
