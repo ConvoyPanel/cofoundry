@@ -12,7 +12,6 @@ share VM state.
 | -------------- | --------------------- | --------: | ---------------: |
 | Ubuntu         | `ubuntu-22.04`        |      1002 |               5G |
 | Ubuntu         | `ubuntu-24.04`        |      1003 |               5G |
-| Ubuntu         | `ubuntu-25.10`        |      1004 |               5G |
 | Ubuntu         | `ubuntu-26.04`        |      1005 |               5G |
 | Windows Server | `windows-server-2019` |      2000 |       100G / 30G |
 | Windows Server | `windows-server-2022` |      2001 |       100G / 30G |
@@ -150,8 +149,8 @@ After=grub2-common.service
 Both spellings are listed because the family shares one `user-data`. On a release
 still using the old name the `grub2-` line is inert, and on 26.04 the `grub-` line
 is — the same "After= a unit that isn't there is a no-op" behaviour that caused
-the bug, relied on deliberately here. It also means the fix already covers 22.04,
-24.04, and 25.10 when they inherit the rename.
+the bug, relied on deliberately here. It also means the fix already covers 22.04
+and 24.04 when they inherit the rename.
 
 Verified live: with the drop-in, `grub2-common.service` **Finished** before
 `grub-initrd-fallback.service` **Starting** on every boot across 20+ reboots, with

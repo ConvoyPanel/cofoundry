@@ -51,11 +51,6 @@
     "contentLength": "3405469696",
     "etag": "\"cafb5800-64a72b50ecbc2\""
   },
-  "ubuntu-25.10": {
-    "lastModified": "Tue, 07 Oct 2025 19:35:49 GMT",
-    "contentLength": "2283360256",
-    "etag": "\"88195000-64096acd63b83\""
-  },
   "ubuntu-26.04": {
     "lastModified": "Mon, 20 Apr 2026 18:39:18 GMT",
     "contentLength": "2918598656",

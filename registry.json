@@ -450,44 +450,6 @@
           }
         },
         {
-          "name": "ubuntu-25.10-amd64",
-          "display": "Ubuntu 25.10 (Questing Quokka)",
-          "arch": "amd64",
-          "suggested_vmid": 1004,
-          "built_at": "2026-11-14T03:21:05Z",
-          "disks": [
-            {
-              "slot": "scsi0",
-              "role": "system",
-              "format": "qcow2",
-              "file": "ubuntu-25.10-amd64-875663ecf31d51254f905ebfe0dd5b253d527a9836a49f0328a526d00cfe72bc.qcow2",
-              "url": "https://cofoundry.cdn.convoypanel.com/images/ubuntu/ubuntu-25.10-amd64/875663ecf31d51254f905ebfe0dd5b253d527a9836a49f0328a526d00cfe72bc.qcow2",
-              "sha256": "875663ecf31d51254f905ebfe0dd5b253d527a9836a49f0328a526d00cfe72bc",
-              "size": 1637776896,
-              "virtual_size": "5G",
-              "options": {
-                "discard": "on",
-                "ssd": 1
-              }
-            }
-          ],
-          "hardware": {
-            "agent": 1,
-            "bios": "seabios",
-            "ciuser": "root",
-            "cpu": "host",
-            "machine": "q35",
-            "net_model": "virtio",
-            "ostype": "l26",
-            "scsihw": "virtio-scsi-single",
-            "serial0": "socket"
-          },
-          "minimum": {
-            "cores": 1,
-            "memory": 1024
-          }
-        },
-        {
           "name": "ubuntu-26.04-amd64",
           "display": "Ubuntu 26.04 LTS (Resolute Raccoon)",
           "arch": "amd64",
