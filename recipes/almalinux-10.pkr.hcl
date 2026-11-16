@@ -221,7 +221,7 @@ build {
       "echo '==> Verifying cloud-init is enabled for the final image'",
       "sudo systemctl is-enabled cloud-init-local cloud-init cloud-config cloud-final",
       "test ! -e /etc/cloud/cloud-init.disabled",
-      "! grep -qw 'cloud-init=disabled' /proc/cmdline",
+      "! grep -qw 'cloud-init=disabled' /proc/cmdline || { echo 'cloud-init=disabled is set on the kernel cmdline' >&2; exit 1; }",
       "cloud-init --version",
       "test -s /etc/cloud/cloud.cfg",
       "grep -qx 'datasource_list: \\[ConfigDrive, NoCloud\\]' /etc/cloud/cloud.cfg.d/99-pve.cfg",

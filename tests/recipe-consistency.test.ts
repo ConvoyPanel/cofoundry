@@ -132,6 +132,25 @@ describe('recipe consistency', () => {
         expect(violations).toEqual([])
     })
 
+    test('inline provisioner lines never rely on a bare `! cmd` to fail the build', () => {
+        // Packer runs a provisioner's inline lines as one script under
+        // `/bin/sh -e`, and POSIX `sh -e` ignores the exit status of a command
+        // negated with `!`: `sh -e -c '! true; echo reached'` prints "reached".
+        // A bare `! grep …` line therefore asserts nothing. Spell the failure
+        // out instead: `! grep … || { echo '…' >&2; exit 1; }`.
+        const violations: string[] = []
+        for (const recipe of recipes) {
+            recipe.raw.split('\n').forEach((line, i) => {
+                if (/^\s*"!\s/.test(line) && !line.includes('||')) {
+                    violations.push(
+                        `${recipe.name}.pkr.hcl:${i + 1}: ${line.trim()}`
+                    )
+                }
+            })
+        }
+        expect(violations).toEqual([])
+    })
+
     test('installer http files are identical within families that share one payload', () => {
         // Debian preseeds are fully parameterized (__PACKER_RECIPE_NAME__ etc.)
         // and Ubuntu autoinstall files carry no release-specific content, so
