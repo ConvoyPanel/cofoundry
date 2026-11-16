@@ -1,9 +1,11 @@
-# `workflow_call` only — see the note in build-one.yml. Called by build.yml and
-# check-upstream.yml.
-name: "[internal] Publish registry"
+# Called by build.yml and check-upstream.yml after a build, and dispatchable on
+# its own to republish without building — after objects were removed from R2,
+# say, so the registry stops pointing at them.
+name: "Publish registry"
 
 on:
   workflow_call:
+  workflow_dispatch:
 
 jobs:
   publish:
