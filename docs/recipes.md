@@ -63,8 +63,10 @@ consumer shows, and in `/etc/motd`, for whoever logs in to a clone later.
 To retire a release outright, delete its recipe along with its entries in
 `upstream-checksums.json` and the build-failure issue template. `cf publish`
 lists only templates that a recipe still builds, so the next publish drops it
-from the registry. Its images stay in R2 until the lifecycle rule deletes them.
-Clones already made from it are unaffected.
+from the registry. Dispatching the **Publish registry** workflow does that
+without waiting for a build. Its images stay in R2 until the lifecycle rule
+deletes them, or until you delete them by hand. Clones already made from it are
+unaffected.
 
 Keep disks small. Linux installers currently fit in 5G. For Windows, retain the
 temporary build/final shrink design and change the final size only after checking

@@ -309,9 +309,9 @@ from a published registry onto any Proxmox node, see [Coport](coport.md).
 
 ## GitHub Actions
 
-Only two workflows are things you start. The rest are `workflow_call`-only
-callees, named `[internal] …` so the Actions sidebar — which lists every workflow
-file and cannot hide a callee — does not imply four buttons that do not exist.
+Three workflows are things you start. The rest are `workflow_call`-only callees,
+named `[internal] …` so the Actions sidebar — which lists every workflow file and
+cannot hide a callee — does not imply buttons that do not exist.
 Their runs nest under whichever workflow called them, which is also why they show
 no run history of their own.
 
@@ -324,6 +324,12 @@ no run history of their own.
   checksum and is retried next run.
 - **`build.yml`** ("Build template") — manual one-recipe entry point. A thin
   orchestrator over `build-one.yml`, `publish.yml`, and `prune-node.yml`.
+- **`publish.yml`** ("Publish registry") — globally serialized registry writer
+  and R2 finalizer. Both workflows above call it after building; dispatch it
+  directly to republish without a build, such as after deleting a retired
+  template's objects from R2. It aggregates whatever sidecars are already in R2
+  and has no idea which passed their smoke test, which is why the gate sits in
+  `build-one.yml`.
 
 **Called, never dispatched:**
 
@@ -334,9 +340,6 @@ no run history of their own.
   hashed), which is _before_ the smoke test — so a recipe that built but failed
   verify used to publish anyway, and since `cf publish --r2` advertises the newest
   sidecar per template, a failed artifact could supersede a good one.
-- **`publish.yml`** — globally serialized registry writer and R2 finalizer. It
-  aggregates whatever sidecars are already in R2 and has no idea which passed
-  their smoke test, which is why the gate sits in `build-one.yml`.
 - **`prune-node.yml`** — lease-aware node maintenance after a workflow finishes.
 
 Callers resolve these by path (`uses: ./.github/workflows/<file>.yml`), so the
