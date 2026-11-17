@@ -21,6 +21,7 @@ import { acquireRemoteMaintenanceLock } from '@/build/maintenance.ts'
 import { diagnosticsRunDirName } from '@/build/diagnostics/paths.ts'
 import { log } from '@/log.ts'
 import { isWindowsRecipe, suiteFor } from '@/verify/checks/index.ts'
+import type { Firmware } from '@/verify/checks/types.ts'
 import type { CheckResult } from '@/verify/guest.ts'
 import {
     guestExec,
@@ -60,6 +61,51 @@ export interface VerifyOptions {
     level?: 'quick' | 'full'
     /** In CI the repo is public, so framebuffer captures are never written out. */
     ciMode?: boolean
+    /**
+     * Boot the clone under this firmware instead of the profile's. Only
+     * SeaBIOS → OVMF is a move: see {@link withFirmware}.
+     */
+    firmware?: Firmware
+}
+
+/**
+ * The template to rebuild the clone from, and any extra `qm create` arguments,
+ * for a run under `firmware`.
+ *
+ * Linux templates ship `bios: seabios` and no variable store, but boot under
+ * OVMF as well, the way a consumer gets them by switching a clone to OVMF and
+ * adding an EFI disk. That disk is allocated fresh here with Proxmox's
+ * Microsoft keys enrolled, so Secure Boot enforces and the variable store
+ * holds no boot entry: the firmware has to find shim at the removable path,
+ * exactly as on a consumer's clone. The profile is otherwise untouched.
+ *
+ * An OVMF template is not moved to SeaBIOS: its boot loader lives only in the
+ * ESP and its variable store, and nothing promises it boots without them.
+ */
+export const withFirmware = (
+    template: Template,
+    firmware: Firmware | undefined,
+    storage: string
+): { template: Template; firmware: Firmware; extraArgs: string[] } => {
+    const shipped: Firmware =
+        template.hardware.bios === 'ovmf' ? 'ovmf' : 'seabios'
+    if (!firmware || firmware === shipped)
+        return { template, firmware: shipped, extraArgs: [] }
+    if (firmware === 'seabios')
+        throw new Error(
+            `${template.name} ships for OVMF; it cannot be verified under SeaBIOS`
+        )
+    return {
+        template: {
+            ...template,
+            hardware: { ...template.hardware, bios: 'ovmf' },
+        },
+        firmware: 'ovmf',
+        extraArgs: [
+            '--efidisk0',
+            `${storage}:1,efitype=4m,pre-enrolled-keys=1`,
+        ],
+    }
 }
 
 const ssh = async (target: string, cmd: string): Promise<string> => {
@@ -235,7 +281,7 @@ const runVerifyLocked = async (
     // The sidecar names the images and carries the hardware profile the VM is
     // rebuilt from — verify reads the published artifact rather than the build
     // VM, so the profile itself is under test.
-    const template: Template = JSON.parse(
+    const shipped: Template = JSON.parse(
         remoteHasBuildArtifact
             ? await captureRemote(
                   env.SSH_TARGET,
@@ -243,6 +289,11 @@ const runVerifyLocked = async (
               )
             : await Bun.file(localSidecar).text()
     )
+    const {
+        template,
+        firmware,
+        extraArgs: firmwareArgs,
+    } = withFirmware(shipped, options.firmware, env.CF_STORAGE)
 
     // Local files are `<name><ext>`; published ones carry the hash. See
     // localArtifactName in src/upload/template.ts.
@@ -252,7 +303,10 @@ const runVerifyLocked = async (
     const lease = await acquireRunLease(env, 'verify', recipe, remoteTmp)
     const renderer = createRenderer({
         title: title(
-            `Verifying ${accent(recipe.name)} ${dim('on')} ${accent(env.SSH_TARGET)}`
+            `Verifying ${accent(recipe.name)} ${dim('on')} ${accent(env.SSH_TARGET)}` +
+                (firmware === shipped.hardware.bios
+                    ? ''
+                    : ` ${dim('under')} ${accent(firmware)}`)
         ),
         outputLines: 1,
     })
@@ -318,17 +372,20 @@ const runVerifyLocked = async (
         const schema = await probeQmCreateSchema(env.SSH_TARGET)
         await ssh(
             env.SSH_TARGET,
-            createArgs(template, {
-                vmid,
-                storage: env.CF_STORAGE,
-                bridge: env.CF_BUILD_BRIDGE || DEFAULT_BRIDGE,
-                files,
-                cores: recipe.buildCores,
-                memory: recipe.buildMemoryMb,
-                name: `cofoundry-verify-${recipe.name}`,
-                schema,
-                onUnsupported: line => task.log(line),
-            })
+            [
+                ...createArgs(template, {
+                    vmid,
+                    storage: env.CF_STORAGE,
+                    bridge: env.CF_BUILD_BRIDGE || DEFAULT_BRIDGE,
+                    files,
+                    cores: recipe.buildCores,
+                    memory: recipe.buildMemoryMb,
+                    name: `cofoundry-verify-${recipe.name}`,
+                    schema,
+                    onUnsupported: line => task.log(line),
+                }),
+                ...firmwareArgs,
+            ]
                 .map(shellQuote)
                 .join(' ')
         )
@@ -345,7 +402,8 @@ const runVerifyLocked = async (
                 recipe.name,
                 vmid,
                 remoteTmp,
-                isWindows
+                isWindows,
+                firmware
             )
             releaseCloudInit = cloudInit.cleanup
         }

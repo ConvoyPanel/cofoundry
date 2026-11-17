@@ -349,3 +349,142 @@ describe('recipe consistency', () => {
         expect(violations).toEqual([])
     })
 })
+
+// Every Linux image boots under SeaBIOS and under OVMF with Secure Boot, the
+// way the official cloud images do: GPT, a BIOS boot partition, a FAT32 EFI
+// system partition, the root last (growpart extends only the last
+// partition), and both GRUBs. The build VM boots under SeaBIOS whatever the
+// UEFI half looks like, so these are checked offline as well as by
+// finalize.sh and `cf verify --firmware ovmf`.
+describe('hybrid BIOS and UEFI boot', () => {
+    const ESP_TYPE = 'C12A7328-F81F-11D2-BA4B-00A0C93EC93B'
+    const payload = (recipe: Recipe, file: string): string => {
+        const path = join(recipesDir, recipe.name, 'http', file)
+        return existsSync(path) ? readFileSync(path, 'utf8') : ''
+    }
+    const family = (group: string): Recipe[] =>
+        recipes.filter(recipe => groupOf(recipe) === group)
+
+    test('Debian preseeds add an ESP and install grub-cloud-amd64', () => {
+        const members = family('debian')
+        expect(members.length).toBeGreaterThan(0)
+        for (const recipe of members) {
+            const preseed = payload(recipe, 'preseed.cfg')
+            const expert = preseed.match(
+                /partman-auto\/expert_recipe string([\s\S]*?)\n[^ ]/
+            )?.[1]
+            expect(expert, recipe.name).toBeDefined()
+            const bios = expert!.indexOf('method{ biosgrub }')
+            const esp = expert!.indexOf('mountpoint{ /boot/efi }')
+            const root = expert!.indexOf('mountpoint{ / }')
+            expect(bios, `${recipe.name}: BIOS boot partition`).toBeGreaterThan(
+                -1
+            )
+            expect(esp, `${recipe.name}: ESP after BIOS boot`).toBeGreaterThan(
+                bios
+            )
+            expect(root, `${recipe.name}: root last`).toBeGreaterThan(esp)
+            expect(expert).toContain('filesystem{ fat32 }')
+            const late =
+                preseed.match(
+                    /preseed\/late_command string([\s\S]*?)\nd-i /
+                )?.[1] ?? ''
+            expect(late).toContain(`sfdisk --part-type /dev/sda 2 ${ESP_TYPE}`)
+            expect(late).toContain('touch /etc/grub.d/enable_cloud')
+            // grub-pc's purge deletes /etc/default/grub, which grub-cloud-amd64
+            // ships as a conffile; the other order stops at a conffile prompt.
+            const purge = late.indexOf('purge grub-pc')
+            expect(purge).toBeGreaterThan(-1)
+            expect(late.indexOf('install grub-cloud-amd64')).toBeGreaterThan(
+                purge
+            )
+            expect(late.indexOf('enable_cloud')).toBeLessThan(
+                late.indexOf('install grub-cloud-amd64')
+            )
+        }
+    })
+
+    test('Ubuntu autoinstall lays out BIOS boot, ESP and root, and installs signed GRUB', () => {
+        const members = family('ubuntu')
+        expect(members.length).toBeGreaterThan(0)
+        for (const recipe of members) {
+            const { autoinstall } = Bun.YAML.parse(
+                payload(recipe, 'user-data')
+            ) as {
+                autoinstall: {
+                    'packages': string[]
+                    'storage': {
+                        layout?: unknown
+                        config: Record<string, unknown>[]
+                    }
+                    'late-commands': string[]
+                }
+            }
+            const { storage } = autoinstall
+            expect(
+                storage.layout,
+                `${recipe.name}: layouts cannot add an ESP`
+            ).toBeUndefined()
+            const partitions = storage.config.filter(
+                a => a.type === 'partition'
+            )
+            const byFlag = (flag: string) =>
+                partitions.find(p => p.flag === flag)
+            expect(byFlag('bios_grub'), recipe.name).toBeDefined()
+            const esp = byFlag('boot')
+            expect(esp, recipe.name).toBeDefined()
+            const formatOf = (id: unknown) =>
+                storage.config.find(a => a.type === 'format' && a.volume === id)
+            const mountOf = (format: Record<string, unknown> | undefined) =>
+                storage.config.find(
+                    a => a.type === 'mount' && a.device === format?.id
+                )
+            expect(formatOf(esp!.id)?.fstype).toBe('fat32')
+            expect(mountOf(formatOf(esp!.id))?.path).toBe('/boot/efi')
+            const last = partitions.reduce((a, b) =>
+                Number(b.number) > Number(a.number) ? b : a
+            )
+            expect(last.size, `${recipe.name}: root fills the disk`).toBe(-1)
+            expect(mountOf(formatOf(last.id))?.path).toBe('/')
+            expect(
+                storage.config.find(a => a.type === 'disk')?.grub_device
+            ).toBe(true)
+            for (const pkg of ['grub-efi-amd64-signed', 'shim-signed'])
+                expect(autoinstall.packages, recipe.name).toContain(pkg)
+            const late = autoinstall['late-commands'].join('\n')
+            expect(late).toContain(
+                'grub-install --target=x86_64-efi --efi-directory=/boot/efi --uefi-secure-boot --no-nvram'
+            )
+            expect(late).toContain(
+                'grub-efi/cloud_style_installation boolean true'
+            )
+            expect(late).toContain(
+                'grub-pc/cloud_style_installation boolean true'
+            )
+        }
+    })
+
+    test('kickstarts add an ESP, the UEFI packages and its partition type', () => {
+        const members = recipes.filter(recipe =>
+            existsSync(join(recipesDir, recipe.name, 'http', 'ks.cfg'))
+        )
+        expect(members.length).toBeGreaterThan(0)
+        for (const recipe of members) {
+            const ks = payload(recipe, 'ks.cfg')
+            const parts = ks.match(/^part .*$/gm) ?? []
+            expect(
+                parts.map(p => p.split(/\s+/)[1]),
+                recipe.name
+            ).toEqual(['biosboot', '/boot/efi', '/'])
+            expect(parts[1]).toContain('--fstype="vfat"')
+            expect(parts[1]).toContain('--mkfsoptions="-F 32"')
+            expect(parts[2]).toContain('--grow')
+            const packages =
+                ks.match(/^%packages[^\n]*\n([\s\S]*?)^%end/m)?.[1] ?? ''
+            for (const pkg of ['grub2-efi-x64', 'shim-x64'])
+                expect(packages.split('\n'), recipe.name).toContain(pkg)
+            expect(ks).toContain(ESP_TYPE)
+            expect(ks).toContain('gen_grub_cfgstub /boot/grub2')
+        }
+    })
+})

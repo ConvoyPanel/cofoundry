@@ -416,6 +416,33 @@ echo "disk=/dev/$disk total=$total partitioned=$used unallocated=$free"
             phase: 'first-boot',
         },
         {
+            // Every Linux image boots under SeaBIOS, which its profile asks
+            // for, and under OVMF with Secure Boot, which a consumer can move a
+            // clone to (`cf verify --firmware ovmf`). The guest agent
+            // answering already proves the boot; this proves it was the
+            // firmware the run asked for, with Secure Boot enforcing rather
+            // than off, and that the ESP mounts either way, since a broken
+            // fstab line for it fails only the boot that needs it.
+            id: 'boot-firmware',
+            description: 'booted under the requested firmware, ESP mounted',
+            script: ctx => {
+                const firmware =
+                    ctx.firmware === 'ovmf'
+                        ? `[ -d /sys/firmware/efi ] || { echo 'booted without UEFI: /sys/firmware/efi is missing'; exit 1; }
+# The variable's 4 attribute bytes, then 1 = Secure Boot enforcing.
+sb=$(od -An -tu1 -j4 -N1 /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c 2>/dev/null | tr -d ' ')
+[ "$sb" = 1 ] || { echo "Secure Boot is not enforcing (SecureBoot=\${sb:-unreadable})"; exit 1; }
+echo 'UEFI, Secure Boot enforcing'`
+                        : `[ ! -d /sys/firmware/efi ] || { echo 'booted under UEFI, but the run asked for SeaBIOS'; exit 1; }
+echo 'BIOS'`
+                return `${firmware}
+fs=$(findmnt -n -o FSTYPE /boot/efi 2>/dev/null || true)
+[ "$fs" = vfat ] || { echo "the ESP is not mounted at /boot/efi (found: \${fs:-nothing})"; grep -w /boot/efi /etc/fstab; exit 1; }`
+            },
+            severity: 'fail',
+            phase: 'first-boot',
+        },
+        {
             // A template that ships its build host keys makes every clone
             // impersonatable by any other clone. cloud-init's cleanup removes
             // them so they regenerate on first boot; this proves it happened.

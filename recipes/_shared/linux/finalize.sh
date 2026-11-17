@@ -342,7 +342,7 @@ if [ "$family" = rhel ]; then
   find /etc/sysconfig/network-scripts -maxdepth 1 -name 'ifcfg-*' ! -name ifcfg-lo -delete 2>/dev/null || true # absent on 10
   rm -rf /var/lib/NetworkManager/* /var/lib/dhclient/*
   : >/etc/resolv.conf
-  rm -rf /root/anaconda-ks.cfg /root/original-ks.cfg /root/ks-post.log /var/log/anaconda
+  rm -rf /root/anaconda-ks.cfg /root/original-ks.cfg /root/ks-post.log /root/ks-post-efi.log /var/log/anaconda
   rm -f /tmp/ks-script-* /var/lib/dnf/history.sqlite*
 
   step "configuring GRUB for the serial console"
@@ -379,6 +379,108 @@ EOF
 fi
 
 # --- all distributions ---------------------------------------------------------
+
+step "checking the disk boots under BIOS and under UEFI"
+# The sidecar asks for SeaBIOS, but a consumer can move a clone to OVMF, with
+# Secure Boot, and it must still boot: the official cloud images carry both
+# GRUBs, and so do these. The build VM boots under SeaBIOS whatever the UEFI
+# half looks like, so nothing but this step would notice it missing.
+root_src=$(findmnt -n -o SOURCE /)
+esp_src=$(findmnt -n -o SOURCE /boot/efi) || fail "nothing is mounted at /boot/efi"
+[ "$(findmnt -n -o FSTYPE /boot/efi)" = vfat ] || fail "/boot/efi is not vfat"
+findmnt --fstab -n /boot/efi >/dev/null || fail "/etc/fstab does not mount /boot/efi"
+disk=/dev/$(lsblk -n -d -o PKNAME "$root_src")
+python3 - "$disk" "$root_src" "$esp_src" <<'EOF' || fail "the disk cannot boot both ways"
+import json, subprocess, sys
+
+disk, root, esp = sys.argv[1:]
+BIOS_BOOT = "21686148-6449-6E6F-744E-656564454649"
+EFI_SYSTEM = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
+table = json.loads(subprocess.check_output(["sfdisk", "--json", disk]))["partitiontable"]
+parts = table["partitions"]
+types = {p["node"]: p["type"].upper() for p in parts}
+problems = []
+if table["label"] != "gpt":
+    problems.append(f"{disk} has a {table['label']} partition table, not gpt")
+if types.get(esp) != EFI_SYSTEM:
+    problems.append(f"{esp} (/boot/efi) has type {types.get(esp)}, not the EFI system partition's")
+last = max(parts, key=lambda p: p["start"])["node"]
+if last != root:
+    problems.append(f"{last} lies after the root {root}, so growpart cannot extend the root")
+bios = [node for node, kind in types.items() if kind == BIOS_BOOT]
+if not bios:
+    problems.append("there is no BIOS boot partition for GRUB's core image")
+else:
+    with open(bios[0], "rb") as f:
+        if not any(f.read(65536)):
+            problems.append(f"the BIOS boot partition {bios[0]} is empty: GRUB's core image was never written")
+with open(disk, "rb") as f:
+    if b"GRUB" not in f.read(440):
+        problems.append(f"the MBR of {disk} holds no GRUB boot code")
+for problem in problems:
+    print(f"    {problem}", file=sys.stderr)
+sys.exit(1 if problems else 0)
+EOF
+case "$family" in
+  debian) grub_dir=/boot/grub ;;
+  rhel) grub_dir=/boot/grub2 ;;
+esac
+[ -f "$grub_dir/i386-pc/core.img" ] || fail "$grub_dir/i386-pc/core.img is missing: GRUB was never installed for BIOS"
+# A clone's UEFI variable store is new and has no boot entry, so the firmware
+# runs the removable path, which must be the Microsoft-signed shim. Shim then
+# loads GRUB from beside itself or, through its fallback loader, registers
+# and boots the copy in the vendor directory, whose grub.cfg hands over to the
+# one /boot/grub*/grub.cfg both firmwares use.
+efi=/boot/efi/EFI
+removable="$efi/BOOT/BOOTX64.EFI"
+[ -f "$removable" ] || fail "no UEFI loader at the removable path $removable"
+vendor_shim=""
+for shim in "$efi"/*/shim*.efi; do
+  case "$shim" in "$efi/BOOT/"*) continue ;; esac
+  if [ -f "$shim" ] && cmp -s "$removable" "$shim"; then
+    vendor_shim=$shim
+    break
+  fi
+done
+[ -n "$vendor_shim" ] || fail "$removable is not a shim from the vendor directory: $(ls "$efi"/*/ | tr '\n' ' ')"
+vendor=$(dirname "$vendor_shim")
+[ -f "$vendor/grubx64.efi" ] || fail "no grubx64.efi beside $vendor_shim"
+if [ ! -f "$efi/BOOT/grubx64.efi" ]; then
+  [ -f "$efi/BOOT/fbx64.efi" ] || fail "shim at $removable has neither GRUB nor its fallback loader beside it"
+  [ -f "$vendor/BOOTX64.CSV" ] || fail "shim's fallback loader has no $vendor/BOOTX64.CSV to register"
+fi
+boot_uuid=$(findmnt -n -o UUID --target /boot)
+[ -f "$vendor/grub.cfg" ] || fail "no grub.cfg in $vendor for the UEFI GRUB"
+grep -qiF "$boot_uuid" "$vendor/grub.cfg" ||
+  fail "$vendor/grub.cfg does not look for the /boot filesystem $boot_uuid: $(cat "$vendor/grub.cfg")"
+case "$family" in
+  debian)
+    if [ "$ID" = debian ]; then
+      # grub-cloud-amd64 reinstalls both GRUBs on every GRUB or shim upgrade;
+      # grub-pc would reinstall only the BIOS one, to the build's disk.
+      installed grub-cloud-amd64 || fail "grub-cloud-amd64 is not installed"
+      [ -e /etc/grub.d/enable_cloud ] || fail "/etc/grub.d/enable_cloud is missing; grub-cloud-amd64 does nothing without it"
+      ! installed grub-pc || fail "grub-pc is installed beside grub-cloud-amd64"
+    else
+      for pkg in grub-pc grub-efi-amd64-signed shim-signed; do
+        installed "$pkg" || fail "$pkg is not installed"
+      done
+    fi
+    # grub-efi-amd64-signed reinstalls the UEFI GRUB on upgrade only where
+    # this marks an earlier install.
+    [ -f /boot/grub/x86_64-efi/core.efi ] || fail "/boot/grub/x86_64-efi/core.efi is missing: GRUB was never installed for UEFI"
+    ;;
+  rhel)
+    for pkg in grub2-pc grub2-efi-x64 shim-x64; do
+      installed "$pkg" || fail "$pkg is not installed"
+    done
+    # One GRUB environment for both firmwares, where BIOS GRUB can read it.
+    # On el8 it carries the kernel command line.
+    [ -f /boot/grub2/grubenv ] && [ ! -L /boot/grub2/grubenv ] ||
+      fail "/boot/grub2/grubenv is not a regular file: $(ls -l /boot/grub2/grubenv 2>&1)"
+    [ ! -e "$vendor/grubenv" ] || fail "$vendor/grubenv exists; the UEFI GRUB must use /boot/grub2/grubenv"
+    ;;
+esac
 
 step "installing the Proxmox cloud-init config"
 install -m 0644 "$here/99-pve.cfg" /etc/cloud/cloud.cfg.d/99-pve.cfg
