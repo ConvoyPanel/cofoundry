@@ -401,6 +401,15 @@ describe('hybrid BIOS and UEFI boot', () => {
             expect(late.indexOf('enable_cloud')).toBeLessThan(
                 late.indexOf('install grub-cloud-amd64')
             )
+            // trixie's target still lists the netinst CD as an apt source but
+            // no longer has it mounted, and apt waits at "Media change" until
+            // Packer's SSH timeout. The entries go before the install.
+            const cdrom = late.indexOf("sed -i '/^deb cdrom:/s/^/#/'")
+            expect(cdrom).toBeGreaterThan(-1)
+            expect(cdrom).toBeLessThan(late.indexOf('install grub-cloud-amd64'))
+            // in-target's stdin is cdebconf's reply channel: redirecting it
+            // desynchronised debconf and finish-install stopped at its menu.
+            expect(late).not.toMatch(/in-target[^;]*</)
         }
     })
 
