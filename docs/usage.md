@@ -83,6 +83,7 @@ budgets are still preferable when other workloads share the node.
 cf verify ubuntu-24.04
 cf verify windows-server-2025 --level quick   # import + boot + agent ping only
 cf verify debian-12 --ci                      # suppress framebuffer captures
+cf verify rocky-linux-9 --firmware ovmf       # boot the clone under UEFI + Secure Boot
 ```
 
 `cf verify` rebuilds a VM from the **published sidecar** onto a scratch VMID —
@@ -119,6 +120,13 @@ lines there and needs no change to the runner. Each check declares a severity:
 
 `--ci` exists because framebuffer captures are unredactable images and must never
 land in a public repo.
+
+`--firmware ovmf` boots a SeaBIOS template's clone under OVMF instead, with a
+freshly allocated variable store that has Proxmox's Microsoft keys enrolled:
+Secure Boot enforces and there is no boot entry, which is what a consumer who
+switches a clone to UEFI gets. Every Linux image must pass this as well as the
+default run; see [BIOS and UEFI boot](recipes.md#bios-and-uefi-boot). An OVMF
+template cannot be verified under SeaBIOS.
 
 ## Check for upstream ISO changes
 

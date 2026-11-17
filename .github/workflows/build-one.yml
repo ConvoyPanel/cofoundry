@@ -90,6 +90,14 @@ jobs:
       - name: Smoke-test artifact
         run: bun run cf verify "$CF_RECIPE"
 
+      # Linux templates ship for SeaBIOS but must also boot when a consumer
+      # moves a clone to OVMF, with Secure Boot. The build VM boots under
+      # SeaBIOS either way, so only this run would notice the UEFI half broken.
+      # Windows templates ship for OVMF already; the run above covered them.
+      - name: Smoke-test artifact under UEFI
+        if: ${{ !startsWith(inputs.recipe, 'windows-') }}
+        run: bun run cf verify "$CF_RECIPE" --firmware ovmf
+
       # Only now, with the artifact proven bootable, does it become publishable.
       # --remote uploads straight from the node's output dir, so nothing has to
       # cross the runner (CF_SKIP_ARTIFACT_SYNC=1 means it was never here).
