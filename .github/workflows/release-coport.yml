@@ -13,7 +13,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Validate semver tag
         run: |
@@ -34,7 +34,7 @@ jobs:
           fi
           echo "Tag and coport/package.json agree on version $PKG."
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - name: Install root dependencies
         run: bun install --frozen-lockfile
@@ -59,7 +59,8 @@ jobs:
 
       - name: Package artifacts
         run: |
-          sha256sum release/coport-linux-x64 release/coport-linux-arm64 > release/coport.sha256
+          # Bare file names, so `sha256sum -c` works next to a downloaded binary.
+          (cd release && sha256sum coport-linux-x64 coport-linux-arm64 > coport.sha256)
 
       - name: Extract release notes
         run: |
@@ -74,14 +75,14 @@ jobs:
           ' CHANGELOG.md > release-notes.md
           test -s release-notes.md
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coport-linux
           path: release/
           if-no-files-found: error
 
       - name: Publish GitHub release
-        uses: ncipollo/release-action@v1
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
         with:
           allowUpdates: true
           artifactErrorsFailBuild: true

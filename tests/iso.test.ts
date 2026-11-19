@@ -149,6 +149,14 @@ describe('recipe ISO pins', () => {
         }
     })
 
+    test("without a pin, an archived Debian recipe checks against its ISO's own list", async () => {
+        const recipe = await loadRecipe('debian-12')
+        expect(isoChecksum({ ...recipe, isoSha256: undefined })).toEqual({
+            url: 'https://cdimage.debian.org/cdimage/archive/12.15.0/amd64/iso-cd/SHA256SUMS',
+            filenamePattern: recipe.isoFilenameRe!,
+        })
+    })
+
     test('every committed key file holds exactly the key its name says', async () => {
         // The trust anchors. A key file swapped for another key would make
         // `cf update` pin whatever that key signed; fingerprints are from the

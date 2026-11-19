@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
+    REATTACH_NO_STATUS,
+    REATTACH_NOT_STARTED,
+    reattachConsoleLog,
     assertPackerTmpDirSocketSafe,
     buildPackerVars,
     buildRemoteEnv,
@@ -216,5 +222,137 @@ describe('streamViaConsoleLog', () => {
             encoding: 'utf8',
         })
         expect(result.status, result.stderr).toBe(0)
+    })
+})
+
+/**
+ * The launch and reattach scripts run for real here, against a temp dir. Only
+ * `tail` is shimmed: macOS has no `--pid`, so the shim waits for the pid to
+ * exit and then prints from the requested line, which is what GNU
+ * `tail -n +N --pid=P -f` has printed by the time it returns.
+ */
+const TAIL_SHIM = `tail() {
+    local from=1 pid= file=
+    for a in "$@"; do
+        case "$a" in +*) from=\${a#+} ;; --pid=*) pid=\${a#--pid=} ;; -n|-f) ;; *) file=$a ;; esac
+    done
+    if [ -n "$pid" ]; then while kill -0 "$pid" 2>/dev/null; do sleep 0.05; done; fi
+    command tail -n "+$from" "$file"
+}`
+
+describe('console log reattach', () => {
+    const fixture = () => {
+        const dir = mkdtempSync(join(tmpdir(), 'cofoundry-reattach-'))
+        return {
+            dir,
+            log: join(dir, 'packer-console.log'),
+            status: { pidFile: join(dir, 'p.pid'), rcFile: join(dir, 'p.rc') },
+            cleanup: () => rmSync(dir, { recursive: true, force: true }),
+        }
+    }
+    const bash = (script: string) =>
+        spawnSync('bash', ['-c', `${TAIL_SHIM}\n${script}`], {
+            encoding: 'utf8',
+        })
+
+    test('a launch records its pid and exit status', () => {
+        const f = fixture()
+        try {
+            const run = bash(
+                streamViaConsoleLog(
+                    "printf 'a\\nb\\nc\\n'; (exit 3)",
+                    f.log,
+                    f.status
+                )
+            )
+            expect(run.status).toBe(3)
+            expect(run.stdout).toBe('a\nb\nc\n')
+            expect(readFileSync(f.status.rcFile, 'utf8').trim()).toBe('3')
+            expect(readFileSync(f.status.pidFile, 'utf8').trim()).toMatch(
+                /^\d+$/
+            )
+        } finally {
+            f.cleanup()
+        }
+    })
+
+    test('a reattach after the end replays from the given line and exits with its status', () => {
+        const f = fixture()
+        try {
+            bash(
+                streamViaConsoleLog(
+                    "printf 'a\\nb\\nc\\n'; (exit 3)",
+                    f.log,
+                    f.status
+                )
+            )
+            const again = bash(reattachConsoleLog(f.log, f.status, 2))
+            expect(again.status).toBe(3)
+            expect(again.stdout.split('\n').slice(1).join('\n')).toBe('b\nc\n')
+        } finally {
+            f.cleanup()
+        }
+    })
+
+    test('a reattach follows a command that is still running', async () => {
+        const f = fixture()
+        try {
+            // The "dropped" session: started, then nobody reads its output.
+            const launch = spawn('bash', [
+                '-c',
+                `${TAIL_SHIM}\n${streamViaConsoleLog('echo one; sleep 0.6; echo two', f.log, f.status)}`,
+            ])
+            const deadline = Date.now() + 5000
+            while (!existsSync(f.status.pidFile) && Date.now() < deadline)
+                await Bun.sleep(20)
+            const again = bash(reattachConsoleLog(f.log, f.status, 1))
+            expect(again.status).toBe(0)
+            expect(again.stdout).toContain('one\ntwo\n')
+            expect(existsSync(f.status.rcFile)).toBe(true)
+            launch.kill()
+        } finally {
+            f.cleanup()
+        }
+    })
+
+    test('reports a launch that never started packer', () => {
+        const f = fixture()
+        try {
+            const again = bash(reattachConsoleLog(f.log, f.status, 1))
+            expect(again.status).toBe(1)
+            expect(again.stdout.trim()).toBe(REATTACH_NOT_STARTED)
+        } finally {
+            f.cleanup()
+        }
+    })
+
+    test('reports a command that died without recording a status', () => {
+        const f = fixture()
+        try {
+            // A pid that is certainly gone, and no rc file: killed with its
+            // process group, as the install watchdog does.
+            bash(`: > '${f.log}'; echo 999999 > '${f.status.pidFile}'`)
+            const again = bash(reattachConsoleLog(f.log, f.status, 1))
+            expect(again.status).toBe(1)
+            expect(again.stdout.trim().split('\n').at(-1)).toBe(
+                REATTACH_NO_STATUS
+            )
+        } finally {
+            f.cleanup()
+        }
+    })
+
+    test('both scripts are valid bash', () => {
+        const status = { pidFile: '/t/a b.pid', rcFile: '/t/a b.rc' }
+        for (const script of [
+            streamViaConsoleLog('packer build x', '/t/a b.log', status),
+            reattachConsoleLog('/t/a b.log', status, 10),
+        ]) {
+            const result = spawnSync('bash', ['-n'], {
+                input: script,
+                encoding: 'utf8',
+            })
+            expect(result.status, result.stderr).toBe(0)
+        }
     })
 })

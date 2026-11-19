@@ -235,7 +235,8 @@ export const remoteStreamingPty = (
 // Wget exit codes worth surfacing. See man wget(1) EXIT STATUS. Code 9 is
 // ours, not wget's (wget stops at 8): assetFetchCommand's validation step
 // exits 9 when a completed download does not match the published checksum, so
-// the failure reads as what it is instead of a generic wget error.
+// the failure reads as what it is instead of a generic wget error. Code 10 is
+// ours too: the checksum list could not be read, so nothing can be verified.
 export const WGET_EXIT: Record<number, string> = {
     1: 'generic error',
     2: 'parse error (bad command line)',
@@ -246,6 +247,7 @@ export const WGET_EXIT: Record<number, string> = {
     7: 'protocol error',
     8: 'server returned an error response (e.g. 404 — URL may be stale)',
     9: 'downloaded file failed checksum verification — expected hash did not match',
+    10: 'no expected checksum — the checksum list is unreachable or has no entry for this file',
 }
 
 // Turns a non-zero exit code from the fetch pipeline into a human meaning. The

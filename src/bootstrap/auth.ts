@@ -36,8 +36,12 @@ export const stepToken: BootstrapStep = {
         try {
             parsed = JSON.parse(r.stdout)
         } catch {
+            // The output is withheld: the token was just created, so it may
+            // well carry the secret, and the secret is not yet known to
+            // redactSensitive (it is registered only after parsing).
             throw new Error(
-                `could not parse pveum output as JSON: ${r.stdout.slice(0, 200)}`
+                `could not parse pveum output as JSON (${r.stdout.length} bytes, withheld: it may contain the new token secret). ` +
+                    `The token root@pam!${plan.tokenName} may exist now; remove it with \`pveum user token remove root@pam ${plan.tokenName}\` before re-running.`
             )
         }
         const secret = parsed.value

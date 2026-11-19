@@ -38,17 +38,84 @@ export const assertPackerTmpDirSocketSafe = (dir: string): void => {
  *
  * `tail --pid` exits once the command does, and the trailing `wait` re-raises
  * the command's own exit status so Packer failures still propagate to retries.
+ *
+ * The command also outlives the SSH session that started it: with no PTY,
+ * sshd does not signal it when the client vanishes. So the wrapper records the
+ * command's pid and, when it ends, its exit status, in `status` files. After a
+ * dropped connection `reattachConsoleLog` follows the same process instead of
+ * launching a second one against the same VM. The status is written by the
+ * backgrounded group itself, so it survives the launching shell too.
  */
+export type ConsoleStatusFiles = {
+    /** Written as soon as the command starts. */
+    pidFile: string
+    /** Written atomically, with the exit status, when the command ends. */
+    rcFile: string
+}
+
 export const streamViaConsoleLog = (
     command: string,
-    logPath: string
+    logPath: string,
+    status?: ConsoleStatusFiles
 ): string => {
     const log = shellQuote(logPath)
+    if (!status) {
+        return [
+            `${command} > ${log} 2>&1 &`,
+            `__cf_pid=$!`,
+            `tail -n +1 --pid="$__cf_pid" -f ${log} 2>/dev/null`,
+            `wait "$__cf_pid"`,
+        ].join('\n')
+    }
+    const pid = shellQuote(status.pidFile)
+    const rc = shellQuote(status.rcFile)
+    const rcTmp = shellQuote(`${status.rcFile}.tmp`)
     return [
-        `${command} > ${log} 2>&1 &`,
+        `rm -f ${pid} ${rc} ${rcTmp}`,
+        // Created up front so `tail -f` never races the redirect for it.
+        `: > ${log}`,
+        `{ { ${command}; } > ${log} 2>&1; __cf_rc=$?; echo "$__cf_rc" > ${rcTmp} && mv -f ${rcTmp} ${rc}; exit "$__cf_rc"; } &`,
         `__cf_pid=$!`,
+        `echo "$__cf_pid" > ${pid}`,
         `tail -n +1 --pid="$__cf_pid" -f ${log} 2>/dev/null`,
         `wait "$__cf_pid"`,
+    ].join('\n')
+}
+
+/** Printed by `reattachConsoleLog` when the launch never got as far as starting
+ *  the command, so there is nothing to follow and it is safe to launch. */
+export const REATTACH_NOT_STARTED = '__cf_reattach: not started__'
+/** Printed by `reattachConsoleLog` when the command is gone without having
+ *  recorded an exit status (killed with its process group, or the node went
+ *  down), so its outcome is unknown. */
+export const REATTACH_NO_STATUS = '__cf_reattach: no exit status__'
+
+/**
+ * Follow a command started by `streamViaConsoleLog` from a new SSH session:
+ * print its log from line `fromLine` (1-based), keep following while it runs,
+ * and exit with its recorded status. Prints a sentinel line and exits 1 when
+ * there is nothing to follow.
+ */
+export const reattachConsoleLog = (
+    logPath: string,
+    status: ConsoleStatusFiles,
+    fromLine: number
+): string => {
+    const log = shellQuote(logPath)
+    const pid = shellQuote(status.pidFile)
+    const rc = shellQuote(status.rcFile)
+    const from = Math.max(1, Math.floor(fromLine))
+    return [
+        `[ -s ${pid} ] || { echo ${shellQuote(REATTACH_NOT_STARTED)}; exit 1; }`,
+        `__cf_pid=$(cat ${pid})`,
+        `echo "[reattach] following packer (pid $__cf_pid) from line ${from} of its console log"`,
+        `if [ ! -e ${rc} ] && kill -0 "$__cf_pid" 2>/dev/null; then`,
+        `    tail -n +${from} --pid="$__cf_pid" -f ${log} 2>/dev/null`,
+        `else`,
+        `    tail -n +${from} ${log} 2>/dev/null`,
+        `fi`,
+        `[ -s ${rc} ] || { echo ${shellQuote(REATTACH_NO_STATUS)}; exit 1; }`,
+        `exit "$(cat ${rc})"`,
     ].join('\n')
 }
 

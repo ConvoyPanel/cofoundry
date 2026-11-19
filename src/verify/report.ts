@@ -38,6 +38,23 @@ export const frameResult = (
     }
 }
 
+/**
+ * The console check when no frame could be captured. It is recorded rather
+ * than dropped: on Windows the framebuffer is the only evidence the desktop
+ * painted, and a check that silently disappears lets the run read as a pass.
+ */
+export const frameUnavailableResult = (
+    label: string,
+    severity: CheckSeverity
+): CheckResult => ({
+    id: `console-not-blank:${label}`,
+    description: `console framebuffer is not a uniform field (${label})`,
+    status: severity === 'warn' ? 'warn' : 'fail',
+    detail: 'no frame could be captured, so the console was never checked',
+    output: '',
+    durationMs: 0,
+})
+
 /** One reported check: the headline, then what the guest actually said. */
 const formatResult = (marker: string, r: CheckResult): string => {
     const head = `  ${marker} ${r.id} — ${r.description} (${r.detail})`

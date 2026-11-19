@@ -109,7 +109,9 @@ it the way a user's clone is exercised, rather than merely booting it:
    it is the only check that can see a kernel panic, a GRUB hang, or a desktop
    that never painted. Outside CI the frame is written to
    `./diagnostics/verify-<recipe>-<arch>-<timestamp>/` as a gzipped PPM — PVE's
-   qemu is commonly built without libpng.
+   qemu is commonly built without libpng. A frame that cannot be captured (after
+   one retry) is reported at the suite's console-check severity — a failure on
+   Windows — rather than dropped, so a run that never looked cannot pass.
 
 Checks are declarative data in `src/verify/checks/`, split into a shared Linux
 suite and a Windows suite, with per-recipe overrides keyed by recipe name in
@@ -181,9 +183,16 @@ spares templates):
   interrupted downloads including `*.iso.tmp.<pid>`;
 - every `packer-*` build VM and its disks, **including templates** left by
   successful builds;
-- disks orphaned in `CF_STORAGE` whose owning VM is gone;
+- disks orphaned in `CF_STORAGE` whose owning VM is gone from every node of the
+  cluster;
 - any legacy `vzdump-qemu-*` archive left in the dump dir, regardless of VMID;
 - RRD and backup telemetry belonging to deleted Cofoundry build/verify VMIDs.
+
+A VM or disk is only removed when its VMID is one Cofoundry allocated: a recipe's
+`build_vmid`, a slot VMID derived from it, the verify range, or a VMID a build
+recorded. A `packer-*` name alone is not enough — other Packer workflows use the
+same prefix — and `CF_STORAGE` is usually the node's main pool, shared with VMs
+Cofoundry never made.
 
 Builds and verification runs share a node maintenance lock and can run in
 parallel with each other; `clean` takes the exclusive side and waits for them to
@@ -198,7 +207,7 @@ cf prune --days 7  # stricter cutoff
 ```
 
 Removes VMs and scratch owned by expired run leases plus legacy non-template
-`packer-*` VMs past the cutoff; unreferenced Packer ISOs and download-cache
+`packer-*` VMs past the cutoff whose VMID Cofoundry allocated; unreferenced Packer ISOs and download-cache
 entries (the persistent `packer-virtio-win*.iso` cache is preserved and attached
 media is never pruned); archives and working data past the cutoff; orphaned
 per-build scratch in `cofoundry-tmp` (`build-*`, `repo-*.tar.gz`, `sync-*`) and
@@ -229,6 +238,9 @@ gets its own directory:
 | --------- | ------------------------------------------------- |
 | `grouped` | `images/{{group}}/{{recipe}}-{{arch}}/{{sha256}}` |
 | `flat`    | `images/{{recipe}}-{{arch}}/{{sha256}}`           |
+
+`R2_PREFIX` in the environment overrides `prefix` for uploads, `cf publish
+--r2`, and `cf prune --r2` alike, so all three always look in the same place.
 
 For a custom path set `key` directly instead of `layout` — e.g.
 `key = "{{recipe}}/{{recipe}}-{{arch}}-{{sha256}}"`. For a fully hand-written
@@ -282,6 +294,14 @@ Wire it in as the build node's **sidecar** hook in `.env`:
 ```sh
 CF_SIDECAR_UPLOAD_CMD=bash $PVE_DUMP_DIR/cofoundry-work/scripts/cf-cluster-templates.sh {{file}}
 ```
+
+**Setting it in `.env` replaces the configured sidecar hook.** With `[upload]`
+configured, that hook is what uploads the sidecar to R2 — replacing it leaves R2
+holding images that no sidecar names, which `cf prune --r2` deletes as
+unreferenced. To keep both, chain them in the one variable:
+`CF_SIDECAR_UPLOAD_CMD=<the command cf config shows> && bash …/cf-cluster-templates.sh {{file}}`.
+`cf bootstrap` offers to wire the script in only when no sidecar hook is set,
+and otherwise prints the chained form instead.
 
 **Not `CF_UPLOAD_CMD`.** A template is several images now, and `CF_UPLOAD_CMD`
 fires once _per image_ — the script would be handed a bare `.qcow2` with no idea

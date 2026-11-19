@@ -144,6 +144,47 @@ describe('planR2Prune', () => {
         expect(plan.orphanObjects).toEqual([`${PREFIX}/orphan.qcow2`])
     })
 
+    test('deletes a malformed sidecar and the images only it named', () => {
+        // Not generated properly, so it claims nothing: it goes, and so do its
+        // images -- except one a proper generation still shares.
+        const plan = planR2Prune(
+            [
+                object(`${PREFIX}-bad.json`, '2026-03-01'),
+                object(`${PREFIX}/bad-only.qcow2`, '2026-03-01'),
+                object(`${PREFIX}/shared.efivars.raw`, '2026-02-01'),
+                object(`${PREFIX}-good.json`, '2026-02-01'),
+                object(`${PREFIX}/good.qcow2`, '2026-02-01'),
+            ],
+            [
+                generation(`${PREFIX}-good.json`, '2026-02-01', 'debian-12', [
+                    'good',
+                    'shared',
+                ]),
+            ],
+            5,
+            [`${PREFIX}-bad.json`]
+        )
+        expect(plan.malformed).toEqual([`${PREFIX}-bad.json`])
+        expect(plan.deletions.sort()).toEqual(
+            [`${PREFIX}-bad.json`, `${PREFIX}/bad-only.qcow2`].sort()
+        )
+    })
+
+    test('treats a sidecar that names no template as malformed', () => {
+        const plan = planR2Prune(
+            [
+                object(`${PREFIX}-x.json`, '2026-01-01'),
+                object(`${PREFIX}/unnamed.qcow2`, '2026-01-01'),
+            ],
+            [generation(`${PREFIX}-x.json`, '2026-01-01', '', ['unnamed'])],
+            1
+        )
+        expect(plan.malformed).toEqual([`${PREFIX}-x.json`])
+        expect(plan.deletions.sort()).toEqual(
+            [`${PREFIX}-x.json`, `${PREFIX}/unnamed.qcow2`].sort()
+        )
+    })
+
     test('never touches objects that are not template images', () => {
         // The prefix may hold things prune did not put there — including the
         // mirrored registry.json.

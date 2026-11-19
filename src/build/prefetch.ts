@@ -52,24 +52,34 @@ export const CHECKSUM_EXTRACT_PY =
     "h=re.findall(r'(?i)\\b[0-9a-f]{64}\\b', line); " +
     "print(h[0].lower()+' '+(name(line) or line.strip()) if h else '')"
 
-const checksumCommand = (
-    pathArg: string,
-    checksum?: Checksum,
-    urlBase = ''
-): string => {
+const checksumCommand = (pathArg: string, checksum?: Checksum): string => {
     if (!checksum) return `test -s ${pathArg}`
     if ('sha256' in checksum) {
         // expected is also read by the mismatch diagnostics in onInvalid.
         return `expected=${shellQuote(checksum.sha256.toLowerCase())}; actual=$(sha256sum ${pathArg} | awk '{print $1}') && [ "$actual" = "$expected" ]`
     }
-    return (
-        `entry=$(curl -fsSL ${shellQuote(checksum.url)} 2>/dev/null | ` +
-        `python3 -c ${shellQuote(CHECKSUM_EXTRACT_PY)} ${shellQuote(checksum.filenamePattern)} ${shellQuote(urlBase)} || true); ` +
-        'expected="${entry%% *}"; matched="${entry#* }"; ' +
-        `if [ -z "$expected" ]; then test -s ${pathArg}; else ` +
-        `actual=$(sha256sum ${pathArg} | awk '{print $1}') && [ "$actual" = "$expected" ]; fi`
-    )
+    // $expected was resolved from the checksum list once, up front.
+    return `actual=$(sha256sum ${pathArg} | awk '{print $1}') && [ "$actual" = "$expected" ]`
 }
+
+/**
+ * Read the expected hash out of a vendor checksum list, or stop.
+ *
+ * This used to fall back to "file is not empty" whenever the list could not be
+ * fetched or had no entry for the file -- so a stale checksum URL (a 404) was
+ * indistinguishable from a verified download. Resolved before the cached copy
+ * is judged, so an unreachable list fails the fetch without deleting a cached
+ * file that may be fine. Exit 10 keeps it retryable: a list can be briefly
+ * unreachable.
+ */
+const expectedFromListCommand = (
+    checksum: { url: string; filenamePattern: string },
+    urlBase: string
+): string =>
+    `entry=$(curl -fsSL ${shellQuote(checksum.url)} 2>/dev/null | ` +
+    `python3 -c ${shellQuote(CHECKSUM_EXTRACT_PY)} ${shellQuote(checksum.filenamePattern)} ${shellQuote(urlBase)} || true); ` +
+    'expected="${entry%% *}"; matched="${entry#* }"; ' +
+    `if [ -z "$expected" ]; then echo ${shellQuote(`no expected checksum for ${urlBase}: ${checksum.url} is unreachable or lists no matching file`)}; exit 10; fi; `
 
 /** Serialize by destination, validate under the lock, and publish by rename. */
 export const assetFetchCommand = (
@@ -78,8 +88,12 @@ export const assetFetchCommand = (
     checksum?: Checksum
 ): string => {
     const base = urlBasename(url)
-    const valid = checksumCommand(shellQuote(destination), checksum, base)
-    const downloadedValid = checksumCommand('"$tmp"', checksum, base)
+    const valid = checksumCommand(shellQuote(destination), checksum)
+    const downloadedValid = checksumCommand('"$tmp"', checksum)
+    const resolveExpected =
+        checksum && !('sha256' in checksum)
+            ? expectedFromListCommand(checksum, base)
+            : ''
     // A completed-but-invalid download is removed (resuming garbage that wget
     // considers finished is worse than restarting) and reported with our own
     // exit 9 — outside wget's 0–8 range — alongside the expected/actual hashes
@@ -97,6 +111,7 @@ export const assetFetchCommand = (
         : 'rm -f "$tmp"; exit 1'
     return (
         `set -e; mkdir -p ${shellQuote(ASSET_LOCK_DIR)}; exec 9>${shellQuote(assetLockPath(destination))}; flock -x 9; ` +
+        resolveExpected +
         `if ${valid}; then touch ${shellQuote(destination)}; exit 0; fi; ` +
         `rm -f ${shellQuote(destination)}; ` +
         // Stable temp path (no $$ PID) so a partial transfer survives to be
@@ -215,21 +230,38 @@ export const virtioWinIsoUrl = (version: string): string =>
     `https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-${version}/virtio-win.iso`
 
 /**
+ * The checksum list to verify a recipe's ISO against.
+ *
+ * Archived Debian recipes carry a `cdimage/archive/latest-N/` placeholder in
+ * `iso_checksum_url`: `cf update` resolves it to discover the newest point
+ * release, but the path itself does not exist (404). The list for the pinned
+ * ISO sits next to it, in the same versioned directory.
+ */
+export const isoChecksumListUrl = (
+    isoUrl: string,
+    checksumUrl: string
+): string =>
+    /\/cdimage\/archive\/latest-\d+\//.test(checksumUrl) &&
+    /\/cdimage\/archive\/\d+\.\d+\.\d+\//.test(isoUrl)
+        ? isoUrl.replace(/[?#].*$/, '').replace(/[^/]+$/, 'SHA256SUMS')
+        : checksumUrl
+
+/**
  * What the downloaded boot ISO is checked against.
  *
  * The recipe's pin wins. `cf update` writes it only from a checksum file the
  * vendor's key signed, so it is the one value here that a mirror cannot
- * influence. Fetching the vendor's live checksum file at build time instead
- * trusted whichever server answered, and failed open: Debian 11 and 12 name a
- * `latest-N` placeholder that only `cf update` resolves, the fetch 404'd, and
- * the ISO was accepted for merely being non-empty. A recipe without a pin
- * still falls back to the live file.
+ * influence; the live checksum list is fetched at build time from whichever
+ * server answers, with no signature check. A recipe without a pin falls back
+ * to that list.
  */
 export const isoChecksum = (recipe: RecipeInfo): Checksum | undefined => {
     if (recipe.isoSha256) return { sha256: recipe.isoSha256 }
     if (recipe.isoChecksumUrl && recipe.isoFilenameRe)
         return {
-            url: recipe.isoChecksumUrl,
+            url: recipe.isoUrl
+                ? isoChecksumListUrl(recipe.isoUrl, recipe.isoChecksumUrl)
+                : recipe.isoChecksumUrl,
             filenamePattern: recipe.isoFilenameRe,
         }
     return undefined

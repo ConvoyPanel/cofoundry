@@ -1,7 +1,7 @@
 import { basename } from 'node:path'
 import { accent, dim } from '@cofoundry/ui'
 import { log } from '@/log.ts'
-import type { Sidecar } from '@/registry/schema.ts'
+import { parseSidecar } from '@/registry/schema.ts'
 import { s3api, s3Get } from '@/r2.ts'
 
 export type PruneR2Options = {
@@ -45,6 +45,8 @@ export type R2PruneGroup = {
 
 export type R2PrunePlan = {
     groups: R2PruneGroup[]
+    /** Sidecars that were not generated properly; see `parseSidecar`. */
+    malformed: string[]
     /** Images referenced by no surviving generation. */
     orphanObjects: string[]
     deletions: string[]
@@ -68,15 +70,29 @@ const isImage = (key: string): boolean =>
  * both superseded versions and images orphaned by a failed publish. Objects
  * that are neither a sidecar nor a recognized image extension are never
  * touched -- the prefix may hold things prune did not put there.
+ *
+ * A sidecar that was not generated properly (`malformed`, or a generation
+ * with no template name) is deleted, and claims no images: the images only it
+ * named are swept with the other unreferenced ones. The sweep is sound only
+ * because the caller has read EVERY sidecar in the prefix -- an image is judged
+ * orphaned by the absence of a sidecar claiming it -- so a sidecar that could
+ * not be fetched at all must stop the run before it gets here.
  */
 export const planR2Prune = (
     objects: R2Object[],
     generations: R2Generation[],
-    keep: number
+    keep: number,
+    malformedKeys: string[] = []
 ): R2PrunePlan => {
     if (!Number.isInteger(keep) || keep < 0)
         throw new Error('--keep must be a non-negative integer')
 
+    const malformed = [
+        ...malformedKeys,
+        ...generations.filter(g => !g.template).map(g => g.key),
+    ]
+    const deletions: string[] = [...malformed]
+    const liveHashes = new Set<string>()
     const byTemplate = new Map<string, R2Generation[]>()
     for (const generation of generations) {
         if (!generation.template) continue
@@ -85,8 +101,6 @@ export const planR2Prune = (
         byTemplate.set(generation.template, list)
     }
 
-    const deletions: string[] = []
-    const liveHashes = new Set<string>()
     const groups: R2PruneGroup[] = []
     for (const [template, list] of byTemplate) {
         list.sort((a, b) => b.lastModified.localeCompare(a.lastModified))
@@ -107,7 +121,7 @@ export const planR2Prune = (
         .map(object => object.Key)
 
     deletions.push(...orphanObjects)
-    return { groups, orphanObjects, deletions }
+    return { groups, malformed, orphanObjects, deletions }
 }
 
 export const runPruneR2 = async (
@@ -134,30 +148,51 @@ export const runPruneR2 = async (
         o => o.Key.endsWith('.json') && basename(o.Key) !== 'registry.json'
     )
     log.step(`reading ${sidecarObjects.length} sidecar(s)`)
-    const generations = (
-        await Promise.all(
-            sidecarObjects.map(async o => {
-                try {
-                    const sidecar = JSON.parse(
-                        await s3Get(endpoint, bucket, o.Key)
-                    ) as Sidecar
-                    return {
-                        key: o.Key,
-                        lastModified: o.LastModified,
-                        template: sidecar.name,
-                        hashes: (sidecar.disks ?? []).map(d => d.sha256),
-                    }
-                } catch {
-                    // An unreadable sidecar must not make its images look
-                    // orphaned; skipping it leaves them untouched this run.
-                    log.warn(`skipping unparseable sidecar ${o.Key}`)
-                    return null
-                }
-            })
-        )
-    ).filter((g): g is R2Generation => g !== null)
+    type Fetched =
+        | { o: R2Object; body: string }
+        | { o: R2Object; error: unknown }
+    const read = await Promise.all(
+        sidecarObjects.map(async (o): Promise<Fetched> => {
+            try {
+                return { o, body: await s3Get(endpoint, bucket, o.Key) }
+            } catch (error) {
+                return { o, error }
+            }
+        })
+    )
 
-    const plan = planR2Prune(objects, generations, keep)
+    // A sidecar that could not be fetched cannot be judged: it may be fine.
+    // Deleting it would be a guess, and so would sweeping the images it might
+    // name, so the run stops here with nothing deleted.
+    const unfetched = read.filter(r => 'error' in r)
+    if (unfetched.length > 0) {
+        for (const { o, error } of unfetched)
+            log.warn(
+                `could not fetch sidecar ${o.Key}: ${error instanceof Error ? error.message : String(error)}`
+            )
+        throw new Error(
+            `could not fetch ${unfetched.length} sidecar(s); nothing was deleted`
+        )
+    }
+
+    const generations: R2Generation[] = []
+    const malformed: string[] = []
+    for (const r of read) {
+        if (!('body' in r)) continue
+        const result = parseSidecar(r.body)
+        if (!result.ok) {
+            log.warn(`malformed sidecar ${r.o.Key}: ${result.reason}`)
+            malformed.push(r.o.Key)
+            continue
+        }
+        generations.push({
+            key: r.o.Key,
+            lastModified: r.o.LastModified,
+            template: result.sidecar.name,
+            hashes: result.sidecar.disks.map(d => d.sha256),
+        })
+    }
+    const plan = planR2Prune(objects, generations, keep, malformed)
 
     for (const group of plan.groups) {
         if (group.stale.length === 0) {
@@ -172,6 +207,13 @@ export const runPruneR2 = async (
         )
         for (const generation of group.stale)
             log.note(`${generation.key}  (${generation.lastModified})`)
+    }
+    if (plan.malformed.length > 0) {
+        const verb = dryRun ? 'would delete' : 'deleting'
+        log.ok(
+            `malformed sidecars ${dim('·')} ${verb} ${plan.malformed.length}`
+        )
+        for (const key of plan.malformed) log.note(key)
     }
     if (plan.orphanObjects.length > 0) {
         const verb = dryRun ? 'would delete' : 'deleting'
