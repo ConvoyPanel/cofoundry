@@ -3,10 +3,12 @@
 # build_vmid: 5001
 # min_cores: 1
 # min_memory: 2048
-# iso_url: https://download.rockylinux.org/pub/rocky/9/isos/x86_64/Rocky-9.8-x86_64-minimal.iso
-# iso_target_path: ${var.iso_cache_dir}/packer-Rocky-9.8-x86_64-minimal.iso
+# iso_url: https://download.rockylinux.org/pub/rocky/9/isos/x86_64/Rocky-9.9-x86_64-minimal.iso
+# iso_target_path: ${var.iso_cache_dir}/packer-Rocky-9.9-x86_64-minimal.iso
 # iso_checksum_url: https://download.rockylinux.org/pub/rocky/9/isos/x86_64/CHECKSUM
 # iso_filename_re: Rocky-9\.\d+-x86_64-minimal\.iso
+# iso_signing_key: rocky-linux-9
+# iso_checksum_sig: CHECKSUM.asc
 packer {
   required_plugins {
     proxmox = {
@@ -138,8 +140,8 @@ source "proxmox-iso" "rocky-linux-9" {
 
   boot_iso {
     type         = "ide"
-    iso_file     = "${var.proxmox_iso_storage_pool}:iso/packer-Rocky-9.8-x86_64-minimal.iso"
-    iso_checksum = "sha256:d338032cd1cdd41c67139f2f71b4c832c8e4a21943106519db9c7137df7a63d4"
+    iso_file     = "${var.proxmox_iso_storage_pool}:iso/packer-Rocky-9.9-x86_64-minimal.iso"
+    iso_checksum = "sha256:56772c6c07464ea8e55b64cb5ec2448d16e1b4673b8041678dacfd540131401c"
     unmount      = true
   }
 

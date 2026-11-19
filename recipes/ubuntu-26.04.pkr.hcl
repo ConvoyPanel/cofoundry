@@ -3,10 +3,12 @@
 # build_vmid: 1005
 # min_cores: 1
 # min_memory: 1024
-# iso_url: https://releases.ubuntu.com/26.04/ubuntu-26.04-live-server-amd64.iso
-# iso_target_path: ${var.iso_cache_dir}/packer-ubuntu-26.04-live-server-amd64.iso
+# iso_url: https://releases.ubuntu.com/26.04/ubuntu-26.04.1-live-server-amd64.iso
+# iso_target_path: ${var.iso_cache_dir}/packer-ubuntu-26.04.1-live-server-amd64.iso
 # iso_checksum_url: https://releases.ubuntu.com/26.04/SHA256SUMS
 # iso_filename_re: ubuntu-26\.04(\.\d+)?-live-server-amd64\.iso
+# iso_signing_key: ubuntu-cdimage
+# iso_checksum_sig: SHA256SUMS.gpg
 
 packer {
   required_plugins {
@@ -139,8 +141,8 @@ source "proxmox-iso" "ubuntu-26-04" {
 
   boot_iso {
     type         = "ide"
-    iso_file     = "${var.proxmox_iso_storage_pool}:iso/packer-ubuntu-26.04-live-server-amd64.iso"
-    iso_checksum = "sha256:dec49008a71f6098d0bcfc822021f4d042d5f2db279e4d75bdd981304f1ca5d9"
+    iso_file     = "${var.proxmox_iso_storage_pool}:iso/packer-ubuntu-26.04.1-live-server-amd64.iso"
+    iso_checksum = "sha256:cc8a95cde20f6ced61a322420de00f10cc3c90ced545daa46cb9c1a117f1d927"
     unmount      = true
   }
 

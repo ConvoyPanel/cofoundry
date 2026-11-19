@@ -31,6 +31,23 @@ export interface RecipeInfo {
     isoChecksumUrl?: string
     /** Regex string matching the ISO filename inside the checksum file */
     isoFilenameRe?: string
+    /**
+     * Name of the vendor key under `keys/` that signs the checksum file, from
+     * `# iso_signing_key:`. `cf update` refuses to pin an ISO without one.
+     */
+    isoSigningKey?: string
+    /**
+     * `# iso_checksum_sig:` — the detached signature's file name, resolved
+     * next to the checksum file, or `clearsigned` when the checksum file
+     * carries its own signature.
+     */
+    isoChecksumSig?: string
+    /**
+     * The boot ISO's pinned SHA256 from `iso_checksum = "sha256:..."`. Written
+     * only by `cf update` from a signature-verified checksum file, so it is
+     * what the build checks the downloaded ISO against.
+     */
+    isoSha256?: string
     /** Architecture tag from `# arch: ...` comment; defaults to "amd64" */
     arch: string
     /** Group id from `# group: ...` comment */
@@ -77,6 +94,11 @@ const parseHclInt = (raw: string, key: string): number | undefined => {
     const value = Number.parseInt(match[1], 10)
     return Number.isFinite(value) ? value : undefined
 }
+
+const parseIsoSha256 = (raw: string): string | undefined =>
+    raw
+        .match(/^\s*iso_checksum\s*=\s*"sha256:([0-9a-fA-F]{64})"/m)?.[1]
+        ?.toLowerCase()
 
 const parseIsoUrl = (raw: string): string | undefined => {
     const meta = parseMeta(raw, 'iso_url')
@@ -132,6 +154,9 @@ export const loadRecipe = async (
         isoTargetPath: parseIsoTargetPath(raw),
         isoChecksumUrl: parseMeta(raw, 'iso_checksum_url'),
         isoFilenameRe: parseMeta(raw, 'iso_filename_re'),
+        isoSigningKey: parseMeta(raw, 'iso_signing_key'),
+        isoChecksumSig: parseMeta(raw, 'iso_checksum_sig'),
+        isoSha256: parseIsoSha256(raw),
         arch: parseMeta(raw, 'arch') ?? 'amd64',
         group: parseMeta(raw, 'group'),
         finalDiskSize: parseMeta(raw, 'final_disk_size'),

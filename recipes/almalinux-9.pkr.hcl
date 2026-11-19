@@ -3,10 +3,12 @@
 # build_vmid: 6001
 # min_cores: 1
 # min_memory: 2048
-# iso_url: https://repo.almalinux.org/almalinux/9/isos/x86_64/AlmaLinux-9.8-x86_64-minimal.iso
-# iso_target_path: ${var.iso_cache_dir}/packer-AlmaLinux-9.8-x86_64-minimal.iso
+# iso_url: https://repo.almalinux.org/almalinux/9/isos/x86_64/AlmaLinux-9.9-x86_64-minimal.iso
+# iso_target_path: ${var.iso_cache_dir}/packer-AlmaLinux-9.9-x86_64-minimal.iso
 # iso_checksum_url: https://repo.almalinux.org/almalinux/9/isos/x86_64/CHECKSUM
 # iso_filename_re: AlmaLinux-9\.\d+-x86_64-minimal\.iso
+# iso_signing_key: almalinux-9
+# iso_checksum_sig: clearsigned
 
 packer {
   required_plugins {
@@ -139,8 +141,8 @@ source "proxmox-iso" "almalinux-9" {
 
   boot_iso {
     type         = "ide"
-    iso_file     = "${var.proxmox_iso_storage_pool}:iso/packer-AlmaLinux-9.8-x86_64-minimal.iso"
-    iso_checksum = "sha256:7762a4b45a66235726db145a573658964bf77bf7b9bc1c018afe86a4cf37cc2e"
+    iso_file     = "${var.proxmox_iso_storage_pool}:iso/packer-AlmaLinux-9.9-x86_64-minimal.iso"
+    iso_checksum = "sha256:0a0929bd4bbad481fe30066278aa66534a1d7a219a39c0495f0d51f82511bfd5"
     unmount      = true
   }
 

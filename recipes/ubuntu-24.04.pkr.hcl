@@ -3,10 +3,12 @@
 # build_vmid: 1003
 # min_cores: 1
 # min_memory: 1024
-# iso_url: https://releases.ubuntu.com/24.04/ubuntu-24.04.4-live-server-amd64.iso
-# iso_target_path: ${var.iso_cache_dir}/packer-ubuntu-24.04.4-live-server-amd64.iso
+# iso_url: https://releases.ubuntu.com/24.04/ubuntu-24.04.5-live-server-amd64.iso
+# iso_target_path: ${var.iso_cache_dir}/packer-ubuntu-24.04.5-live-server-amd64.iso
 # iso_checksum_url: https://releases.ubuntu.com/24.04/SHA256SUMS
 # iso_filename_re: ubuntu-24\.04(\.\d+)?-live-server-amd64\.iso
+# iso_signing_key: ubuntu-cdimage
+# iso_checksum_sig: SHA256SUMS.gpg
 
 packer {
   required_plugins {
@@ -139,8 +141,8 @@ source "proxmox-iso" "ubuntu-24-04" {
 
   boot_iso {
     type         = "ide"
-    iso_file     = "${var.proxmox_iso_storage_pool}:iso/packer-ubuntu-24.04.4-live-server-amd64.iso"
-    iso_checksum = "sha256:e907d92eeec9df64163a7e454cbc8d7755e8ddc7ed42f99dbc80c40f1a138433"
+    iso_file     = "${var.proxmox_iso_storage_pool}:iso/packer-ubuntu-24.04.5-live-server-amd64.iso"
+    iso_checksum = "sha256:97f3d7ffb032c3eb3b23d2c8be9cc76e60c2c1f2c0146ba5ba9fe01cafae0fd8"
     unmount      = true
   }
 

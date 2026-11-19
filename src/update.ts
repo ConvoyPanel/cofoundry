@@ -1,5 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import type { RecipeInfo } from '@/config.ts'
+import { loadSigningKey, verifiedChecksumText } from '@/iso.ts'
 import { fetchWithRetry } from '@/util.ts'
 
 export interface IsoUpdate {
@@ -40,8 +41,17 @@ const resolveDebianArchiveUrl = async (
     return `${base}${major}.${best.minor}.${best.patch}${suffix}`
 }
 
+/**
+ * Fetch a checksum file and return the text its vendor signature covers.
+ *
+ * The ISO URL is derived from the URL this *asked for*, never from where a
+ * redirect landed: a mirror that answers the checksum request must not get to
+ * choose where the ISO comes from too.
+ */
 const fetchChecksumFile = async (
-    url: string
+    url: string,
+    signingKey: string,
+    signature: string | undefined
 ): Promise<{ content: string; baseUrl: string }> => {
     // Resolve Debian archive "latest-N" placeholder before fetching
     const debMatch = DEBIAN_ARCHIVE_LATEST_RE.exec(url)
@@ -52,8 +62,23 @@ const fetchChecksumFile = async (
 
     const res = await fetchWithRetry(url)
     if (!res.ok) throw new Error(`GET ${url} → HTTP ${res.status}`)
-    const content = await res.text()
-    const baseUrl = res.url.slice(0, res.url.lastIndexOf('/') + 1)
+    const raw = await res.text()
+
+    let detached: Uint8Array | undefined
+    if (signature && signature !== 'clearsigned') {
+        // A bare file name, resolved next to the checksum file, so it follows
+        // the latest-N resolution above.
+        const sigUrl = new URL(signature, url).href
+        const sigRes = await fetchWithRetry(sigUrl)
+        if (!sigRes.ok) throw new Error(`GET ${sigUrl} → HTTP ${sigRes.status}`)
+        detached = new Uint8Array(await sigRes.arrayBuffer())
+    }
+    const content = await verifiedChecksumText(
+        raw,
+        await loadSigningKey(signingKey),
+        detached
+    )
+    const baseUrl = url.slice(0, url.lastIndexOf('/') + 1)
     return { content, baseUrl }
 }
 
@@ -85,7 +110,17 @@ export const resolveIsoUpdate = async (
     recipe: RecipeInfo
 ): Promise<IsoUpdate | undefined> => {
     if (!recipe.isoChecksumUrl || !recipe.isoFilenameRe) return undefined
-    const { content, baseUrl } = await fetchChecksumFile(recipe.isoChecksumUrl)
+    // Fail closed: a pin is what every later build trusts, so it is only ever
+    // written from a checksum file the vendor's key signed.
+    if (!recipe.isoSigningKey)
+        throw new Error(
+            `${recipe.name} has iso_checksum_url but no # iso_signing_key; refusing to pin an unsigned checksum`
+        )
+    const { content, baseUrl } = await fetchChecksumFile(
+        recipe.isoChecksumUrl,
+        recipe.isoSigningKey,
+        recipe.isoChecksumSig
+    )
     const match = parseChecksumFile(content, new RegExp(recipe.isoFilenameRe))
     if (!match)
         throw new Error(

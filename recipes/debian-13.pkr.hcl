@@ -7,6 +7,8 @@
 # iso_target_path: ${var.iso_cache_dir}/packer-debian-13.7.0-amd64-netinst.iso
 # iso_checksum_url: https://cdimage.debian.org/cdimage/release/current/amd64/iso-cd/SHA256SUMS
 # iso_filename_re: debian-13\.\d+\.\d+-amd64-netinst\.iso
+# iso_signing_key: debian-cd
+# iso_checksum_sig: SHA256SUMS.sign
 
 packer {
   required_plugins {
@@ -140,7 +142,7 @@ source "proxmox-iso" "debian-13" {
   boot_iso {
     type         = "ide"
     iso_file     = "${var.proxmox_iso_storage_pool}:iso/packer-debian-13.7.0-amd64-netinst.iso"
-    iso_checksum = "sha256:65273beed27b2df543b68b65630ba525cfbad8df2b12035732b2dff87d6664e7"
+    iso_checksum = "sha256:a7ef94ac2fb9a7fec454552abd629b7cc9d5155c886165a45649f5ce6167e355"
     unmount      = true
   }
 

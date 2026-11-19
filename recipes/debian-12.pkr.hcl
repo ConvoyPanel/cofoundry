@@ -7,6 +7,8 @@
 # iso_target_path: ${var.iso_cache_dir}/packer-debian-12.15.0-amd64-netinst.iso
 # iso_checksum_url: https://cdimage.debian.org/cdimage/archive/latest-12/amd64/iso-cd/SHA256SUMS
 # iso_filename_re: debian-12\.\d+\.\d+-amd64-netinst\.iso
+# iso_signing_key: debian-cd
+# iso_checksum_sig: SHA256SUMS.sign
 
 packer {
   required_plugins {

@@ -3,10 +3,12 @@
 # build_vmid: 6002
 # min_cores: 1
 # min_memory: 2048
-# iso_url: https://repo.almalinux.org/almalinux/10/isos/x86_64/AlmaLinux-10.2-x86_64-minimal.iso
-# iso_target_path: ${var.iso_cache_dir}/packer-AlmaLinux-10.2-x86_64-minimal.iso
+# iso_url: https://repo.almalinux.org/almalinux/10/isos/x86_64/AlmaLinux-10.3-x86_64-minimal.iso
+# iso_target_path: ${var.iso_cache_dir}/packer-AlmaLinux-10.3-x86_64-minimal.iso
 # iso_checksum_url: https://repo.almalinux.org/almalinux/10/isos/x86_64/CHECKSUM
 # iso_filename_re: AlmaLinux-10\.\d+-x86_64-minimal\.iso
+# iso_signing_key: almalinux-10
+# iso_checksum_sig: clearsigned
 
 packer {
   required_plugins {
@@ -139,8 +141,8 @@ source "proxmox-iso" "almalinux-10" {
 
   boot_iso {
     type         = "ide"
-    iso_file     = "${var.proxmox_iso_storage_pool}:iso/packer-AlmaLinux-10.2-x86_64-minimal.iso"
-    iso_checksum = "sha256:1b532f534231da0d1cd0ccae622bea6cd588d8a0d7b259f1f131501a6eed41a4"
+    iso_file     = "${var.proxmox_iso_storage_pool}:iso/packer-AlmaLinux-10.3-x86_64-minimal.iso"
+    iso_checksum = "sha256:3fa350594c8b3d8200b5bb4c7bda23a8e05607ea482a06f9cc862f6f477c4965"
     unmount      = true
   }
 

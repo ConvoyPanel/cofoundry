@@ -7,6 +7,7 @@ import {
     type Env,
 } from '@/env.ts'
 import { shellQuote } from '@/util.ts'
+import { isoUrlCandidates } from '@/iso.ts'
 import { remotePaths } from '@/build/paths.ts'
 import {
     captureRemote,
@@ -213,6 +214,54 @@ export const virtioWinIsoFilename = (
 export const virtioWinIsoUrl = (version: string): string =>
     `https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-${version}/virtio-win.iso`
 
+/**
+ * What the downloaded boot ISO is checked against.
+ *
+ * The recipe's pin wins. `cf update` writes it only from a checksum file the
+ * vendor's key signed, so it is the one value here that a mirror cannot
+ * influence. Fetching the vendor's live checksum file at build time instead
+ * trusted whichever server answered, and failed open: Debian 11 and 12 name a
+ * `latest-N` placeholder that only `cf update` resolves, the fetch 404'd, and
+ * the ISO was accepted for merely being non-empty. A recipe without a pin
+ * still falls back to the live file.
+ */
+export const isoChecksum = (recipe: RecipeInfo): Checksum | undefined => {
+    if (recipe.isoSha256) return { sha256: recipe.isoSha256 }
+    if (recipe.isoChecksumUrl && recipe.isoFilenameRe)
+        return {
+            url: recipe.isoChecksumUrl,
+            filenamePattern: recipe.isoFilenameRe,
+        }
+    return undefined
+}
+
+/**
+ * Fetch from the first URL that serves the file. Only a permanent failure
+ * (the URL is gone) moves on to the next candidate; a transient one already
+ * exhausted its retries inside fetchAsset, and a checksum mismatch means the
+ * bytes are wrong, which another URL for the same file will not fix.
+ */
+const fetchFirstAvailable = async (
+    env: Env,
+    destination: string,
+    urls: string[],
+    slot: string,
+    onLine?: PrefetchProgress,
+    checksum?: Checksum
+): Promise<void> => {
+    for (const [i, url] of urls.entries()) {
+        try {
+            await fetchAsset(env, destination, url, slot, onLine, checksum)
+            return
+        } catch (err) {
+            const gone =
+                err instanceof WgetError && isPermanentWgetExit(err.exitCode)
+            if (!gone || i === urls.length - 1) throw err
+            onLine?.(slot, `${url} is gone; trying ${urls[i + 1]}`)
+        }
+    }
+}
+
 export const prefetchPhase = async (
     env: Env,
     recipe: RecipeInfo,
@@ -223,18 +272,13 @@ export const prefetchPhase = async (
             env.SSH_TARGET,
             `mkdir -p ${shellQuote(recipe.isoTargetPath.replace(/\/[^/]+$/, ''))}`
         )
-        await fetchAsset(
+        await fetchFirstAvailable(
             env,
             recipe.isoTargetPath,
-            recipe.isoUrl,
+            isoUrlCandidates(recipe.isoUrl),
             'iso',
             onLine,
-            recipe.isoChecksumUrl && recipe.isoFilenameRe
-                ? {
-                      url: recipe.isoChecksumUrl,
-                      filenamePattern: recipe.isoFilenameRe,
-                  }
-                : undefined
+            isoChecksum(recipe)
         )
     }
 

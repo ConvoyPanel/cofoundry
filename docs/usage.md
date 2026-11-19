@@ -132,6 +132,19 @@ cf check --json    # changed recipe names as JSON, for CI
 (`virtio-win`) are checked too, but they have no `.pkr.hcl`, so drift in one is
 reported on stderr for a maintainer to act on rather than handed to a build.
 
+## Update ISO pins
+
+```sh
+cf update             # every recipe with a checksum URL
+cf update debian-13   # one recipe
+```
+
+Finds the newest ISO matching each recipe's `# iso_filename_re` in the vendor's
+checksum file, verifies the file's signature against the recipe's
+`# iso_signing_key`, and rewrites the recipe's ISO URL, cached file name and
+pinned SHA256. Builds check the downloaded ISO against that pin. See
+[ISO pins](recipes.md#iso-pins).
+
 ## Publish a manifest
 
 Aggregates sidecars into `./registry.json` for

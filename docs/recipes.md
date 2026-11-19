@@ -35,7 +35,9 @@ Copy the nearest recipe in the same OS family, then update every piece of releas
 identity **together**:
 
 - header metadata: `display`, `group`, `build_vmid`, `min_cores`, `min_memory`,
-  `iso_url`, `iso_target_path`, checksum URL, and filename pattern where present;
+  `iso_url`, `iso_target_path`, checksum URL, filename pattern, and the
+  checksum's signing key and signature where present (see
+  [ISO pins](#iso-pins));
 - the `build_vmid` default and recipe locals;
 - source name, ISO filename, checksum, and unattended-install paths;
 - image/edition name and release-specific drivers;
@@ -72,6 +74,33 @@ Keep disks small. Linux installers currently fit in 5G. For Windows, retain the
 temporary build/final shrink design and change the final size only after checking
 the installed minimum with `qemu-img info --output=json` on the exported image,
 comparing `actual-size` against `virtual-size`.
+
+## ISO pins
+
+A Linux recipe's `iso_checksum = "sha256:…"` is the hash the build checks the
+downloaded ISO against. `cf update` is the only thing that writes it, and only
+from a checksum file signed by the vendor's key:
+
+```
+# iso_checksum_url: https://download.rockylinux.org/pub/rocky/9/isos/x86_64/CHECKSUM
+# iso_filename_re: Rocky-9\.\d+-x86_64-minimal\.iso
+# iso_signing_key: rocky-linux-9
+# iso_checksum_sig: CHECKSUM.asc
+```
+
+`iso_signing_key` names a key under `keys/` (its README lists each fingerprint
+and where it was checked). `iso_checksum_sig` is the detached signature's file
+name next to the checksum file, or `clearsigned` for AlmaLinux's `CHECKSUM`.
+`cf update` refuses a recipe with a checksum URL but no signing key. It builds
+the ISO URL from the checksum URL it asked for, never from where a redirect
+landed.
+
+Vendors move a point release out of the release directory the day the next one
+ships. The prefetch therefore tries the pinned URL and then the vendor's archive
+copy of the same file (`cdimage/archive`, `old-releases.ubuntu.com`,
+`vault.almalinux.org`, `dl.rockylinux.org/vault`), so a superseded pin keeps
+building until someone runs `cf update`. `cf check` still reports the pinned URL
+as an error, which is the prompt to do so.
 
 **Run a full build after recipe changes.** HCL syntax alone cannot validate an
 ISO's image names, boot sequence, driver directories, or unattended installer

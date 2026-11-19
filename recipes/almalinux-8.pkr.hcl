@@ -7,6 +7,8 @@
 # iso_target_path: ${var.iso_cache_dir}/packer-AlmaLinux-8.10-x86_64-minimal.iso
 # iso_checksum_url: https://repo.almalinux.org/almalinux/8/isos/x86_64/CHECKSUM
 # iso_filename_re: AlmaLinux-8\.\d+-x86_64-minimal\.iso
+# iso_signing_key: almalinux-8
+# iso_checksum_sig: clearsigned
 
 packer {
   required_plugins {

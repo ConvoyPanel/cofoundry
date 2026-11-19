@@ -5,8 +5,10 @@
 # min_memory: 2048
 # iso_url: https://download.rockylinux.org/pub/rocky/8/isos/x86_64/Rocky-8.10-x86_64-minimal.iso
 # iso_target_path: ${var.iso_cache_dir}/packer-Rocky-8.10-x86_64-minimal.iso
-# iso_checksum_url: https://download.rockylinux.org/pub/rocky/8/isos/x86_64/Rocky-8.10-x86_64-minimal.iso.CHECKSUM
+# iso_checksum_url: https://download.rockylinux.org/pub/rocky/8/isos/x86_64/CHECKSUM
 # iso_filename_re: Rocky-8\.\d+-x86_64-minimal\.iso
+# iso_signing_key: rocky-linux-8
+# iso_checksum_sig: CHECKSUM.asc
 packer {
   required_plugins {
     proxmox = {
