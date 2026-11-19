@@ -332,9 +332,10 @@ from a published registry onto any Proxmox node, see [Coport](coport.md).
 
 ## GitHub Actions
 
-Three workflows are things you start. The rest are `workflow_call`-only callees,
-named `[internal] …` so the Actions sidebar — which lists every workflow file and
-cannot hide a callee — does not imply buttons that do not exist.
+Three workflows are things you start, and one starts itself on merges. The rest
+are `workflow_call`-only callees, named `[internal] …` so the Actions sidebar —
+which lists every workflow file and cannot hide a callee — does not imply buttons
+that do not exist.
 Their runs nest under whichever workflow called them, which is also why they show
 no run history of their own.
 
@@ -347,6 +348,13 @@ no run history of their own.
   checksum and is retried next run.
 - **`build.yml`** ("Build template") — manual one-recipe entry point. A thin
   orchestrator over `build-one.yml`, `publish.yml`, and `prune-node.yml`.
+- **`rebuild-changed.yml`** ("Rebuild changed recipes") — runs on every push
+  to `main` that touches `recipes/` or `scripts/inject-placeholders.sh`, and
+  builds, verifies and publishes the recipes the push changed (`cf affected
+  <base> <head>`: a recipe's own files rebuild it, `_shared/linux/` every Linux
+  recipe, `_shared/windows/` every Windows one, `_shared/post/` and the
+  placeholder script all of them). A merged recipe fix therefore reaches the
+  CDN without waiting for a new ISO or a forced dispatch.
 - **`publish.yml`** ("Publish registry") — globally serialized registry writer
   and R2 finalizer. Both workflows above call it after building; dispatch it
   directly to republish without a build, such as after deleting a retired

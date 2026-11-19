@@ -4,6 +4,7 @@ import PQueue from 'p-queue'
 import pc from 'picocolors'
 import { listRecipes, loadRecipe } from '@/config.ts'
 import { resolveIsoUpdate, applyIsoUpdate } from '@/update.ts'
+import { affectedRecipes, changedPaths } from '@/affected.ts'
 import {
     checkRecipes,
     classifyCheckResults,
@@ -176,6 +177,25 @@ const checkCommand = async (
     }
 }
 
+const affectedCommand = async (
+    base: string,
+    head: string,
+    opts: { json?: boolean }
+): Promise<void> => {
+    const recipes = (await listRecipes()).map(recipe => recipe.name)
+    const affected = affectedRecipes(await changedPaths(base, head), recipes)
+    if (opts.json) {
+        console.log(JSON.stringify(affected))
+        return
+    }
+    if (affected.length === 0)
+        log.ok(`No recipe changed between ${base} and ${head}.`)
+    else
+        log.ok(
+            `${affected.length} recipe(s) changed between ${base} and ${head}: ${affected.join(', ')}`
+        )
+}
+
 export const registerRecipeCommands = (program: Command): void => {
     program
         .command('list')
@@ -198,4 +218,12 @@ export const registerRecipeCommands = (program: Command): void => {
             'Write {buildable, pinned, errors} as JSON, for CI to act on'
         )
         .action(checkCommand)
+
+    program
+        .command('affected <base> [head]')
+        .description('List the recipes whose files changed between two commits')
+        .option('--json', 'Output recipe names as a JSON array')
+        .action((base: string, head: string | undefined, opts) =>
+            affectedCommand(base, head ?? 'HEAD', opts)
+        )
 }

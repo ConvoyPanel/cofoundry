@@ -1,0 +1,79 @@
+name: Rebuild changed recipes
+
+# A merged recipe change used to reach the CDN only when the recipe's ISO next
+# moved, or once its template turned 30 days old, unless someone remembered to
+# dispatch a forced rebuild. Every clone made in between got the image the
+# change was written to fix. This rebuilds, verifies and publishes exactly the
+# recipes a push to main touches; see `cf affected` (src/affected.ts) for how
+# paths map to recipes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "recipes/**"
+      - "scripts/inject-placeholders.sh"
+
+permissions:
+  contents: write
+
+jobs:
+  affected:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.affected.outputs.matrix }}
+      any_changed: ${{ steps.affected.outputs.any_changed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      - id: affected
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # A force push can leave `before` unreachable, and a branch's first
+          # push has none; fall back to the parent commit.
+          if ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            BEFORE=$(git rev-parse "${GITHUB_SHA}^")
+          fi
+          CHANGED=$(bun run cf affected "$BEFORE" "$GITHUB_SHA" --json)
+          echo "recipes affected by ${BEFORE}..${GITHUB_SHA}: $CHANGED"
+          echo "matrix={\"recipe\":$CHANGED}" >> "$GITHUB_OUTPUT"
+          if [ "$CHANGED" = "[]" ]; then
+            echo "any_changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "any_changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: affected
+    if: needs.affected.outputs.any_changed == 'true'
+    strategy:
+      fail-fast: false
+      # Node-wide leases enforce RAM/CPU limits across these jobs and the
+      # scheduled check; build-one's concurrency group serializes a recipe
+      # that both start.
+      max-parallel: ${{ fromJSON(vars.CF_CI_MAX_PARALLEL || '4') }}
+      matrix: ${{ fromJson(needs.affected.outputs.matrix) }}
+    uses: ./.github/workflows/build-one.yml
+    with:
+      recipe: ${{ matrix.recipe }}
+    secrets: inherit
+
+  # As in check-upstream.yml: publish whatever passed, even when a leg failed;
+  # a failed recipe keeps its previous image.
+  publish:
+    needs: build
+    if: always() && (needs.build.result == 'success' || needs.build.result == 'failure')
+    uses: ./.github/workflows/publish.yml
+    secrets: inherit
+
+  prune-node:
+    needs: [affected, build]
+    if: always() && needs.affected.result == 'success' && needs.affected.outputs.any_changed == 'true'
+    uses: ./.github/workflows/prune-node.yml
+    secrets: inherit
