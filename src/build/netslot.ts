@@ -183,11 +183,18 @@ slot_vms_for_mac() {
 }
 
 # Succeed if any VM carrying MAC $1 is currently running anywhere in the cluster.
+#
+# The trailing \`exit 1\` is load-bearing. A \`while\` loop that runs zero times
+# exits 0, so without it "no VM carries this MAC" reported as "running" — the
+# exact case reclaim exists for — and a slot whose VM was gone leaked forever.
 slot_mac_running() {
-    slot_vms_for_mac "$1" | while read -r _n _v; do
-        _st=$(qm_on_node "$_n" "$_v" status 2>/dev/null | awk '{print $2}')
-        [ "$_st" = "running" ] && exit 0
-    done
+    slot_vms_for_mac "$1" | {
+        while read -r _n _v; do
+            _st=$(qm_on_node "$_n" "$_v" status 2>/dev/null | awk '{print $2}')
+            [ "$_st" = "running" ] && exit 0
+        done
+        exit 1
+    }
 }
 
 # Succeed if a live run lease owns VMID $1.
@@ -216,11 +223,15 @@ vmid_leased() {
     return 1
 }
 
-# Succeed if any VM carrying MAC $1 is owned by a live run lease.
+# Succeed if any VM carrying MAC $1 is owned by a live run lease. Same
+# zero-iteration trap as slot_mac_running, same explicit \`exit 1\`.
 slot_mac_leased() {
-    slot_vms_for_mac "$1" | while read -r _n _v; do
-        vmid_leased "$_v" && exit 0
-    done
+    slot_vms_for_mac "$1" | {
+        while read -r _n _v; do
+            vmid_leased "$_v" && exit 0
+        done
+        exit 1
+    }
 }
 
 now=$(date +%s)
