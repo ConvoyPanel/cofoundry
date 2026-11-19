@@ -1,7 +1,7 @@
 import { basename } from 'node:path'
 import { accent, dim } from '@cofoundry/ui'
 import { log } from '@/log.ts'
-import type { Sidecar } from '@/registry/schema.ts'
+import { parseSidecar } from '@/registry/schema.ts'
 import { s3api, s3Get } from '@/r2.ts'
 
 export type PruneR2Options = {
@@ -45,6 +45,8 @@ export type R2PruneGroup = {
 
 export type R2PrunePlan = {
     groups: R2PruneGroup[]
+    /** Sidecars that were not generated properly; see `parseSidecar`. */
+    malformed: string[]
     /** Images referenced by no surviving generation. */
     orphanObjects: string[]
     deletions: string[]
@@ -69,30 +71,31 @@ const isImage = (key: string): boolean =>
  * that are neither a sidecar nor a recognized image extension are never
  * touched -- the prefix may hold things prune did not put there.
  *
- * That sweep is only sound when `generations` names EVERY sidecar in the
- * prefix: an image is judged orphaned by the absence of a sidecar claiming it,
- * so a sidecar the caller could not read makes its images look orphaned. A
- * caller that skipped any sidecar passes `sweepOrphans: false`.
+ * A sidecar that was not generated properly (`malformed`, or a generation
+ * with no template name) is deleted, and claims no images: the images only it
+ * named are swept with the other unreferenced ones. The sweep is sound only
+ * because the caller has read EVERY sidecar in the prefix -- an image is judged
+ * orphaned by the absence of a sidecar claiming it -- so a sidecar that could
+ * not be fetched at all must stop the run before it gets here.
  */
 export const planR2Prune = (
     objects: R2Object[],
     generations: R2Generation[],
     keep: number,
-    { sweepOrphans = true }: { sweepOrphans?: boolean } = {}
+    malformedKeys: string[] = []
 ): R2PrunePlan => {
     if (!Number.isInteger(keep) || keep < 0)
         throw new Error('--keep must be a non-negative integer')
 
-    const deletions: string[] = []
+    const malformed = [
+        ...malformedKeys,
+        ...generations.filter(g => !g.template).map(g => g.key),
+    ]
+    const deletions: string[] = [...malformed]
     const liveHashes = new Set<string>()
     const byTemplate = new Map<string, R2Generation[]>()
     for (const generation of generations) {
-        // A sidecar with no template name cannot be grouped for retention, so
-        // it is never stale -- and its images stay live with it.
-        if (!generation.template) {
-            for (const hash of generation.hashes) liveHashes.add(hash)
-            continue
-        }
+        if (!generation.template) continue
         const list = byTemplate.get(generation.template) ?? []
         list.push(generation)
         byTemplate.set(generation.template, list)
@@ -112,13 +115,13 @@ export const planR2Prune = (
     // A stale generation may share an image with a live one (an unchanged
     // varstore across rebuilds), so the live set has to be complete before any
     // image is judged.
-    const orphanObjects = (sweepOrphans ? objects : [])
+    const orphanObjects = objects
         .filter(object => isImage(object.Key))
         .filter(object => ![...liveHashes].some(h => object.Key.includes(h)))
         .map(object => object.Key)
 
     deletions.push(...orphanObjects)
-    return { groups, orphanObjects, deletions }
+    return { groups, malformed, orphanObjects, deletions }
 }
 
 export const runPruneR2 = async (
@@ -145,45 +148,51 @@ export const runPruneR2 = async (
         o => o.Key.endsWith('.json') && basename(o.Key) !== 'registry.json'
     )
     log.step(`reading ${sidecarObjects.length} sidecar(s)`)
+    type Fetched =
+        | { o: R2Object; body: string }
+        | { o: R2Object; error: unknown }
     const read = await Promise.all(
-        sidecarObjects.map(async (o): Promise<R2Generation | null> => {
+        sidecarObjects.map(async (o): Promise<Fetched> => {
             try {
-                const sidecar = JSON.parse(
-                    await s3Get(endpoint, bucket, o.Key)
-                ) as Sidecar
-                const hashes = (sidecar.disks ?? []).map(d => d.sha256)
-                // A sidecar that names no images (or an image without a hash)
-                // cannot vouch for anything; treat it like an unreadable one.
-                if (hashes.length === 0 || hashes.some(h => !h))
-                    throw new Error('no disk hashes')
-                return {
-                    key: o.Key,
-                    lastModified: o.LastModified,
-                    template: sidecar.name,
-                    hashes,
-                }
+                return { o, body: await s3Get(endpoint, bucket, o.Key) }
             } catch (error) {
-                const reason =
-                    error instanceof Error ? error.message : String(error)
-                log.warn(`could not read sidecar ${o.Key}: ${reason}`)
-                return null
+                return { o, error }
             }
         })
     )
-    const generations = read.filter((g): g is R2Generation => g !== null)
-    const unreadable = read.length - generations.length
 
-    // Images are judged orphaned by the absence of a sidecar claiming them, so
-    // an unread sidecar -- a transient fetch failure included -- would make
-    // its images, often the newest generation's, look orphaned. Delete no
-    // images this run; stale sidecars still go, and the images they leave
-    // behind are swept on the next run that reads every sidecar.
-    const sweepOrphans = unreadable === 0
-    if (!sweepOrphans)
-        log.warn(
-            `${unreadable} sidecar(s) unreadable — not deleting any images this run`
+    // A sidecar that could not be fetched cannot be judged: it may be fine.
+    // Deleting it would be a guess, and so would sweeping the images it might
+    // name, so the run stops here with nothing deleted.
+    const unfetched = read.filter(r => 'error' in r)
+    if (unfetched.length > 0) {
+        for (const { o, error } of unfetched)
+            log.warn(
+                `could not fetch sidecar ${o.Key}: ${error instanceof Error ? error.message : String(error)}`
+            )
+        throw new Error(
+            `could not fetch ${unfetched.length} sidecar(s); nothing was deleted`
         )
-    const plan = planR2Prune(objects, generations, keep, { sweepOrphans })
+    }
+
+    const generations: R2Generation[] = []
+    const malformed: string[] = []
+    for (const r of read) {
+        if (!('body' in r)) continue
+        const result = parseSidecar(r.body)
+        if (!result.ok) {
+            log.warn(`malformed sidecar ${r.o.Key}: ${result.reason}`)
+            malformed.push(r.o.Key)
+            continue
+        }
+        generations.push({
+            key: r.o.Key,
+            lastModified: r.o.LastModified,
+            template: result.sidecar.name,
+            hashes: result.sidecar.disks.map(d => d.sha256),
+        })
+    }
+    const plan = planR2Prune(objects, generations, keep, malformed)
 
     for (const group of plan.groups) {
         if (group.stale.length === 0) {
@@ -198,6 +207,13 @@ export const runPruneR2 = async (
         )
         for (const generation of group.stale)
             log.note(`${generation.key}  (${generation.lastModified})`)
+    }
+    if (plan.malformed.length > 0) {
+        const verb = dryRun ? 'would delete' : 'deleting'
+        log.ok(
+            `malformed sidecars ${dim('·')} ${verb} ${plan.malformed.length}`
+        )
+        for (const key of plan.malformed) log.note(key)
     }
     if (plan.orphanObjects.length > 0) {
         const verb = dryRun ? 'would delete' : 'deleting'

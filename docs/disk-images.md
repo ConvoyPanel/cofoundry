@@ -314,11 +314,19 @@ Objects are matched to a generation by the sha256 embedded in their key, since
 `[upload].key` is user-configurable and any rule parsing the path breaks on some
 layout.
 
+A sidecar that was not generated properly is deleted, and claims no images, so
+the images only it named go with the other unreferenced ones. "Properly" is the
+minimum publish and prune rely on, checked by `parseSidecar`
+(`src/registry/schema.ts`): valid JSON, `schema_version` `"2"`, a template
+`name`, and disks that each carry a role and a sha256, exactly one of them the
+system disk. Unknown fields are allowed. `cf publish --r2` applies the same test
+and never advertises such a sidecar, so the newest proper generation of its
+template is published instead.
+
 An image is judged unreferenced by the absence of a sidecar naming it, so that
-judgement needs every sidecar. When any sidecar in the prefix cannot be read — a
-failed fetch, invalid JSON, or no disk hashes — the run deletes no images at all;
-stale sidecars still go, and the next run that reads every sidecar sweeps the
-images they leave behind.
+judgement needs every sidecar. One that cannot be fetched at all may be fine,
+so the run stops with nothing deleted rather than guess; `cf publish --r2`,
+which runs first in CI, fails the same way.
 
 `coport` downloads the images, `qm create`s from the profile, then `qm template`s
 the result. Its VMID machinery stays, because a template still occupies a VMID.

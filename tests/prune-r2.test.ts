@@ -144,40 +144,45 @@ describe('planR2Prune', () => {
         expect(plan.orphanObjects).toEqual([`${PREFIX}/orphan.qcow2`])
     })
 
-    test('deletes no images when a sidecar could not be read', () => {
-        // The newest generation's sidecar failed to load, so its images look
-        // unclaimed. Deleting them would leave the registry pointing at 404s.
+    test('deletes a malformed sidecar and the images only it named', () => {
+        // Not generated properly, so it claims nothing: it goes, and so do its
+        // images -- except one a proper generation still shares.
         const plan = planR2Prune(
             [
-                object(`${PREFIX}/new.qcow2`, '2026-03-01'),
-                object(`${PREFIX}-old.json`, '2026-01-01'),
-                object(`${PREFIX}/old.qcow2`, '2026-01-01'),
-                object(`${PREFIX}-mid.json`, '2026-02-01'),
-                object(`${PREFIX}/mid.qcow2`, '2026-02-01'),
+                object(`${PREFIX}-bad.json`, '2026-03-01'),
+                object(`${PREFIX}/bad-only.qcow2`, '2026-03-01'),
+                object(`${PREFIX}/shared.efivars.raw`, '2026-02-01'),
+                object(`${PREFIX}-good.json`, '2026-02-01'),
+                object(`${PREFIX}/good.qcow2`, '2026-02-01'),
             ],
             [
-                generation(`${PREFIX}-old.json`, '2026-01-01', 'debian-12', [
-                    'old',
-                ]),
-                generation(`${PREFIX}-mid.json`, '2026-02-01', 'debian-12', [
-                    'mid',
+                generation(`${PREFIX}-good.json`, '2026-02-01', 'debian-12', [
+                    'good',
+                    'shared',
                 ]),
             ],
-            1,
-            { sweepOrphans: false }
+            5,
+            [`${PREFIX}-bad.json`]
         )
-        expect(plan.orphanObjects).toEqual([])
-        // The stale sidecar may still go; its image waits for a full read.
-        expect(plan.deletions).toEqual([`${PREFIX}-old.json`])
+        expect(plan.malformed).toEqual([`${PREFIX}-bad.json`])
+        expect(plan.deletions.sort()).toEqual(
+            [`${PREFIX}-bad.json`, `${PREFIX}/bad-only.qcow2`].sort()
+        )
     })
 
-    test('keeps the images of a sidecar that names no template', () => {
+    test('treats a sidecar that names no template as malformed', () => {
         const plan = planR2Prune(
-            [object(`${PREFIX}/unnamed.qcow2`, '2026-01-01')],
+            [
+                object(`${PREFIX}-x.json`, '2026-01-01'),
+                object(`${PREFIX}/unnamed.qcow2`, '2026-01-01'),
+            ],
             [generation(`${PREFIX}-x.json`, '2026-01-01', '', ['unnamed'])],
             1
         )
-        expect(plan.deletions).toEqual([])
+        expect(plan.malformed).toEqual([`${PREFIX}-x.json`])
+        expect(plan.deletions.sort()).toEqual(
+            [`${PREFIX}-x.json`, `${PREFIX}/unnamed.qcow2`].sort()
+        )
     })
 
     test('never touches objects that are not template images', () => {
