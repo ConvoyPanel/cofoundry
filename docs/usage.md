@@ -267,6 +267,14 @@ Wire it in as the build node's **sidecar** hook in `.env`:
 CF_SIDECAR_UPLOAD_CMD=bash $PVE_DUMP_DIR/cofoundry-work/scripts/cf-cluster-templates.sh {{file}}
 ```
 
+**Setting it in `.env` replaces the configured sidecar hook.** With `[upload]`
+configured, that hook is what uploads the sidecar to R2 — replacing it leaves R2
+holding images that no sidecar names, which `cf prune --r2` deletes as
+unreferenced. To keep both, chain them in the one variable:
+`CF_SIDECAR_UPLOAD_CMD=<the command cf config shows> && bash …/cf-cluster-templates.sh {{file}}`.
+`cf bootstrap` offers to wire the script in only when no sidecar hook is set,
+and otherwise prints the chained form instead.
+
 **Not `CF_UPLOAD_CMD`.** A template is several images now, and `CF_UPLOAD_CMD`
 fires once _per image_ — the script would be handed a bare `.qcow2` with no idea
 what else belongs to it. `CF_SIDECAR_UPLOAD_CMD` fires once per template, after

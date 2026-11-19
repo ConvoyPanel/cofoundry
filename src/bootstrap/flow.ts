@@ -1,3 +1,4 @@
+import { chmod } from 'node:fs/promises'
 import { confirm, input } from '@inquirer/prompts'
 import pc from 'picocolors'
 import { log } from '@/log.ts'
@@ -41,27 +42,54 @@ export const formatSummaryTable = (
     ]
 }
 
-const upsertEnvFile = async (kvs: Record<string, string>): Promise<void> => {
-    const file = Bun.file(ENV_PATH)
-    let content = ''
-    if (await file.exists()) content = await file.text()
+/**
+ * Apply `kvs` to the text of a .env file: replace a key in place, append a new
+ * one, and drop a key whose value is `null`.
+ */
+export const applyEnvUpdates = (
+    content: string,
+    kvs: Record<string, string | null>
+): string => {
     const lines = content === '' ? [] : content.split('\n')
     // Drop trailing empty line so we don't get a double newline.
     if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
     const seen = new Set<string>()
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i]!
-        const m = line.match(/^([A-Z_][A-Z0-9_]*)=/)
-        if (m && kvs[m[1]!] !== undefined) {
-            lines[i] = `${m[1]}=${kvs[m[1]!]}`
-            seen.add(m[1]!)
+    const output: string[] = []
+    for (const line of lines) {
+        const key = line.match(/^([A-Z_][A-Z0-9_]*)=/)?.[1]
+        if (key === undefined || !(key in kvs)) {
+            output.push(line)
+            continue
         }
+        seen.add(key)
+        const value = kvs[key]
+        if (value !== null) output.push(`${key}=${value}`)
     }
     for (const [k, v] of Object.entries(kvs)) {
-        if (!seen.has(k)) lines.push(`${k}=${v}`)
+        if (!seen.has(k) && v !== null) output.push(`${k}=${v}`)
     }
-    await Bun.write(ENV_PATH, lines.join('\n') + '\n')
+    return output.join('\n') + '\n'
 }
+
+// .env holds PVE_TOKEN_SECRET -- a root@pam token with privilege separation
+// off, i.e. root over the whole cluster API -- so it is owner-only, whatever
+// the umask would have made it.
+const upsertEnvFile = async (
+    kvs: Record<string, string | null>
+): Promise<void> => {
+    const file = Bun.file(ENV_PATH)
+    const content = (await file.exists()) ? await file.text() : ''
+    await Bun.write(ENV_PATH, applyEnvUpdates(content, kvs))
+    await chmod(ENV_PATH, 0o600)
+}
+
+// The cluster script is a per-TEMPLATE hook: it needs the sidecar, which names
+// every image. Earlier bootstraps wired it as the per-IMAGE CF_UPLOAD_CMD,
+// which handed it a bare .qcow2 and, being set in .env, also replaced the R2
+// upload command -- so every upload failed. That exact value is removed.
+export const CLUSTER_SIDECAR_CMD =
+    'bash "$PVE_DUMP_DIR/cofoundry-work/scripts/cf-cluster-templates.sh" {{file}}'
+export const LEGACY_CLUSTER_UPLOAD_CMD = `${CLUSTER_SIDECAR_CMD} {{sha256}}`
 
 // ── interactive flow ──────────────────────────────────────────────────────────
 
@@ -109,23 +137,45 @@ export const runBootstrap = async (initialEnv: PartialEnv): Promise<void> => {
     )
     const nodeCount = parseInt(members.stdout.trim(), 10) || 1
     if (nodeCount > 1) {
-        const clusterTemplates = await confirm({
-            message: `Cluster of ${nodeCount} nodes detected — restore each build as a clonable template on every node (per-node VMID via scripts/cf-cluster-templates.sh)?`,
-            default: false,
-        })
-        if (clusterTemplates) {
-            // $PVE_DUMP_DIR is exported into the post-processor env by
-            // buildPostProcEnv() in src/build/packer.ts, so this resolves on
-            // the PVE node regardless of how PVE_DUMP_DIR is configured.
-            // {{sha256}} lets the script verify each node's copy before it
-            // replaces that node's existing template.
-            await upsertEnvFile({
-                CF_UPLOAD_CMD:
-                    'bash "$PVE_DUMP_DIR/cofoundry-work/scripts/cf-cluster-templates.sh" {{file}} {{sha256}}',
-            })
+        if (process.env.CF_UPLOAD_CMD === LEGACY_CLUSTER_UPLOAD_CMD) {
+            await upsertEnvFile({ CF_UPLOAD_CMD: null })
+            delete process.env.CF_UPLOAD_CMD
             log.ok(
-                `cluster template distribution enabled — each build creates a clonable template on all ${nodeCount} nodes`
+                'removed the cluster script from CF_UPLOAD_CMD in .env — it replaced the upload command and failed on every image'
             )
+        }
+        const existingSidecarCmd = process.env.CF_SIDECAR_UPLOAD_CMD
+        if (existingSidecarCmd === CLUSTER_SIDECAR_CMD) {
+            log.ok('cluster template distribution already enabled')
+        } else if (existingSidecarCmd) {
+            // Setting the hook in .env REPLACES the configured one. With R2
+            // publishing that is the sidecar upload, and an R2 prefix full of
+            // images with no sidecar is one prune run from being emptied.
+            log.warn(
+                `Cluster of ${nodeCount} nodes detected, but CF_SIDECAR_UPLOAD_CMD is already set, and the cluster template script would replace it:`
+            )
+            log.note(existingSidecarCmd)
+            log.note(
+                `To run both, set CF_SIDECAR_UPLOAD_CMD in .env to that command followed by: && ${CLUSTER_SIDECAR_CMD}`
+            )
+        } else {
+            const clusterTemplates = await confirm({
+                message: `Cluster of ${nodeCount} nodes detected — restore each build as a clonable template on every node (per-node VMID via scripts/cf-cluster-templates.sh)?`,
+                default: false,
+            })
+            if (clusterTemplates) {
+                // $PVE_DUMP_DIR is exported into the post-processor env by
+                // buildPostProcEnv() in src/build/packer.ts, so this resolves
+                // on the PVE node regardless of how PVE_DUMP_DIR is
+                // configured. The sidecar carries every image's hash, so the
+                // script verifies each node's copy without a {{sha256}}.
+                await upsertEnvFile({
+                    CF_SIDECAR_UPLOAD_CMD: CLUSTER_SIDECAR_CMD,
+                })
+                log.ok(
+                    `cluster template distribution enabled — each build creates a clonable template on all ${nodeCount} nodes`
+                )
+            }
         }
     }
 
