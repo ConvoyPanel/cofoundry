@@ -168,7 +168,23 @@ generates a fresh ephemeral Ed25519 key per build and replaces either the
 placeholder or a previously injected `packer-<recipe>-*` key, so reruns stay safe
 without `git clean`. The hostname line uses `__PACKER_RECIPE_NAME__`, replaced by
 the same script, so the preseed files stay identical across Debian releases
-(enforced by `tests/recipe-consistency.test.ts`).
+(enforced by `tests/recipe-consistency.test.ts`). That line has no effect: the
+installer fetches the preseed over the network, so it reads the file only after
+`netcfg` has already configured the network and picked a hostname. The image's
+hostname is the installer default, `debian`; clones take theirs from cloud-init.
+
+The network answers are typed on `boot_command` (`netcfg/` keys) for the same
+reason, and the installer writes the static build address into
+`/etc/network/interfaces` (an `iface ens18 inet static` stanza with the build
+gateway) and into `/etc/hosts`. The first provisioner resets both: `interfaces`
+to loopback plus `source /etc/network/interfaces.d/*`, where cloud-init writes
+the clone's NIC config, and `hosts` to `127.0.1.1` for the hostname. It fails the
+build if the build address survives. On a Proxmox clone the leftovers would be
+inert, because cloud-init renames the NIC to `eth0` and Proxmox's generated
+user-data sets `manage_etc_hosts: true`. Anywhere the NIC keeps the name `ens18`,
+the clone would take the build address and a second default gateway.
+`cf verify`'s `no-installer-network-config` check reads the shipped file, since a
+clone's addresses cannot show the problem.
 
 An answer that only one release needs goes on that recipe's `boot_command`
 instead, where the installer reads it as a preseed value, but only for a key
