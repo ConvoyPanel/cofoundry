@@ -16,6 +16,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      # tests/recipe-consistency.test.ts validates every kickstart against its
+      # RHEL release's grammar when ksvalidator is on PATH. A kickstart the
+      # installer rejects otherwise costs a 35-minute SSH timeout to discover.
+      - if: runner.os == 'Linux'
+        run: pipx install pykickstart
       - run: bun test
       # Scoped to the TS sources kept prettier-clean; docs, JSON metadata, and
       # packages/ui predate the check and are not formatted yet.

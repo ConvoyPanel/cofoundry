@@ -35,6 +35,15 @@ autoinstall:
   packages:
     - qemu-guest-agent
     - openssh-server
+  # The kernel the official cloud images run: the generic kernel without
+  # linux-modules-extra and the ~700 MB of bare-metal firmware linux-generic
+  # pulls in. finalize.sh removes whatever the installer pool added besides.
+  kernel:
+    package: linux-virtual
+  # archive.ubuntu.com, not the country mirror the installer's location lookup
+  # picks from wherever the build node happens to be.
+  apt:
+    geoip: false
   storage:
     layout:
       name: direct

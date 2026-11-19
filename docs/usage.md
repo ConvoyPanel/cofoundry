@@ -92,7 +92,11 @@ it the way a user's clone is exercised, rather than merely booting it:
 1. **Cloud-init is actually configured.** A sentinel hostname, user, generated
    password, and generated SSH key are injected, and the disk is grown beyond its
    shipped size. Booting the template untouched leaves the cloud-init drive empty,
-   so nothing cloud-init is supposed to apply gets exercised at all.
+   so nothing cloud-init is supposed to apply gets exercised at all. A Linux
+   clone also gets a static IPv6 address beside DHCP and a nameserver
+   (`9.9.9.9`) the build bridge never hands out, because cloud-init attaches
+   a panel's nameservers only to a statically addressed interface; a DHCP-only
+   clone never exercises the path Convoy's static addresses take.
 2. **In-guest checks run over `qm guest exec`**, in phases: first boot, again
    after a clean reboot, and on Windows after an autologon has painted a desktop.
    The agent answering is the _entry condition_, not the result — it starts early

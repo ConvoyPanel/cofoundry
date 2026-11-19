@@ -103,12 +103,45 @@ export const cloudInitSetCommand = (
     hostname: string,
     ciUser: string,
     password: string,
-    remoteKeyPath?: string
+    remoteKeyPath?: string,
+    staticNetwork?: StaticNetwork
 ): string =>
     `qm set ${vmid} --name=${shellQuote(hostname)} ` +
     `--ciuser=${shellQuote(ciUser)} --cipassword=${shellQuote(password)} ` +
     (remoteKeyPath ? `--sshkeys=${shellQuote(remoteKeyPath)} ` : '') +
-    `--ipconfig0 ip=dhcp --agent enabled=1`
+    (staticNetwork
+        ? `--ipconfig0=${shellQuote(`ip=dhcp,ip6=${staticNetwork.ip6}/64`)} ` +
+          `--nameserver=${shellQuote(staticNetwork.nameserver)} `
+        : '--ipconfig0 ip=dhcp ') +
+    `--agent enabled=1`
+
+/**
+ * The static half of a Linux clone's network: an address and a nameserver the
+ * way the panel hands them out.
+ *
+ * A clone on DHCP alone never exercises the path Convoy uses. cloud-init only
+ * attaches Proxmox's nameservers to an interface with a static address
+ * (cloudinit/net/netplan.py), so a DHCP-only verify passed Debian images whose
+ * static clones ignored the panel's DNS and kept the build's resolver. A
+ * unique-local IPv6 address beside DHCP makes the interface static without
+ * taking IPv4 away from the checks, and 9.9.9.9 is a resolver the build
+ * bridge's DHCP never hands out, so finding it proves the panel's value landed.
+ */
+export interface StaticNetwork {
+    ip6: string
+    nameserver: string
+}
+
+/**
+ * The address is unique per clone: verifies of several recipes share a bridge,
+ * and a second VM holding the same address fails IPv6 duplicate-address
+ * detection, which leaves the link configuring until systemd-networkd-wait-online
+ * times out and the clone boots `degraded`. The VMID is unique on the node.
+ */
+export const verifyStaticNetwork = (vmid: number): StaticNetwork => ({
+    ip6: `fd5e:cf0:7e57::${vmid.toString(16)}`,
+    nameserver: '9.9.9.9',
+})
 
 export interface CloudInitSetup {
     ctx: CheckContext
@@ -198,6 +231,8 @@ export const prepareCloudInit = async (
 
     await captureRemote(env.SSH_TARGET, `qm resize ${vmid} scsi0 +${GROW_GB}G`)
 
+    const staticNetwork = isWindows ? undefined : verifyStaticNetwork(vmid)
+
     // --cipassword lands in the node's process list for the life of the call.
     // Acceptable here: the value is generated per run, used only by a scratch VM
     // that is destroyed minutes later, and never reused.
@@ -208,7 +243,8 @@ export const prepareCloudInit = async (
             hostname,
             ciUser,
             password,
-            isWindows ? undefined : remoteKey
+            isWindows ? undefined : remoteKey,
+            staticNetwork
         )
     )
 
@@ -219,6 +255,7 @@ export const prepareCloudInit = async (
             ciPassword: password,
             sshPublicKey: publicKey,
             minRootBytes: shippedBytes,
+            staticNetwork,
             buildPassword: isWindows
                 ? await findBuildPassword(env, recipeName)
                 : undefined,

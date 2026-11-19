@@ -44,6 +44,11 @@ export interface CheckContext {
      */
     minRootBytes: number
     /**
+     * Linux only: the static IPv6 address and nameserver verify gives the
+     * clone beside DHCP, the way the panel configures a VM's network.
+     */
+    staticNetwork?: { ip6: string; nameserver: string }
+    /**
      * The build's Windows admin/WinRM password when verify could recover it
      * from the node's vars file. When set, the plaintext-leak check greps for
      * this exact value instead of falling back to a structural check.

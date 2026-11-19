@@ -192,72 +192,48 @@ build {
   provisioner "shell" {
     inline = [
       "echo '==> Waiting for cloud-init to finish'",
-      "if command -v cloud-init >/dev/null 2>&1; then sudo cloud-init status --wait || true; fi",
-      "echo '==> Updating packages'",
-      "sudo apt-get -y update",
-      "sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -y upgrade",
-      "echo '==> Cleaning up SSH host keys and machine ID'",
-      "sudo rm -f /etc/ssh/ssh_host_*",
-      "sudo truncate -s 0 /etc/machine-id",
-      "echo '==> Removing unused packages and cleaning cache'",
-      "sudo apt-get -y autoremove --purge",
-      "sudo apt-get -y clean",
-      "sudo apt-get -y autoclean",
-      "echo '==> Cleaning cloud-init state'",
-      "sudo cloud-init clean",
-      "sudo rm -f /etc/cloud/cloud.cfg.d/subiquity-disable-cloudinit-networking.cfg",
-      # The installer configured ens18 statically with the build address
-      # (boot_command's netcfg/ answers) and mapped the hostname to it in
-      # /etc/hosts. Neither belongs in a template. On Proxmox clones both are
-      # inert only because cloud-init renames the NIC to eth0 and rewrites
-      # /etc/hosts; wherever the NIC stays ens18, a clone would take the build
-      # address and a second default gateway. cloud-init owns the NIC, in
-      # interfaces.d/. `! cmd` alone never trips `sh -e`, hence the `||`.
-      "echo '==> Removing installer network config'",
-      "printf '%s\\n' '# Network interfaces are configured by cloud-init in /etc/network/interfaces.d/.' '# See interfaces(5).' '' 'source /etc/network/interfaces.d/*' '' 'auto lo' 'iface lo inet loopback' | sudo tee /etc/network/interfaces >/dev/null",
-      "printf '127.0.0.1\\tlocalhost\\n127.0.1.1\\t%s\\n\\n::1\\tlocalhost ip6-localhost ip6-loopback\\nff02::1\\tip6-allnodes\\nff02::2\\tip6-allrouters\\n' \"$(hostname)\" | sudo tee /etc/hosts >/dev/null",
-      "! grep -qF '${var.build_ip}' /etc/network/interfaces /etc/hosts || { echo 'build address ${var.build_ip} still in /etc/network/interfaces or /etc/hosts' >&2; exit 1; }",
-      "sudo sync",
+      "sudo timeout 600 cloud-init status --wait || true",
+      "echo '==> Upgrading packages'",
+      "sudo apt-get -y -o DPkg::Lock::Timeout=600 update",
+      # dist-upgrade, not upgrade: upgrade holds back any package whose new
+      # version needs a new dependency, and those stayed old in the image.
+      "sudo DEBIAN_FRONTEND=noninteractive apt-get -y -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confold dist-upgrade",
+      # The official images' network stack; finalize.sh switches to it. Last,
+      # because systemd-resolved takes over /etc/resolv.conf with no upstream
+      # server while ifupdown still runs the build NIC, so nothing after this
+      # may need DNS. Debian 11 has resolved inside the systemd package.
+      "echo '==> Installing netplan and systemd-resolved'",
+      "sudo DEBIAN_FRONTEND=noninteractive apt-get -y -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confold install netplan.io $(apt-cache show systemd-resolved >/dev/null 2>&1 && echo systemd-resolved)",
     ]
   }
 
-  provisioner "file" {
-    source      = "${path.root}/_shared/cloud-init-cleanup.sh"
-    destination = "/tmp/cloud-init-cleanup.sh"
-  }
-
-  provisioner "shell" {
-    inline = ["sudo bash /tmp/cloud-init-cleanup.sh"]
-  }
-
-  provisioner "file" {
-    source      = "${path.root}/_shared/cloud-init/99-pve.cfg"
-    destination = "/tmp/99-pve.cfg"
-  }
-
-  provisioner "shell" {
-    inline = [
-      "sudo cp /tmp/99-pve.cfg /etc/cloud/cloud.cfg.d/99-pve.cfg",
-      "sudo sync",
-    ]
-  }
-
-  provisioner "shell" {
-    inline = [
-      "echo '==> Verifying cloud-init is enabled for the final image'",
-      "sudo systemctl is-enabled cloud-init-local cloud-init cloud-config cloud-final",
-      "test ! -e /etc/cloud/cloud-init.disabled",
-      "! grep -qw 'cloud-init=disabled' /proc/cmdline || { echo 'cloud-init=disabled is set on the kernel cmdline' >&2; exit 1; }",
-      "cloud-init --version",
-      "test -s /etc/cloud/cloud.cfg",
-      "grep -qx 'datasource_list: \\[ConfigDrive, NoCloud\\]' /etc/cloud/cloud.cfg.d/99-pve.cfg",
-    ]
-  }
-
+  # Boot the upgraded kernel. finalize.sh removes every other kernel, which
+  # apt and dnf refuse to do to the running one, and the build proves the new
+  # kernel boots before anything is exported from it.
   provisioner "shell" {
     expect_disconnect = true
-    skip_clean        = true
-    inline            = ["sudo bash -c 'rm -f /etc/sudoers.d/packer /etc/sudoers.d/wheel; userdel --remove --force packer' || true"]
+    inline            = ["sudo systemctl reboot"]
+  }
+
+  provisioner "shell" {
+    pause_before        = "20s"
+    start_retry_timeout = "10m"
+    inline              = ["mkdir -p /tmp/cofoundry"]
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/_shared/linux/"
+    destination = "/tmp/cofoundry/"
+  }
+
+  # Cleanup, the cloud-init config, the leftover checks and the build user's
+  # removal all happen in finalize.sh. It leaves the disk read-only and the VM
+  # powering itself off, so nothing a shutdown writes reaches the image. No
+  # expect_disconnect: a connection lost partway must fail the build. See the
+  # script's header.
+  provisioner "shell" {
+    skip_clean = true
+    inline     = ["sudo bash /tmp/cofoundry/finalize.sh"]
   }
 
   post-processor "shell-local" {

@@ -178,57 +178,46 @@ build {
 
   provisioner "shell" {
     inline = [
+      # Subiquity creates the build user on cloud-init's first boot, so wait
+      # for it to finish -- but not forever: a cloud-init that never finishes
+      # would otherwise hold the build until the CI job's own timeout.
       "echo '==> Waiting for cloud-init to finish'",
-      "while [ ! -f /var/lib/cloud/instance/boot-finished ]; do echo 'Waiting for cloud-init...'; sleep 1; done",
-      "echo '==> Updating packages'",
-      "sudo apt-get -y update",
-      "sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -y upgrade",
-      "echo '==> Removing unused packages and cleaning cache'",
-      "sudo apt-get -y autoremove --purge",
-      "sudo apt-get -y clean",
-      "echo '==> Removing installer network config'",
-      "sudo rm -f /etc/netplan/00-installer-config.yaml",
-      "sudo rm -f /etc/cloud/cloud.cfg.d/subiquity-disable-cloudinit-networking.cfg",
+      "timeout 900 sh -c 'until [ -f /var/lib/cloud/instance/boot-finished ]; do sleep 2; done' || { echo 'cloud-init did not finish within 15 minutes' >&2; sudo cloud-init status --long >&2; exit 1; }",
+      "echo '==> Upgrading packages'",
+      "sudo apt-get -y -o DPkg::Lock::Timeout=600 update",
+      # dist-upgrade, not upgrade: upgrade holds back any package whose new
+      # version needs a new dependency, and those stayed old in the image.
+      "sudo DEBIAN_FRONTEND=noninteractive apt-get -y -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confold dist-upgrade",
     ]
   }
 
-  provisioner "file" {
-    source      = "${path.root}/_shared/cloud-init-cleanup.sh"
-    destination = "/tmp/cloud-init-cleanup.sh"
-  }
-
-  provisioner "shell" {
-    inline = ["sudo bash /tmp/cloud-init-cleanup.sh"]
-  }
-
-  provisioner "file" {
-    source      = "${path.root}/_shared/cloud-init/99-pve.cfg"
-    destination = "/tmp/99-pve.cfg"
-  }
-
-  provisioner "shell" {
-    inline = [
-      "sudo cp /tmp/99-pve.cfg /etc/cloud/cloud.cfg.d/99-pve.cfg",
-      "sudo sync",
-    ]
-  }
-
-  provisioner "shell" {
-    inline = [
-      "echo '==> Verifying cloud-init is enabled for the final image'",
-      "sudo systemctl is-enabled cloud-init-local cloud-init cloud-config cloud-final",
-      "test ! -e /etc/cloud/cloud-init.disabled",
-      "! grep -qw 'cloud-init=disabled' /proc/cmdline || { echo 'cloud-init=disabled is set on the kernel cmdline' >&2; exit 1; }",
-      "cloud-init --version",
-      "test -s /etc/cloud/cloud.cfg",
-      "grep -qx 'datasource_list: \\[ConfigDrive, NoCloud\\]' /etc/cloud/cloud.cfg.d/99-pve.cfg",
-    ]
-  }
-
+  # Boot the upgraded kernel. finalize.sh removes every other kernel, which
+  # apt and dnf refuse to do to the running one, and the build proves the new
+  # kernel boots before anything is exported from it.
   provisioner "shell" {
     expect_disconnect = true
-    skip_clean        = true
-    inline            = ["sudo bash -c 'rm -f /etc/sudoers.d/packer /etc/sudoers.d/wheel; userdel --remove --force packer' || true"]
+    inline            = ["sudo systemctl reboot"]
+  }
+
+  provisioner "shell" {
+    pause_before        = "20s"
+    start_retry_timeout = "10m"
+    inline              = ["mkdir -p /tmp/cofoundry"]
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/_shared/linux/"
+    destination = "/tmp/cofoundry/"
+  }
+
+  # Cleanup, the cloud-init config, the leftover checks and the build user's
+  # removal all happen in finalize.sh. It leaves the disk read-only and the VM
+  # powering itself off, so nothing a shutdown writes reaches the image. No
+  # expect_disconnect: a connection lost partway must fail the build. See the
+  # script's header.
+  provisioner "shell" {
+    skip_clean = true
+    inline     = ["sudo bash /tmp/cofoundry/finalize.sh"]
   }
 
   post-processor "shell-local" {

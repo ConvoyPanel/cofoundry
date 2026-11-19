@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -206,13 +207,19 @@ describe('recipe consistency', () => {
 
     test('RHEL-family recipes enable the guest-exec RPC after updating packages', () => {
         // RHEL ships qemu-guest-agent with guest-exec denied, which fails the
-        // build smoke test's reboot-and-verify (src/verify/guest.ts). Every
-        // almalinux/rocky recipe must run the shared enabler, and it must run
-        // after `dnf update`, which can otherwise rewrite the config back to
-        // the shipped defaults. Debian/Ubuntu permit guest-exec by default and
-        // are deliberately excluded.
-        const script = join(recipesDir, '_shared/post/enable-guest-exec.sh')
-        expect(existsSync(script)).toBe(true)
+        // build smoke test's reboot-and-verify (src/verify/guest.ts). finalize.sh
+        // runs the shared enabler on the RHEL family, and every almalinux/rocky
+        // recipe must run finalize.sh after `dnf update`, which can otherwise
+        // rewrite the config back to the shipped defaults. Debian/Ubuntu permit
+        // guest-exec by default.
+        const finalize = readFileSync(
+            join(recipesDir, '_shared/linux/finalize.sh'),
+            'utf8'
+        )
+        expect(finalize).toContain('bash "$here/enable-guest-exec.sh"')
+        expect(
+            existsSync(join(recipesDir, '_shared/linux/enable-guest-exec.sh'))
+        ).toBe(true)
 
         const violations: string[] = []
         const rhelFamilies = ['almalinux', 'rocky-linux']
@@ -221,19 +228,87 @@ describe('recipe consistency', () => {
         )
         expect(members.length).toBeGreaterThan(0)
         for (const recipe of members) {
-            const enableAt = recipe.raw.indexOf(
-                '_shared/post/enable-guest-exec.sh'
-            )
-            if (enableAt === -1) {
+            const finalizeAt = recipe.raw.indexOf('/tmp/cofoundry/finalize.sh')
+            const updateAt = recipe.raw.indexOf('dnf -y update')
+            if (finalizeAt === -1 || updateAt === -1 || updateAt > finalizeAt)
                 violations.push(
-                    `${recipe.name}: does not run enable-guest-exec.sh`
+                    `${recipe.name}: finalize.sh must run after 'dnf -y update'`
+                )
+        }
+        expect(violations).toEqual([])
+    })
+
+    test('every Linux recipe reboots after updating, then ends with finalize.sh', () => {
+        // finalize.sh removes every kernel but the running one, so the build
+        // must be running the upgraded kernel; and it deletes the build user
+        // and powers the VM off, so it is the last provisioner and Packer must
+        // not try to clean up after it. See the header of
+        // recipes/_shared/linux/finalize.sh.
+        const violations: string[] = []
+        const linux = recipes.filter(r => !r.name.startsWith('windows-'))
+        expect(linux.length).toBeGreaterThan(0)
+        for (const recipe of linux) {
+            const provisioners = recipe.raw
+                .split(/\n  (?=provisioner ")/)
+                .slice(1)
+            const last = provisioners.at(-1) ?? ''
+            if (!last.includes('sudo bash /tmp/cofoundry/finalize.sh'))
+                violations.push(
+                    `${recipe.name}: last provisioner is not finalize.sh`
+                )
+            // A lost connection must fail the build, not pass as the
+            // power-off: finalize.sh exits 0 before powering off.
+            if (/expect_disconnect\s*=\s*true/.test(last))
+                violations.push(
+                    `${recipe.name}: finalize.sh must not set expect_disconnect`
+                )
+            if (!/skip_clean\s*=\s*true/.test(last))
+                violations.push(`${recipe.name}: finalize.sh needs skip_clean`)
+            const rebootAt = recipe.raw.indexOf('"sudo systemctl reboot"')
+            const upgradeAt = Math.max(
+                recipe.raw.indexOf('dist-upgrade'),
+                recipe.raw.indexOf('dnf -y update')
+            )
+            if (rebootAt === -1 || upgradeAt === -1 || rebootAt < upgradeAt)
+                violations.push(
+                    `${recipe.name}: no reboot after the package upgrade`
+                )
+            if (!recipe.raw.includes('"${path.root}/_shared/linux/"'))
+                violations.push(
+                    `${recipe.name}: does not upload _shared/linux/`
+                )
+        }
+        expect(violations).toEqual([])
+    })
+
+    test('every kickstart parses under its RHEL release', () => {
+        // el8's parser rejects `%packages --exclude-weakdeps` (it knows only
+        // --excludeWeakdeps), and anaconda then sits at the parse error until
+        // Packer's 35-minute SSH timeout. ksvalidator catches that offline.
+        // CI installs it; a machine without it skips.
+        const ksvalidator = spawnSync('sh', ['-c', 'command -v ksvalidator'], {
+            encoding: 'utf8',
+        }).stdout.trim()
+        if (!ksvalidator) return
+        const violations: string[] = []
+        for (const recipe of recipes) {
+            const path = join(recipesDir, recipe.name, 'http', 'ks.cfg')
+            if (!existsSync(path)) continue
+            const release = readFileSync(path, 'utf8').match(
+                /^#version=(RHEL\d+)/m
+            )?.[1]
+            if (!release) {
+                violations.push(
+                    `${recipe.name}: ks.cfg has no #version=RHELn line`
                 )
                 continue
             }
-            const updateAt = recipe.raw.indexOf('dnf -y update')
-            if (updateAt === -1 || updateAt > enableAt)
+            const run = spawnSync(ksvalidator, ['-v', release, path], {
+                encoding: 'utf8',
+            })
+            if (run.status !== 0)
                 violations.push(
-                    `${recipe.name}: enable-guest-exec.sh must run after 'dnf -y update'`
+                    `${recipe.name} (${release}): ${(run.stdout + run.stderr).trim()}`
                 )
         }
         expect(violations).toEqual([])
