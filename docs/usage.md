@@ -216,6 +216,9 @@ gets its own directory:
 | `grouped` | `images/{{group}}/{{recipe}}-{{arch}}/{{sha256}}` |
 | `flat`    | `images/{{recipe}}-{{arch}}/{{sha256}}`           |
 
+`R2_PREFIX` in the environment overrides `prefix` for uploads, `cf publish
+--r2`, and `cf prune --r2` alike, so all three always look in the same place.
+
 For a custom path set `key` directly instead of `layout` — e.g.
 `key = "{{recipe}}/{{recipe}}-{{arch}}-{{sha256}}"`. For a fully hand-written
 command, set `command`/`sidecar_command` under `[upload]`.

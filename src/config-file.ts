@@ -49,7 +49,17 @@ export const resolveConfig = (cwd: string = process.cwd()): ResolvedValue[] => {
         })
     }
 
-    const derived = deriveUpload(merged)
+    // R2_PREFIX set in the environment already wins over [upload].prefix for
+    // `cf publish --r2` and `cf prune --r2` (the FIELD_MAP loop above). The
+    // derived upload key has to use the same prefix, or uploads land where
+    // publish and prune never look.
+    const upload = merged.upload
+    const environmentPrefix = process.env.R2_PREFIX
+    const derived = deriveUpload(
+        environmentPrefix && upload && typeof upload === 'object'
+            ? { ...merged, upload: { ...upload, prefix: environmentPrefix } }
+            : merged
+    )
     const addDerived = (key: string, value?: string): void => {
         const environmentValue = process.env[key]
         if (environmentValue)
