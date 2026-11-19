@@ -179,3 +179,55 @@ export const systemDisk = (template: Template): DiskImage => {
 /** Total bytes downloaded to install a template, across all its images. */
 export const templateSize = (template: Template): number =>
     template.disks.reduce((total, disk) => total + disk.size, 0)
+
+/**
+ * The minimum a published sidecar must satisfy to be used at all: what
+ * `cf publish` needs to advertise it and `cf prune --r2` needs to know which
+ * images it owns. Unknown fields are kept, so a sidecar written by a newer cf
+ * is never mistaken for a broken one.
+ */
+const SidecarCoreSchema = z
+    .object({
+        schema_version: z.literal('2'),
+        name: z.string().min(1),
+        disks: z
+            .array(
+                z
+                    .object({
+                        role: z.enum(['system', 'efivars']),
+                        sha256: z.string().regex(/^[0-9a-f]{64}$/),
+                    })
+                    .passthrough()
+            )
+            .min(1),
+    })
+    .passthrough()
+    .refine(s => s.disks.filter(d => d.role === 'system').length === 1, {
+        message: 'needs exactly one system disk',
+        path: ['disks'],
+    })
+
+export type SidecarParse =
+    | { ok: true; sidecar: Sidecar }
+    | { ok: false; reason: string }
+
+/**
+ * Parse a published sidecar's body. `ok: false` means it was not generated
+ * properly -- invalid JSON, an older schema, or missing what publish and prune
+ * rely on -- and `reason` says which. Publish skips such a sidecar and prune
+ * deletes it.
+ */
+export const parseSidecar = (body: string): SidecarParse => {
+    let json: unknown
+    try {
+        json = JSON.parse(body)
+    } catch {
+        return { ok: false, reason: 'not valid JSON' }
+    }
+    const result = SidecarCoreSchema.safeParse(json)
+    if (result.success)
+        return { ok: true, sidecar: result.data as unknown as Sidecar }
+    const issue = result.error.issues[0]!
+    const where = issue.path.length > 0 ? `${issue.path.join('.')}: ` : ''
+    return { ok: false, reason: `${where}${issue.message}` }
+}

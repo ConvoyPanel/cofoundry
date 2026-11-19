@@ -21,6 +21,7 @@ const TOUCHED = [
     'CF_BRIDGE',
     'R2_ENDPOINT',
     'R2_BUCKET',
+    'R2_PREFIX',
     'CF_UPLOAD_CMD',
     'CF_SIDECAR_UPLOAD_CMD',
     'CF_PUBLIC_URL_TMPL',
@@ -121,6 +122,24 @@ describe('resolveConfig', () => {
 })
 
 describe('[upload] derivation', () => {
+    test('an R2_PREFIX from the environment moves uploads with publish and prune', () => {
+        // publish/prune read R2_PREFIX, where the environment wins; uploads
+        // used to take [upload].prefix from the TOML alone, so the two split.
+        writeToml(
+            'cofoundry.toml',
+            `[upload]\nendpoint = "https://r2.example.com"\nbucket = "b"\nprefix = "images"\n`
+        )
+        process.env.R2_PREFIX = 'staging'
+        const rows = resolveConfig(dir)
+        expect(find(rows, 'R2_PREFIX')?.value).toBe('staging')
+        expect(find(rows, 'CF_UPLOAD_CMD')?.value).toContain(
+            's3://$R2_BUCKET/staging/'
+        )
+        expect(find(rows, 'CF_SIDECAR_UPLOAD_CMD')?.value).toContain(
+            's3://$R2_BUCKET/staging/'
+        )
+    })
+
     test('grouped layout generates prune-safe commands + url', () => {
         writeToml(
             'cofoundry.toml',

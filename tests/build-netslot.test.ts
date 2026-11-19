@@ -160,3 +160,60 @@ describe('vmid_leased', () => {
         expect(vmidLeased('200205', [])).toBe(false)
     })
 })
+
+/**
+ * Run the shipped `slot_mac_running` / `slot_mac_leased` against stubbed
+ * cluster state. The helpers are lifted from the real script text; only their
+ * collaborators (the MAC lookup, `qm status`, the lease probe) are stubbed.
+ */
+const slotProbe = (
+    probe: 'slot_mac_running' | 'slot_mac_leased',
+    vms: { vmid: string; status: string; leased: boolean }[]
+): boolean => {
+    const body = script()
+    const start = body.indexOf(`${probe}() {`)
+    expect(start).toBeGreaterThan(-1)
+    const end = body.indexOf('\n}\n', start)
+    const fn = body.slice(start, end + 2)
+    const stubs = [
+        vms.length === 0
+            ? 'slot_vms_for_mac() { :; }'
+            : `slot_vms_for_mac() { printf '%s\\n' ${vms.map(v => `'node1 ${v.vmid}'`).join(' ')}; }`,
+        `qm_on_node() { case "$2" in ${vms.map(v => `${v.vmid}) echo "status: ${v.status}" ;;`).join(' ')} *) return 2 ;; esac; }`,
+        `vmid_leased() { case "$1" in ${vms
+            .filter(v => v.leased)
+            .map(v => `${v.vmid}) return 0 ;;`)
+            .join(' ')} *) return 1 ;; esac; }`,
+    ].join('\n')
+    const result = spawnSync(
+        'bash',
+        ['-c', `${stubs}\n${fn}\n${probe} 02:50:4b:00:00:69`],
+        { encoding: 'utf8' }
+    )
+    return result.status === 0
+}
+
+describe('slot reclaim probes', () => {
+    test('report a slot free when no VM carries its MAC', () => {
+        // The leak: a zero-iteration `while` exits 0, so a slot whose VM was
+        // already gone looked running and leased, and was never reclaimed.
+        expect(slotProbe('slot_mac_running', [])).toBe(false)
+        expect(slotProbe('slot_mac_leased', [])).toBe(false)
+    })
+
+    test('report a stopped, unleased VM as neither running nor leased', () => {
+        const vms = [{ vmid: '200205', status: 'stopped', leased: false }]
+        expect(slotProbe('slot_mac_running', vms)).toBe(false)
+        expect(slotProbe('slot_mac_leased', vms)).toBe(false)
+    })
+
+    test('find a running or leased VM among several', () => {
+        const vms = [
+            { vmid: '400105', status: 'stopped', leased: false },
+            { vmid: '200205', status: 'running', leased: true },
+            { vmid: '600108', status: 'stopped', leased: false },
+        ]
+        expect(slotProbe('slot_mac_running', vms)).toBe(true)
+        expect(slotProbe('slot_mac_leased', vms)).toBe(true)
+    })
+})

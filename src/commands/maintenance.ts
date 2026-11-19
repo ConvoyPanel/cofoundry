@@ -58,6 +58,7 @@ export const registerMaintenanceCommands = (program: Command): void => {
                     days: Number.parseInt(opts.days, 10),
                     dryRun: Boolean(opts.dryRun),
                     reapLeasePrefix: opts.reapLease,
+                    recipes: await listRecipes(),
                 })
             }
         )

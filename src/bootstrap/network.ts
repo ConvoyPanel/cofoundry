@@ -121,7 +121,16 @@ export const dnsmasqConf = (
     return `${lines.join('\n')}\n`
 }
 
-const bridgeStanza = (bridge: string, network: BuildNetwork): string => `
+// The MASQUERADE rule is checked (-C) before it is appended: post-up runs on
+// every `ifreload -a` -- which is what the Proxmox GUI's "Apply Configuration"
+// does -- and a bare -A stacks one more duplicate rule each time.
+export const bridgeStanza = (
+    bridge: string,
+    network: BuildNetwork,
+    uplink: string
+): string => {
+    const rule = `POSTROUTING -s ${network.cidr} -o ${uplink} -j MASQUERADE`
+    return `
 auto ${bridge}
 iface ${bridge} inet static
     address ${network.bridgeAddress}
@@ -129,9 +138,16 @@ iface ${bridge} inet static
     bridge-stp off
     bridge-fd 0
     post-up   echo 1 > /proc/sys/net/ipv4/ip_forward
-    post-up   iptables -t nat -A POSTROUTING -s ${network.cidr} -o vmbr0 -j MASQUERADE
-    post-down iptables -t nat -D POSTROUTING -s ${network.cidr} -o vmbr0 -j MASQUERADE
+    post-up   iptables -t nat -C ${rule} 2>/dev/null || iptables -t nat -A ${rule}
+    post-down iptables -t nat -D ${rule} 2>/dev/null || true
 `
+}
+
+// The interface carrying the default route: NAT has to leave through it.
+// Not assumed to be vmbr0 -- a node whose uplink bridge is named otherwise
+// would otherwise get a MASQUERADE rule that matches nothing, and every build
+// VM would hang on its first download.
+export const DEFAULT_ROUTE_DEV_CMD = `ip -4 route show default | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}'`
 
 const activeDnsmasqConfigCmd = `{
     [ ! -f /etc/dnsmasq.conf ] || printf '%s\\0' /etc/dnsmasq.conf
@@ -443,15 +459,50 @@ export const stepVmbr1: BootstrapStep = {
     },
     apply: async plan => {
         const network = buildNetworkFromGateway(plan.buildGateway)
-        await execa('ssh', [plan.target, `cat >> /etc/network/interfaces`], {
-            input: bridgeStanza(plan.buildBridge, network),
-            stderr: 'inherit',
-        })
+        const uplink = (
+            await sshCapture(plan.target, DEFAULT_ROUTE_DEV_CMD)
+        ).stdout.trim()
+        if (!uplink) {
+            throw new Error(
+                'could not find the interface carrying the default route; the build NAT needs one to leave through'
+            )
+        }
+        // Back up before touching the file that decides whether the node comes
+        // back on the network, and put it back if the bridge will not come up.
+        const stamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14)
+        const backup = `/etc/network/interfaces.cofoundry-${stamp}.bak`
         await remoteStreaming(
             plan.target,
-            `ifup ${shellQuote(plan.buildBridge)}`
+            `cp -p /etc/network/interfaces ${shellQuote(backup)}`
         )
-        return { note: `created ${plan.buildBridge} + ifup` }
+        await execa('ssh', [plan.target, `cat >> /etc/network/interfaces`], {
+            input: bridgeStanza(plan.buildBridge, network, uplink),
+            stderr: 'inherit',
+        })
+        try {
+            await remoteStreaming(
+                plan.target,
+                `ifup ${shellQuote(plan.buildBridge)}`
+            )
+        } catch (error) {
+            const restored = await remoteStreaming(
+                plan.target,
+                `ifdown ${shellQuote(plan.buildBridge)} >/dev/null 2>&1 || true; cp -p ${shellQuote(backup)} /etc/network/interfaces`
+            ).then(
+                () => true,
+                () => false
+            )
+            const reason =
+                error instanceof Error ? error.message : String(error)
+            throw new Error(
+                restored
+                    ? `ifup ${plan.buildBridge} failed, so /etc/network/interfaces was restored from ${backup}: ${reason}`
+                    : `ifup ${plan.buildBridge} failed, and restoring /etc/network/interfaces from ${backup} failed too — restore it by hand before rebooting the node: ${reason}`
+            )
+        }
+        return {
+            note: `created ${plan.buildBridge} (NAT via ${uplink}) + ifup; previous config in ${backup}`,
+        }
     },
 }
 

@@ -12,6 +12,7 @@ import {
     type Group,
     type Sidecar,
     type Template,
+    parseSidecar,
 } from '@/registry/schema.ts'
 import { renderUploadTemplate, uploadVariables } from '@/upload/template.ts'
 import { LEGACY_PREFIXES } from '@/config-file/upload.ts'
@@ -325,15 +326,20 @@ export const buildManifestFromR2 = async (
         await Promise.all(
             sidecarObjects.map(async o => {
                 const body = await s3Get(endpoint, bucket, o.Key)
-                try {
-                    return {
-                        key: o.Key,
-                        lastModified: o.LastModified,
-                        sidecar: JSON.parse(body) as Sidecar,
-                    }
-                } catch {
-                    log.warn(`Skipping unparseable sidecar ${o.Key}`)
+                // The same test `cf prune --r2` deletes by: a sidecar that was
+                // not generated properly is never advertised, so the newest
+                // proper generation of its template is published instead.
+                const result = parseSidecar(body)
+                if (!result.ok) {
+                    log.warn(
+                        `Skipping malformed sidecar ${o.Key}: ${result.reason}`
+                    )
                     return null
+                }
+                return {
+                    key: o.Key,
+                    lastModified: o.LastModified,
+                    sidecar: result.sidecar,
                 }
             })
         )

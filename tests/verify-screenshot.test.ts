@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { analyzeFrame, captureFrameScript } from '@/verify/screenshot.ts'
-import { frameResult } from '@/verify/report.ts'
+import { frameResult, frameUnavailableResult } from '@/verify/report.ts'
 
 /** Build a P6 PPM whose pixels come from `pixel(index)`. */
 const ppm = (
@@ -121,5 +121,19 @@ describe('captureFrameScript', () => {
         // Anything that types a character could dismiss a dialog or fire a
         // shortcut in the guest being tested.
         expect(script).not.toMatch(/sendkey (?!shift)/)
+    })
+})
+
+describe('frameUnavailableResult', () => {
+    test('records a missing frame at the suite severity instead of passing', () => {
+        // Windows rates the console check `fail`: no frame means no evidence
+        // the desktop painted, and that must not read as a pass.
+        expect(frameUnavailableResult('post-logon', 'fail').status).toBe('fail')
+        expect(frameUnavailableResult('post-reboot', 'warn').status).toBe(
+            'warn'
+        )
+        expect(frameUnavailableResult('post-logon', 'fail').id).toBe(
+            'console-not-blank:post-logon'
+        )
     })
 })

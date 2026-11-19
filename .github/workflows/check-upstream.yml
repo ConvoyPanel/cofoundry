@@ -21,9 +21,9 @@ jobs:
       any_changed: ${{ steps.check.outputs.any_changed }}
       errors: ${{ steps.check.outputs.errors }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - run: bun install --frozen-lockfile
 
@@ -57,13 +57,13 @@ jobs:
       # commit-checksums overlays only the recipes that actually built onto the
       # store on main, so a failed recipe keeps its old checksum here and the
       # next scheduled run detects and retries just that update.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: upstream-checksums
           path: upstream-checksums.json
           retention-days: 1
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: upstream-check-report
           path: check-report.json
@@ -157,7 +157,7 @@ jobs:
       # upstream-checksums push. See docs/setup.md#3.
       HAS_REGISTRY_APP: ${{ secrets.REGISTRY_APP_CLIENT_ID != '' && secrets.REGISTRY_APP_PRIVATE_KEY != '' }}
     steps:
-      - uses: actions/create-github-app-token@v3
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: registry-app-token
         if: env.HAS_REGISTRY_APP == 'true'
         with:
@@ -166,13 +166,13 @@ jobs:
 
       # Checkout persists whichever token it's given, so the push below uses it:
       # the app token when configured, otherwise the default GITHUB_TOKEN.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           token: ${{ steps.registry-app-token.outputs.token || github.token }}
 
       # The full new-state store computed by the check job.
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: upstream-checksums
           path: new-checksums
@@ -180,7 +180,7 @@ jobs:
       # One marker per recipe that built+verified successfully; the filename is
       # the recipe name. merge-multiple collapses them into a single directory.
       # When every leg failed there are no markers, so tolerate no matches.
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         continue-on-error: true
         with:
           pattern: built-*
