@@ -38,6 +38,8 @@ export interface PruneOptions {
      * them. See `reapLeasesByPrefixScript`.
      */
     reapLeasePrefix?: string
+    /** Recipes whose VMIDs mark a VM or disk as cofoundry's to remove. */
+    recipes?: Pick<RecipeInfo, 'buildVmid'>[]
 }
 
 const ssh = async (target: string, cmd: string): Promise<string> => {
@@ -122,41 +124,54 @@ export const canonicalPackerIsoPath = (path: string): string =>
 
 // Build VMs are named `packer-<recipe>` (the vm_name in every recipe), so match
 // by name rather than a VMID range: per-build VMIDs are slot-derived
-// (build_vmid * 100 + slot), which a range match silently misses. `includeTemplates`
-// controls the one behavioural split between prune and clean: routine prune
-// spares `packer-*` templates (a successful build leaves one on purpose), while
-// a full `clean` teardown reaps them too.
-const findBuildVms = async (
-    env: Env,
-    {
-        includeTemplates,
-        olderThanDays,
-    }: { includeTemplates: boolean; olderThanDays?: number }
-): Promise<string[]> =>
-    lines(
-        await ssh(
-            env.SSH_TARGET,
-            includeTemplates && olderThanDays === undefined
-                ? `qm list 2>/dev/null | awk 'NR>1 && $2 ~ /^packer-/ {print $1}'`
-                : `active=" $(awk -F '\\t' '{printf "%s ", $3}' ${shellQuote(RUN_LEASE_DIR)}/* 2>/dev/null || true)"; ` +
-                      `now=$(date +%s); ` +
-                      `for v in $(qm list 2>/dev/null | awk 'NR>1 && $2 ~ /^packer-/ {print $1}'); do ` +
-                      `case "$active" in *" $v "*) continue ;; esac; ` +
-                      (includeTemplates
-                          ? ''
-                          : `qm config "$v" 2>/dev/null | grep -q '^template:' && continue; `) +
-                      (olderThanDays === undefined
-                          ? ''
-                          : `modified=$(stat -c %Y "/etc/pve/qemu-server/$v.conf" 2>/dev/null || echo "$now"); ` +
-                            `[ "$((now - modified))" -gt ${olderThanDays * 86400} ] || continue; `) +
-                      `echo "$v"; done`
-        )
+// (build_vmid * 100 + slot), which a range match silently misses. The name is
+// not proof of ownership, though -- any Packer workflow on the node may name its
+// VMs `packer-*` -- so a match must also carry a VMID cofoundry allocated
+// (is_cofoundry_vmid). `includeTemplates` controls the one behavioural split
+// between prune and clean: routine prune spares `packer-*` templates (a
+// successful build leaves one on purpose), while a full `clean` teardown reaps
+// them too.
+type BuildVmQuery = {
+    recipes: Pick<RecipeInfo, 'buildVmid'>[]
+    includeTemplates: boolean
+    olderThanDays?: number
+}
+
+export const findBuildVmsCommand = ({
+    recipes,
+    includeTemplates,
+    olderThanDays,
+}: BuildVmQuery): string => {
+    // A clean (templates included, no age gate) runs under the exclusive
+    // maintenance lock, so no build is live and leases need no check.
+    const skipLeased = !(includeTemplates && olderThanDays === undefined)
+    return (
+        `${isCofoundryVmidFunction(recipes)}\n` +
+        (skipLeased
+            ? `active=" $(awk -F '\\t' '{printf "%s ", $3}' ${shellQuote(RUN_LEASE_DIR)}/* 2>/dev/null || true)"; `
+            : '') +
+        `now=$(date +%s); ` +
+        `for v in $(qm list 2>/dev/null | awk 'NR>1 && $2 ~ /^packer-/ {print $1}'); do ` +
+        `is_cofoundry_vmid "$v" || continue; ` +
+        (skipLeased ? `case "$active" in *" $v "*) continue ;; esac; ` : '') +
+        (includeTemplates
+            ? ''
+            : `qm config "$v" 2>/dev/null | grep -q '^template:' && continue; `) +
+        (olderThanDays === undefined
+            ? ''
+            : `modified=$(stat -c %Y "/etc/pve/qemu-server/$v.conf" 2>/dev/null || echo "$now"); ` +
+              `[ "$((now - modified))" -gt ${olderThanDays * 86400} ] || continue; `) +
+        `echo "$v"; done`
     )
+}
+
+const findBuildVms = async (env: Env, query: BuildVmQuery): Promise<string[]> =>
+    lines(await ssh(env.SSH_TARGET, findBuildVmsCommand(query)))
 
 const reapBuildVms = async (
     env: Env,
     dryRun: boolean,
-    options: { includeTemplates: boolean; olderThanDays?: number }
+    options: BuildVmQuery
 ): Promise<void> => {
     const orphans = await findBuildVms(env, options)
     if (orphans.length === 0) {
@@ -190,14 +205,33 @@ const reapBuildVms = async (
 // leaked when a VM was removed but its disk was not (a dirty teardown, or a
 // `qm destroy` that failed after unlinking the config). `qm destroy
 // --destroy-unreferenced-disks` never reaches these because the VM it would run
-// against is already gone. Emits the volid of every such orphan. Scoped to the
-// cofoundry storage pool (CF_STORAGE) so unrelated VMs' disks are never touched.
-export const orphanDiskFind = (storage: string): string =>
-    `set -o pipefail; pvesm list ${shellQuote(storage)} --content images | ` +
-    `awk 'NR>1 {print $NF"\\t"$1}' | ` +
-    `while IFS=$'\\t' read -r vmid volid; do ` +
-    `qm config "$vmid" >/dev/null 2>&1 || echo "$volid"; ` +
-    `done`
+// against is already gone. Emits the volid of every such orphan.
+//
+// Two guards, because a false positive here frees a live VM's disk:
+//
+//   1. The config is looked up across the whole cluster, not with `qm config`.
+//      `qm` only sees VMs on the node it runs on, and on shared storage (Ceph,
+//      NFS) `pvesm list` shows every node's disks — so a peer's running VM
+//      looked orphaned. Containers count too: their VMIDs share the space.
+//   2. Only VMIDs cofoundry allocated (is_cofoundry_vmid) are candidates.
+//      CF_STORAGE is usually the node's main pool, and a disk another tool left
+//      behind is not ours to free.
+export const orphanDiskFind = (
+    storage: string,
+    recipes: Pick<RecipeInfo, 'buildVmid'>[]
+): string =>
+    `set -o pipefail
+${isCofoundryVmidFunction(recipes)}
+vmid_config_exists() {
+    for _c in /etc/pve/nodes/*/qemu-server/"$1".conf /etc/pve/nodes/*/lxc/"$1".conf; do
+        [ -e "$_c" ] && return 0
+    done
+    return 1
+}
+pvesm list ${shellQuote(storage)} --content images | awk 'NR>1 {print $NF"\t"$1}' | while IFS=$'\t' read -r vmid volid; do
+    is_cofoundry_vmid "$vmid" || continue
+    vmid_config_exists "$vmid" || echo "$volid"
+done`
 
 const freeVolumes = async (
     env: Env,
@@ -216,9 +250,15 @@ const freeVolumes = async (
     }
 }
 
-const ownedTelemetryCommand = (
-    recipes: Pick<RecipeInfo, 'buildVmid'>[],
-    remove: boolean
+/**
+ * Shell function `is_cofoundry_vmid <vmid>`: succeeds for a VMID cofoundry
+ * allocated -- one a build recorded in OWNED_VMID_DIR, a recipe's base VMID,
+ * a slot-derived build VMID (base * 100 + slot), or the verify range. Anything
+ * that destroys by a weaker test (a name, a storage scan) gates on this, so a
+ * VM or disk some other tool owns is never ours to remove.
+ */
+export const isCofoundryVmidFunction = (
+    recipes: Pick<RecipeInfo, 'buildVmid'>[]
 ): string => {
     const bases = [
         ...new Set(
@@ -228,6 +268,24 @@ const ownedTelemetryCommand = (
         ),
     ].sort((a, b) => a - b)
     const ownedBases = bases.join('|') || '__no_recipe_vmids__'
+    return `is_cofoundry_vmid() {
+    _cv="$1"
+    case "$_cv" in ''|*[!0-9]*) return 1 ;; esac
+    [ -f ${shellQuote(OWNED_VMID_DIR)}/"$_cv" ] && return 0
+    case "$_cv" in
+        ${ownedBases}|9[5-9][0-9][0-9]) return 0 ;;
+    esac
+    case "$((_cv / 100))" in
+        ${ownedBases}) [ "$((_cv % 100))" -lt 50 ] && return 0 ;;
+    esac
+    return 1
+}`
+}
+
+const ownedTelemetryCommand = (
+    recipes: Pick<RecipeInfo, 'buildVmid'>[],
+    remove: boolean
+): string => {
     const removeRrd = remove
         ? `
         if [ -S /var/run/rrdcached.sock ]; then
@@ -255,20 +313,7 @@ const ownedTelemetryCommand = (
         : ''
     return `
 set -euo pipefail
-is_cofoundry_vmid() {
-    vmid="$1"
-    case "$vmid" in ''|*[!0-9]*) return 1 ;; esac
-    [ -f ${shellQuote(OWNED_VMID_DIR)}/"$vmid" ] && return 0
-    case "$vmid" in
-        ${ownedBases}|9[5-9][0-9][0-9]) return 0 ;;
-    esac
-    recipe_base=$((vmid / 100))
-    slot=$((vmid % 100))
-    case "$recipe_base" in
-        ${ownedBases}) [ "$slot" -lt 50 ] && return 0 ;;
-    esac
-    return 1
-}
+${isCofoundryVmidFunction(recipes)}
 for rrd_dir in /var/lib/rrdcached/db/pve-vm-*; do
     [ -d "$rrd_dir" ] || continue
     for rrd in "$rrd_dir"/*; do
@@ -466,14 +511,14 @@ const runCleanLocked = async (
     // teardown, so a leftover build template is a leftover like any other. Their
     // disks live in the VM storage pool (not $PVE_DUMP_DIR) and go with them.
     log.step('build VMs (packer-*, including templates)')
-    await reapBuildVms(env, false, { includeTemplates: true })
+    await reapBuildVms(env, false, { recipes, includeTemplates: true })
 
     // Sweep disks orphaned in the storage pool — those whose owning VM is already
     // gone, which the VM reap above (and its --destroy-unreferenced-disks) can
     // never reach. Runs after the reap so freshly-purged disks are already gone.
     log.step(`orphaned disks in ${env.CF_STORAGE} (no owning VM)`)
     const orphanDisks = lines(
-        await ssh(env.SSH_TARGET, orphanDiskFind(env.CF_STORAGE))
+        await ssh(env.SSH_TARGET, orphanDiskFind(env.CF_STORAGE, recipes))
     )
     await freeVolumes(env, orphanDisks, false)
     report('orphaned disks', orphanDisks, false)
@@ -502,9 +547,12 @@ const runCleanLocked = async (
             ephemeralPackerIsoFind(paths.isoStore, { preserveVirtio: false })
         )
     )
-    const remainingVms = await findBuildVms(env, { includeTemplates: true })
+    const remainingVms = await findBuildVms(env, {
+        recipes,
+        includeTemplates: true,
+    })
     const remainingDisks = lines(
-        await ssh(env.SSH_TARGET, orphanDiskFind(env.CF_STORAGE))
+        await ssh(env.SSH_TARGET, orphanDiskFind(env.CF_STORAGE, recipes))
     )
     const remainingPaths = lines(
         await ssh(
@@ -574,7 +622,7 @@ const runCleanLocked = async (
  */
 export const runPrune = async (
     env: Env,
-    { days, dryRun, reapLeasePrefix }: PruneOptions
+    { days, dryRun, reapLeasePrefix, recipes = [] }: PruneOptions
 ): Promise<void> => {
     log.section(`Prune ${dim('·')} ${accent(env.SSH_TARGET)}`)
     const maintenance = await acquireRemoteMaintenanceLock(
@@ -583,7 +631,7 @@ export const runPrune = async (
     )
     try {
         await Promise.race([
-            runPruneLocked(env, { days, dryRun, reapLeasePrefix }),
+            runPruneLocked(env, { days, dryRun, reapLeasePrefix, recipes }),
             maintenance.lost,
         ])
     } finally {
@@ -593,7 +641,7 @@ export const runPrune = async (
 
 const runPruneLocked = async (
     env: Env,
-    { days, dryRun, reapLeasePrefix }: PruneOptions
+    { days, dryRun, reapLeasePrefix, recipes = [] }: PruneOptions
 ): Promise<void> => {
     const paths = remotePaths(env)
     if (dryRun) log.warn('dry-run: no files will be deleted')
@@ -683,6 +731,7 @@ const runPruneLocked = async (
     // an intentional artifact we must not delete.
     log.step('orphaned build VMs (packer-*, excluding templates)')
     await reapBuildVms(env, dryRun, {
+        recipes,
         includeTemplates: false,
         olderThanDays: days,
     })

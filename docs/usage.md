@@ -158,9 +158,16 @@ spares templates):
   interrupted downloads including `*.iso.tmp.<pid>`;
 - every `packer-*` build VM and its disks, **including templates** left by
   successful builds;
-- disks orphaned in `CF_STORAGE` whose owning VM is gone;
+- disks orphaned in `CF_STORAGE` whose owning VM is gone from every node of the
+  cluster;
 - any legacy `vzdump-qemu-*` archive left in the dump dir, regardless of VMID;
 - RRD and backup telemetry belonging to deleted Cofoundry build/verify VMIDs.
+
+A VM or disk is only removed when its VMID is one Cofoundry allocated: a recipe's
+`build_vmid`, a slot VMID derived from it, the verify range, or a VMID a build
+recorded. A `packer-*` name alone is not enough — other Packer workflows use the
+same prefix — and `CF_STORAGE` is usually the node's main pool, shared with VMs
+Cofoundry never made.
 
 Builds and verification runs share a node maintenance lock and can run in
 parallel with each other; `clean` takes the exclusive side and waits for them to
@@ -175,7 +182,7 @@ cf prune --days 7  # stricter cutoff
 ```
 
 Removes VMs and scratch owned by expired run leases plus legacy non-template
-`packer-*` VMs past the cutoff; unreferenced Packer ISOs and download-cache
+`packer-*` VMs past the cutoff whose VMID Cofoundry allocated; unreferenced Packer ISOs and download-cache
 entries (the persistent `packer-virtio-win*.iso` cache is preserved and attached
 media is never pruned); archives and working data past the cutoff; orphaned
 per-build scratch in `cofoundry-tmp` (`build-*`, `repo-*.tar.gz`, `sync-*`) and
