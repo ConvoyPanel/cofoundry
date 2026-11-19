@@ -7,6 +7,7 @@ import type { CheckContext, GuestCheck } from '@/verify/checks/types.ts'
 import { checksForPhase, renderScript } from '@/verify/checks/types.ts'
 import { linuxSuite, sshKeyBody } from '@/verify/checks/linux.ts'
 import { windowsSuite } from '@/verify/checks/windows.ts'
+import { bashPath } from './bash-path.ts'
 import {
     isWindowsRecipe,
     mergeChecks,
@@ -194,10 +195,19 @@ describe('linux checks', () => {
                 join(root, 'etc/sudoers.d/90-cloud-init-users'),
                 'root ALL=(ALL) NOPASSWD:ALL\n'
             )
+            // Every path the check reads points into the temp root, the user
+            // lookup included: CI runner images can have a real `packer` user.
+            const fake = bashPath(root)
             const script = renderScript(
                 linuxSuite.checks.find(c => c.id === 'no-build-user')!,
                 ctx
-            ).replaceAll('/etc/sudoers', `${root}/etc/sudoers`)
+            )
+                .replaceAll('/etc/sudoers', `${fake}/etc/sudoers`)
+                .replaceAll('/home/packer', `${fake}/home/packer`)
+                .replace(
+                    'getent passwd packer',
+                    `grep -qs '^packer:' ${fake}/etc/passwd`
+                )
             const run = () =>
                 spawnSync('sh', ['-c', script], { encoding: 'utf8' })
 
@@ -230,7 +240,10 @@ describe('linux checks', () => {
                     },
                 }
             )
-                .replaceAll('/etc/resolv.conf', join(dir, 'resolv.conf'))
+                .replaceAll(
+                    '/etc/resolv.conf',
+                    bashPath(join(dir, 'resolv.conf'))
+                )
                 // The address half needs a real guest; only DNS is under test.
                 .replace(/^ip -6 .*$/m, 'true || {')
             const run = (resolv: string) => {

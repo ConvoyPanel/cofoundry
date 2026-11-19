@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { execa } from 'execa'
+import { bashPath } from './bash-path.ts'
 
 const roots: string[] = []
 
@@ -20,15 +21,6 @@ afterEach(async () => {
         roots.splice(0).map(root => rm(root, { recursive: true, force: true }))
     )
 })
-
-// Git Bash on Windows needs POSIX-style paths in env vars and argv; a no-op
-// elsewhere.
-const bashPath = (p: string) =>
-    process.platform === 'win32'
-        ? p
-              .replace(/^([A-Za-z]):/, (_, d: string) => `/${d.toLowerCase()}`)
-              .replace(/\\/g, '/')
-        : p
 
 const NAME = 'windows-server-2025-amd64'
 const SYSTEM_CONTENT = 'system-disk-content'
