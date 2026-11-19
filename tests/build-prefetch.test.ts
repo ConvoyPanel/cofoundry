@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import {
     assetFetchCommand,
+    isoChecksumListUrl,
     CHECKSUM_EXTRACT_PY,
     cloudbaseInitMsiCachePath,
     cloudbaseInitMsiUrl,
@@ -105,6 +106,29 @@ describe('assetFetchCommand', () => {
         expect(command).toContain(
             "'https://releases.ubuntu.com/24.04/SHA256SUMS'"
         )
+    })
+
+    test('stops with exit 10 when the checksum list yields no hash', () => {
+        // It used to fall back to "file is not empty", so a 404 on the list
+        // passed as verified. Resolved before the cached copy is judged, so a
+        // briefly unreachable list cannot get a good cached ISO deleted.
+        const command = assetFetchCommand(
+            '/var/lib/vz/template/iso/packer-debian-12.iso',
+            'https://cdimage.debian.org/cdimage/archive/12.15.0/amd64/iso-cd/debian-12.15.0-amd64-netinst.iso',
+            {
+                url: 'https://cdimage.debian.org/cdimage/archive/12.15.0/amd64/iso-cd/SHA256SUMS',
+                filenamePattern: 'debian-12\\.\\d+\\.\\d+-amd64-netinst\\.iso',
+            }
+        )
+        expect(command).not.toContain('test -s')
+        const resolve = command.indexOf('exit 10')
+        expect(resolve).toBeGreaterThan(-1)
+        expect(resolve).toBeLessThan(command.indexOf('rm -f '))
+        const result = spawnSync('bash', ['-n'], {
+            input: command,
+            encoding: 'utf8',
+        })
+        expect(result.status, result.stderr).toBe(0)
     })
 
     test('keeps exit 1 for a failed size check when no checksum is configured', () => {
@@ -330,5 +354,30 @@ describe('describeExit', () => {
 
     test('still surfaces the raw number for anything unmapped', () => {
         expect(describeExit(42)).toBe('unmapped exit code 42')
+    })
+})
+
+describe('isoChecksumListUrl', () => {
+    test("points an archived Debian placeholder at the ISO's own SHA256SUMS", () => {
+        // cdimage/archive/latest-12/ does not exist (404); it is a marker for
+        // `cf update`. The pinned ISO's list sits next to it.
+        expect(
+            isoChecksumListUrl(
+                'https://cdimage.debian.org/cdimage/archive/12.15.0/amd64/iso-cd/debian-12.15.0-amd64-netinst.iso',
+                'https://cdimage.debian.org/cdimage/archive/latest-12/amd64/iso-cd/SHA256SUMS'
+            )
+        ).toBe(
+            'https://cdimage.debian.org/cdimage/archive/12.15.0/amd64/iso-cd/SHA256SUMS'
+        )
+    })
+
+    test('leaves every other checksum URL alone', () => {
+        const ubuntu = 'https://releases.ubuntu.com/24.04/SHA256SUMS'
+        expect(
+            isoChecksumListUrl(
+                'https://releases.ubuntu.com/24.04/ubuntu-24.04.4-live-server-amd64.iso',
+                ubuntu
+            )
+        ).toBe(ubuntu)
     })
 })
