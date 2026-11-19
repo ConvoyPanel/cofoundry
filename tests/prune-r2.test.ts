@@ -144,6 +144,42 @@ describe('planR2Prune', () => {
         expect(plan.orphanObjects).toEqual([`${PREFIX}/orphan.qcow2`])
     })
 
+    test('deletes no images when a sidecar could not be read', () => {
+        // The newest generation's sidecar failed to load, so its images look
+        // unclaimed. Deleting them would leave the registry pointing at 404s.
+        const plan = planR2Prune(
+            [
+                object(`${PREFIX}/new.qcow2`, '2026-03-01'),
+                object(`${PREFIX}-old.json`, '2026-01-01'),
+                object(`${PREFIX}/old.qcow2`, '2026-01-01'),
+                object(`${PREFIX}-mid.json`, '2026-02-01'),
+                object(`${PREFIX}/mid.qcow2`, '2026-02-01'),
+            ],
+            [
+                generation(`${PREFIX}-old.json`, '2026-01-01', 'debian-12', [
+                    'old',
+                ]),
+                generation(`${PREFIX}-mid.json`, '2026-02-01', 'debian-12', [
+                    'mid',
+                ]),
+            ],
+            1,
+            { sweepOrphans: false }
+        )
+        expect(plan.orphanObjects).toEqual([])
+        // The stale sidecar may still go; its image waits for a full read.
+        expect(plan.deletions).toEqual([`${PREFIX}-old.json`])
+    })
+
+    test('keeps the images of a sidecar that names no template', () => {
+        const plan = planR2Prune(
+            [object(`${PREFIX}/unnamed.qcow2`, '2026-01-01')],
+            [generation(`${PREFIX}-x.json`, '2026-01-01', '', ['unnamed'])],
+            1
+        )
+        expect(plan.deletions).toEqual([])
+    })
+
     test('never touches objects that are not template images', () => {
         // The prefix may hold things prune did not put there — including the
         // mirrored registry.json.

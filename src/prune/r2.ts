@@ -68,25 +68,36 @@ const isImage = (key: string): boolean =>
  * both superseded versions and images orphaned by a failed publish. Objects
  * that are neither a sidecar nor a recognized image extension are never
  * touched -- the prefix may hold things prune did not put there.
+ *
+ * That sweep is only sound when `generations` names EVERY sidecar in the
+ * prefix: an image is judged orphaned by the absence of a sidecar claiming it,
+ * so a sidecar the caller could not read makes its images look orphaned. A
+ * caller that skipped any sidecar passes `sweepOrphans: false`.
  */
 export const planR2Prune = (
     objects: R2Object[],
     generations: R2Generation[],
-    keep: number
+    keep: number,
+    { sweepOrphans = true }: { sweepOrphans?: boolean } = {}
 ): R2PrunePlan => {
     if (!Number.isInteger(keep) || keep < 0)
         throw new Error('--keep must be a non-negative integer')
 
+    const deletions: string[] = []
+    const liveHashes = new Set<string>()
     const byTemplate = new Map<string, R2Generation[]>()
     for (const generation of generations) {
-        if (!generation.template) continue
+        // A sidecar with no template name cannot be grouped for retention, so
+        // it is never stale -- and its images stay live with it.
+        if (!generation.template) {
+            for (const hash of generation.hashes) liveHashes.add(hash)
+            continue
+        }
         const list = byTemplate.get(generation.template) ?? []
         list.push(generation)
         byTemplate.set(generation.template, list)
     }
 
-    const deletions: string[] = []
-    const liveHashes = new Set<string>()
     const groups: R2PruneGroup[] = []
     for (const [template, list] of byTemplate) {
         list.sort((a, b) => b.lastModified.localeCompare(a.lastModified))
@@ -101,7 +112,7 @@ export const planR2Prune = (
     // A stale generation may share an image with a live one (an unchanged
     // varstore across rebuilds), so the live set has to be complete before any
     // image is judged.
-    const orphanObjects = objects
+    const orphanObjects = (sweepOrphans ? objects : [])
         .filter(object => isImage(object.Key))
         .filter(object => ![...liveHashes].some(h => object.Key.includes(h)))
         .map(object => object.Key)
@@ -134,30 +145,45 @@ export const runPruneR2 = async (
         o => o.Key.endsWith('.json') && basename(o.Key) !== 'registry.json'
     )
     log.step(`reading ${sidecarObjects.length} sidecar(s)`)
-    const generations = (
-        await Promise.all(
-            sidecarObjects.map(async o => {
-                try {
-                    const sidecar = JSON.parse(
-                        await s3Get(endpoint, bucket, o.Key)
-                    ) as Sidecar
-                    return {
-                        key: o.Key,
-                        lastModified: o.LastModified,
-                        template: sidecar.name,
-                        hashes: (sidecar.disks ?? []).map(d => d.sha256),
-                    }
-                } catch {
-                    // An unreadable sidecar must not make its images look
-                    // orphaned; skipping it leaves them untouched this run.
-                    log.warn(`skipping unparseable sidecar ${o.Key}`)
-                    return null
+    const read = await Promise.all(
+        sidecarObjects.map(async (o): Promise<R2Generation | null> => {
+            try {
+                const sidecar = JSON.parse(
+                    await s3Get(endpoint, bucket, o.Key)
+                ) as Sidecar
+                const hashes = (sidecar.disks ?? []).map(d => d.sha256)
+                // A sidecar that names no images (or an image without a hash)
+                // cannot vouch for anything; treat it like an unreadable one.
+                if (hashes.length === 0 || hashes.some(h => !h))
+                    throw new Error('no disk hashes')
+                return {
+                    key: o.Key,
+                    lastModified: o.LastModified,
+                    template: sidecar.name,
+                    hashes,
                 }
-            })
-        )
-    ).filter((g): g is R2Generation => g !== null)
+            } catch (error) {
+                const reason =
+                    error instanceof Error ? error.message : String(error)
+                log.warn(`could not read sidecar ${o.Key}: ${reason}`)
+                return null
+            }
+        })
+    )
+    const generations = read.filter((g): g is R2Generation => g !== null)
+    const unreadable = read.length - generations.length
 
-    const plan = planR2Prune(objects, generations, keep)
+    // Images are judged orphaned by the absence of a sidecar claiming them, so
+    // an unread sidecar -- a transient fetch failure included -- would make
+    // its images, often the newest generation's, look orphaned. Delete no
+    // images this run; stale sidecars still go, and the images they leave
+    // behind are swept on the next run that reads every sidecar.
+    const sweepOrphans = unreadable === 0
+    if (!sweepOrphans)
+        log.warn(
+            `${unreadable} sidecar(s) unreadable — not deleting any images this run`
+        )
+    const plan = planR2Prune(objects, generations, keep, { sweepOrphans })
 
     for (const group of plan.groups) {
         if (group.stale.length === 0) {

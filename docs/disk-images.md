@@ -314,6 +314,12 @@ Objects are matched to a generation by the sha256 embedded in their key, since
 `[upload].key` is user-configurable and any rule parsing the path breaks on some
 layout.
 
+An image is judged unreferenced by the absence of a sidecar naming it, so that
+judgement needs every sidecar. When any sidecar in the prefix cannot be read — a
+failed fetch, invalid JSON, or no disk hashes — the run deletes no images at all;
+stale sidecars still go, and the next run that reads every sidecar sweeps the
+images they leave behind.
+
 `coport` downloads the images, `qm create`s from the profile, then `qm template`s
 the result. Its VMID machinery stays, because a template still occupies a VMID.
 The node's `qm create` schema is probed once per run and shared across every
