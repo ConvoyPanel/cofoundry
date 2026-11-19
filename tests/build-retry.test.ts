@@ -195,4 +195,26 @@ describe('transport failures', () => {
         ).rejects.toThrow('non-zero exit status')
         expect(seen).toEqual([1, 2])
     })
+    test('tells the re-run of an attempt that its transport dropped', async () => {
+        // The re-run must follow the packer the dropped session left running,
+        // not launch a second one; it can only do that if it is told.
+        const seen: [number, boolean][] = []
+        await runWithRetries(
+            3,
+            async (attempt, { afterTransportFailure }) => {
+                seen.push([attempt, afterTransportFailure])
+                if (seen.length === 1)
+                    throw new Error('Command failed with exit code 255')
+                if (seen.length === 2) throw new Error('packer exited 1')
+            },
+            undefined,
+            undefined,
+            async () => {}
+        )
+        expect(seen).toEqual([
+            [1, false],
+            [1, true],
+            [2, false],
+        ])
+    })
 })

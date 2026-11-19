@@ -23,7 +23,9 @@ export const buildAttemptCount = (
  *
  * The build itself is unaffected — packer runs ON the node, so the work
  * survives the launcher losing its terminal. What is lost is cf's ability to
- * watch it.
+ * watch it, which is why the re-run is told it follows a transport failure
+ * (`AttemptContext.afterTransportFailure`): it must pick the surviving packer
+ * back up, not start a second one against the same VM.
  */
 export const isTransportFailure = (error: unknown): boolean => {
     const message = error instanceof Error ? error.message : String(error)
@@ -35,9 +37,18 @@ export const isTransportFailure = (error: unknown): boolean => {
 /** Reconnection waits, in ms. Long enough to outlast a DERP relay hiccup. */
 const TRANSPORT_BACKOFF_MS = [15_000, 30_000, 60_000, 120_000, 240_000]
 
+export type AttemptContext = {
+    /**
+     * True when this call re-runs the same attempt because the previous call
+     * lost its SSH transport. Whatever that call started on the node may still
+     * be running.
+     */
+    afterTransportFailure: boolean
+}
+
 export const runWithRetries = async (
     attempts: number,
-    run: (attempt: number) => Promise<void>,
+    run: (attempt: number, context: AttemptContext) => Promise<void>,
     onRetry?: (message: string) => void,
     cancelSignal?: AbortSignal,
     sleep: (ms: number) => Promise<void> = ms =>
@@ -47,14 +58,15 @@ export const runWithRetries = async (
         throw new Error('attempts must be a positive integer')
     let lastError: unknown
     let transportRetries = 0
+    let afterTransportFailure = false
     for (let attempt = 1; attempt <= attempts; attempt++) {
         // An abort (the run lease was lost) throws the signal's reason — the
         // explanatory lease-lost error — so no further attempts start.
         cancelSignal?.throwIfAborted()
         try {
-            if (attempt > 1)
+            if (attempt > 1 && !afterTransportFailure)
                 onRetry?.(`[retry] build attempt ${attempt}/${attempts}`)
-            await run(attempt)
+            await run(attempt, { afterTransportFailure })
             return
         } catch (error) {
             // A failure caused by the abort itself (the cancelled SSH child
@@ -82,9 +94,11 @@ export const runWithRetries = async (
                 )
                 await sleep(waitMs)
                 cancelSignal?.throwIfAborted()
+                afterTransportFailure = true
                 attempt--
                 continue
             }
+            afterTransportFailure = false
 
             if (attempt < attempts) {
                 onRetry?.(

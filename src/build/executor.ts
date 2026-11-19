@@ -15,7 +15,11 @@ import {
     buildRemoteEnv,
     PACKER_TMP_ROOT,
     packerTmpDir,
+    REATTACH_NO_STATUS,
+    REATTACH_NOT_STARTED,
+    reattachConsoleLog,
     streamViaConsoleLog,
+    type ConsoleStatusFiles,
 } from '@/build/packer.ts'
 import {
     buildRemoteOutDir,
@@ -41,6 +45,11 @@ import {
     acquireRunLease,
     killLeasedRunProcessesCommand,
 } from '@/build/lease.ts'
+
+// Lines the build script prints itself rather than reading from packer's
+// console log: the install watchdog, the diagnostics recorder, and a reattach
+// banner. They do not advance the console-log position a reattach resumes at.
+const CONSOLE_SIDE_CHANNEL = /^\[(?:watchdog|diag|reattach)\]/
 
 export type BuildPhaseOptions = {
     keepVm?: boolean
@@ -362,16 +371,69 @@ export const buildPhase = async (
         // able to swallow output. The log lives in the run-scoped tmp dir, so
         // the existing rm -rf cleanup removes it with everything else.
         const packerConsoleLog = `${remoteBuildTmpDir}/packer-console.log`
-        const packerCommand = streamViaConsoleLog(
-            `${remoteEnv} ${packerArgs.join(' ')}`,
-            packerConsoleLog
-        )
         let lastAttempt = 0
+        // Each launch gets its own status files, so a reattach can never read
+        // a previous attempt's pid or exit status as this one's.
+        let launch: ConsoleStatusFiles | undefined
+        // Console-log lines this launch has streamed, so a reattach resumes
+        // where the dropped session stopped instead of replaying hours of
+        // output. Approximate: blank lines are not delivered to onLine, so a
+        // reattach can repeat a few lines, never skip one.
+        let consoleLinesSeen = 0
+        // Without an onLine the launch keeps streaming straight to the
+        // terminal, uncounted; a reattach then replays from the top.
+        const streamLine = onLine
+            ? (line: string): void => {
+                  if (!CONSOLE_SIDE_CHANNEL.test(line)) consoleLinesSeen++
+                  onLine(line)
+              }
+            : undefined
+        // Follow the packer the dropped session started. Returns false when
+        // that launch never got as far as starting packer, so launching is
+        // safe; throws, like a launch would, when packer failed.
+        const reattach = async (
+            status: ConsoleStatusFiles
+        ): Promise<boolean> => {
+            let notStarted = false
+            let noStatus = false
+            await remoteStreamingScript(
+                env.SSH_TARGET,
+                reattachConsoleLog(
+                    packerConsoleLog,
+                    status,
+                    consoleLinesSeen + 1
+                ),
+                line => {
+                    if (line === REATTACH_NOT_STARTED) notStarted = true
+                    else if (line === REATTACH_NO_STATUS) noStatus = true
+                    else streamLine?.(line)
+                },
+                cancelSignal
+            ).catch(error => {
+                if (!notStarted && !noStatus) throw error
+            })
+            if (noStatus) {
+                throw new Error(
+                    'packer stopped while the SSH connection was down and recorded no exit status (killed with its process group, e.g. by the install watchdog, or the node restarted)'
+                )
+            }
+            return !notStarted
+        }
         try {
             await runWithRetries(
                 maxAttempts,
-                async attempt => {
+                async (attempt, { afterTransportFailure }) => {
                     lastAttempt = attempt
+                    // The SSH session dropped, not packer: with no PTY, the
+                    // packer it started is still running on the node.
+                    // Launching again here would put a second packer on the
+                    // same VMID — it refuses ("found matching VM … not a
+                    // template"), spending an attempt, and the next attempt's
+                    // cleanup then destroys the VM the first packer is still
+                    // building. Follow the surviving one instead.
+                    if (afterTransportFailure && launch) {
+                        if (await reattach(launch)) return
+                    }
                     // A transport death (SSH exit 255) or an external reap kills
                     // the attempt without unwinding its cleanup, leaving the
                     // build VM running and sometimes deleting the run-scoped tmp
@@ -381,7 +443,7 @@ export const buildPhase = async (
                     // immediately. Both were observed on 2026-08-01, where each
                     // burned the remaining attempts in seconds after two hours of
                     // correct work. Re-level the ground before every retry.
-                    if (attempt > 1) {
+                    if (attempt > 1 || afterTransportFailure) {
                         const vmid = effectiveBuildVmid
                         const dropStaleVm =
                             vmid === undefined
@@ -396,10 +458,21 @@ export const buildPhase = async (
                             `${dropStaleVm}mkdir -p ${shellQuote(remoteBuildTmpDir)} && echo ok`
                         ).catch(() => undefined)
                     }
+                    const id = randomUUID().slice(0, 8)
+                    launch = {
+                        pidFile: `${remoteBuildTmpDir}/packer-${id}.pid`,
+                        rcFile: `${remoteBuildTmpDir}/packer-${id}.rc`,
+                    }
+                    consoleLinesSeen = 0
+                    const packerCommand = streamViaConsoleLog(
+                        `${remoteEnv} ${packerArgs.join(' ')}`,
+                        packerConsoleLog,
+                        launch
+                    )
                     await remoteStreamingScript(
                         env.SSH_TARGET,
                         `${watchdog}${recorder}${packerCommand}`,
-                        onLine,
+                        streamLine,
                         cancelSignal
                     )
                 },
