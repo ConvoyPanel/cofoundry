@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { buildNetworkFromGateway } from '@/build/buildnet.ts'
+import { spawnSync } from 'node:child_process'
 import {
     bridgeGateway,
+    bridgeStanza,
+    DEFAULT_ROUTE_DEV_CMD,
     buildNetworkRouteConflict,
     dnsmasqConflict,
     dnsmasqConf,
@@ -211,5 +214,58 @@ describe('dnsmasqConf', () => {
         )
         expect(generated).toContain('dhcp-range=10.10.10.200,10.10.10.250,12h')
         expect(generated).toContain('dhcp-option=option:router,10.10.10.1')
+    })
+})
+
+describe('bridgeStanza', () => {
+    const network = buildNetworkFromGateway('10.0.0.1')
+
+    test('NATs out of the detected uplink, not a hard-coded vmbr0', () => {
+        const stanza = bridgeStanza('vmbr1', network, 'vmbr2')
+        expect(stanza).toContain('-o vmbr2 -j MASQUERADE')
+        expect(stanza).not.toContain('vmbr0')
+    })
+
+    test('checks for the NAT rule before appending it', () => {
+        // post-up re-runs on every `ifreload -a`; a bare -A stacks duplicates.
+        const postUp = bridgeStanza('vmbr1', network, 'vmbr0')
+            .split('\n')
+            .find(
+                line => line.includes('MASQUERADE') && line.includes('post-up')
+            )
+        expect(postUp).toMatch(/iptables -t nat -C .* \|\| iptables -t nat -A /)
+    })
+})
+
+describe('DEFAULT_ROUTE_DEV_CMD', () => {
+    const uplinkOf = (routes: string): string =>
+        spawnSync(
+            'bash',
+            [
+                '-c',
+                DEFAULT_ROUTE_DEV_CMD.replace(
+                    'ip -4 route show default',
+                    'cat'
+                ),
+            ],
+            { input: routes, encoding: 'utf8' }
+        ).stdout.trim()
+
+    test('reads the device off the default route', () => {
+        expect(
+            uplinkOf('default via 192.168.1.1 dev vmbr2 proto kernel onlink\n')
+        ).toBe('vmbr2')
+    })
+
+    test('takes the first default route when there are several', () => {
+        expect(
+            uplinkOf(
+                'default via 192.168.1.1 dev bond0 metric 100\ndefault via 10.1.1.1 dev vmbr9 metric 200\n'
+            )
+        ).toBe('bond0')
+    })
+
+    test('prints nothing when there is no default route', () => {
+        expect(uplinkOf('')).toBe('')
     })
 })

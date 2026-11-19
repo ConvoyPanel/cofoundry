@@ -368,9 +368,17 @@ iface vmbr1 inet static
     bridge-stp off
     bridge-fd 0
     post-up   echo 1 > /proc/sys/net/ipv4/ip_forward
-    post-up   iptables -t nat -A POSTROUTING -s 10.0.0.0/24 -o vmbr0 -j MASQUERADE
-    post-down iptables -t nat -D POSTROUTING -s 10.0.0.0/24 -o vmbr0 -j MASQUERADE
+    post-up   iptables -t nat -C POSTROUTING -s 10.0.0.0/24 -o vmbr0 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 10.0.0.0/24 -o vmbr0 -j MASQUERADE
+    post-down iptables -t nat -D POSTROUTING -s 10.0.0.0/24 -o vmbr0 -j MASQUERADE 2>/dev/null || true
 ```
+
+Replace `vmbr0` with the interface that carries the node's default route
+(`ip -4 route show default`) — NAT out of any other interface matches nothing,
+and builds hang on their first download. `cf bootstrap` detects it. The `-C`
+check keeps `ifreload -a` (the GUI's "Apply Configuration") from stacking a
+duplicate rule each time. `cf bootstrap` also backs up `/etc/network/interfaces`
+to `interfaces.cofoundry-<timestamp>.bak` before appending, and restores it if
+the bridge will not come up.
 
 Then `apt-get install -y dnsmasq` and create `/etc/dnsmasq.d/vmbr1-nat.conf`:
 
