@@ -14,8 +14,15 @@ Run it **on the Proxmox node** — it calls `qm` and reads
 # coport-linux-x64.1 and the install below silently reinstalls the stale one.
 wget -O coport-linux-x64 \
     https://github.com/ConvoyPanel/cofoundry/releases/latest/download/coport-linux-x64
+wget -O coport.sha256 \
+    https://github.com/ConvoyPanel/cofoundry/releases/latest/download/coport.sha256
+# Older releases list paths as release/coport-…; match on the file name.
+grep 'coport-linux-x64$' coport.sha256 | awk '{print $1 "  coport-linux-x64"}' | sha256sum -c -
 install -m 755 coport-linux-x64 /usr/local/bin/coport
 ```
+
+The checksum comes from the same release, so it proves the download is complete
+and unaltered in transit, not who built it.
 
 Every `vX.Y.Z`
 [release](https://github.com/ConvoyPanel/cofoundry/releases) ships
