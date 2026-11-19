@@ -161,14 +161,20 @@ exit $rc`,
             phase: 'first-boot',
         },
         {
-            // The recipes create a throwaway `packer` build user and tear it
-            // down with `userdel --remove --force packer || true` — the
-            // `|| true` means a failed userdel would silently ship the user,
-            // its home (holding the build's authorized key), and its NOPASSWD
-            // sudoers grant to every clone. This asserts the teardown actually
-            // happened rather than merely not erroring.
+            // The recipes create a throwaway `packer` build user with a
+            // NOPASSWD sudo grant, and the kickstarts grant NOPASSWD to the
+            // whole `wheel` group. Either surviving ships a passwordless root
+            // path to every clone, so this asserts the teardown happened
+            // rather than trusting it.
+            //
+            // The sudo check is not a search for the word "packer": a
+            // leftover `%wheel ALL=(ALL) NOPASSWD:ALL` names no user at all.
+            // It looks for any active NOPASSWD grant. The one legitimate
+            // source is cloud-init, which writes 90-cloud-init-users for the
+            // users it creates on this very boot.
             id: 'no-build-user',
-            description: 'the throwaway packer build user was fully removed',
+            description:
+                'the build user and every build-time NOPASSWD sudo grant were removed',
             script: `rc=0
 if getent passwd packer >/dev/null 2>&1; then
   echo "build user 'packer' still in /etc/passwd"
@@ -179,11 +185,20 @@ if [ -e /home/packer ]; then
   ls -la /home/packer 2>/dev/null
   rc=1
 fi
-left=$(grep -rl packer /etc/sudoers.d/ 2>/dev/null)
-if [ -n "$left" ]; then
-  printf 'packer sudoers entry left behind: %s\\n' "$left"
-  rc=1
-fi
+for f in /etc/sudoers /etc/sudoers.d/*; do
+  [ -f "$f" ] || continue
+  [ "$f" = /etc/sudoers.d/90-cloud-init-users ] && continue
+  left=$(grep -nE '^[[:space:]]*[^#[:space:]].*NOPASSWD' "$f")
+  if [ -n "$left" ]; then
+    echo "NOPASSWD sudo grant left behind in $f:"
+    printf '%s\\n' "$left"
+    rc=1
+  fi
+  if grep -qw packer "$f"; then
+    echo "sudoers file $f still names packer"
+    rc=1
+  fi
+done
 exit $rc`,
             severity: 'fail',
             phase: 'first-boot',
@@ -200,6 +215,11 @@ exit $rc`,
             id: 'no-installer-network-config',
             description:
                 'no installer-written NIC config ships; cloud-init alone configures the network',
+            //
+            // Each stack's leftovers look different. ifupdown: a NIC stanza.
+            // netplan: any file but the one cloud-init renders (subiquity
+            // left the build address in a 50-cloud-init.yaml of its own).
+            // NetworkManager: any profile cloud-init did not write.
             script: `rc=0
 if [ -f /etc/network/interfaces ]; then
   left=$(grep -E '^[[:space:]]*(auto|allow-[a-z]+|iface)[[:space:]]' /etc/network/interfaces |
@@ -210,11 +230,151 @@ if [ -f /etc/network/interfaces ]; then
     rc=1
   fi
 fi
-if [ -e /etc/netplan/00-installer-config.yaml ]; then
-  echo 'installer netplan config left behind: /etc/netplan/00-installer-config.yaml'
+for f in /etc/netplan/*.yaml; do
+  [ -e "$f" ] || continue
+  [ "$f" = /etc/netplan/50-cloud-init.yaml ] && continue
+  echo "netplan config cloud-init did not write: $f"
+  rc=1
+done
+for f in /etc/NetworkManager/system-connections/*; do
+  [ -e "$f" ] || continue
+  case "\${f##*/}" in cloud-init-*) continue ;; esac
+  echo "NetworkManager profile cloud-init did not write: $f"
+  rc=1
+done
+for f in /etc/sysconfig/network-scripts/ifcfg-*; do
+  [ -e "$f" ] || continue
+  [ "\${f##*/}" = ifcfg-lo ] && continue
+  grep -q 'Created by cloud-init' "$f" && continue
+  echo "ifcfg file cloud-init did not write: $f"
+  rc=1
+done
+exit $rc`,
+            severity: 'fail',
+            phase: 'first-boot',
+        },
+        {
+            // What the installers and the build leave behind that no official
+            // cloud image ships. The kickstart files held the build's root
+            // password in plaintext; the installer logs hold the build's
+            // network and user-data; 00InstallRecommends silently turns apt
+            // Recommends off for every package a customer installs.
+            id: 'no-build-leftovers',
+            description:
+                'no installer files, build scripts or build-only settings shipped',
+            script: `rc=0
+for f in /root/anaconda-ks.cfg /root/original-ks.cfg /root/ks-post.log \\
+  /var/log/anaconda /var/log/installer \\
+  /etc/cloud/cloud.cfg.d/99-installer.cfg \\
+  /etc/cloud/cloud.cfg.d/90-installer-network.cfg \\
+  /etc/cloud/cloud.cfg.d/curtin-preserve-sources.cfg \\
+  /etc/apt/apt.conf.d/00InstallRecommends /etc/apt/apt.conf.d/00trustcdrom \\
+  /etc/sudoers.d/wheel /etc/sudoers.d/packer; do
+  if [ -e "$f" ]; then
+    echo "left behind: $f"
+    rc=1
+  fi
+done
+# /tmp is wiped at boot on some releases and not others; the scripts the build
+# ran there are named by Packer and by the recipes.
+for f in /tmp/script_*.sh /tmp/cofoundry /tmp/ks-script-* /var/tmp/script_*.sh; do
+  [ -e "$f" ] && { echo "left behind: $f"; rc=1; }
+done
+if grep -qE '^[^#]*[[:space:]]/media/cdrom' /etc/fstab; then
+  echo 'fstab still mounts the install CD:'
+  grep -E '/media/cdrom' /etc/fstab
   rc=1
 fi
 exit $rc`,
+            severity: 'fail',
+            phase: 'first-boot',
+        },
+        {
+            // The kickstarts once set root's password to a placeholder whose
+            // hash shipped locked: one `passwd -u` from a published password.
+            // Verify gives its password to a different user, so root must
+            // still have none here.
+            id: 'root-has-no-image-password',
+            description: 'root has no password hash baked into the image',
+            script: `hash=$(awk -F: '$1 == "root" {print $2}' /etc/shadow)
+case "$hash" in
+  *'$'*) echo "root has a password hash ($(printf '%s' "$hash" | cut -c1-4)...)"; exit 1 ;;
+esac`,
+            severity: 'fail',
+            phase: 'first-boot',
+        },
+        {
+            // Matching the official images: SELinux enforces where the distro
+            // has it, and no firewall blocks a customer's services by default
+            // on one family but not the others.
+            id: 'security-posture',
+            description:
+                'SELinux enforcing where present, no default-deny firewall, no LLMNR responder',
+            script: `rc=0
+if command -v getenforce >/dev/null 2>&1; then
+  mode=$(getenforce)
+  [ "$mode" = Enforcing ] || { echo "SELinux is $mode"; rc=1; }
+fi
+# LLMNR (5355) answers hostname queries from anyone who can reach the VM.
+if command -v ss >/dev/null 2>&1 && ss -Hlnu 2>/dev/null | awk '{print $4}' | grep -q ':5355$'; then
+  echo 'something listens for LLMNR on UDP 5355:'
+  ss -Hlnup 2>/dev/null | grep ':5355 '
+  rc=1
+fi
+for unit in firewalld ufw; do
+  if systemctl is-active --quiet "$unit" 2>/dev/null; then
+    case "$unit" in
+      ufw) ufw status 2>/dev/null | grep -q 'Status: active' || continue ;;
+    esac
+    echo "$unit is active"
+    rc=1
+  fi
+done
+exit $rc`,
+            severity: 'fail',
+            phase: 'first-boot',
+        },
+        {
+            // One kernel, and its initramfs able to boot on any storage
+            // controller rather than only the build VM's.
+            id: 'single-kernel',
+            description: 'the image carries only the kernel it boots',
+            script: `n=$(ls /lib/modules | wc -l)
+[ "$n" -le 1 ] || { echo "$n kernels installed:"; ls /lib/modules; exit 1; }`,
+            severity: 'warn',
+            phase: 'first-boot',
+        },
+        {
+            // The panel gives a VM a static address and its own nameservers.
+            // Debian images with ifupdown never applied the nameserver, and
+            // el8/el9 images put it behind three stale build resolvers where
+            // glibc never reached it; every DHCP-based check passed both. See
+            // verifyStaticNetwork in src/verify/clone.ts.
+            id: 'static-network-applied',
+            description:
+                "cloud-init applied the panel's static address and nameserver",
+            script: ctx => {
+                const net = ctx.staticNetwork
+                if (!net) return 'exit 0'
+                return `rc=0
+ip -6 -o addr show | grep -qwF '${net.ip6}' || {
+  echo 'static address ${net.ip6} is not configured:'
+  ip -6 -o addr show
+  rc=1
+}
+# glibc reads only the first three nameserver lines. el8/el9 images once
+# shipped the build network's resolv.conf, cloud-init appended the panel's
+# server as the fourth, and every lookup on the clone timed out while the
+# server was "in the file". With resolved, the per-link list is what counts.
+used=$( { awk '$1 == "nameserver" && ++n <= 3 {print $2}' /etc/resolv.conf; resolvectl dns 2>/dev/null; } )
+printf '%s\n' "$used" | grep -qwF '${net.nameserver}' || {
+  echo 'nameserver ${net.nameserver} is not among the resolvers in use:'
+  cat /etc/resolv.conf
+  resolvectl dns 2>/dev/null
+  rc=1
+}
+exit $rc`
+            },
             severity: 'fail',
             phase: 'first-boot',
         },
@@ -252,6 +412,33 @@ echo "disk=/dev/$disk total=$total partitioned=$used unallocated=$free"
     df -h /
     exit 1
 }`,
+            severity: 'fail',
+            phase: 'first-boot',
+        },
+        {
+            // Every Linux image boots under SeaBIOS, which its profile asks
+            // for, and under OVMF with Secure Boot, which a consumer can move a
+            // clone to (`cf verify --firmware ovmf`). The guest agent
+            // answering already proves the boot; this proves it was the
+            // firmware the run asked for, with Secure Boot enforcing rather
+            // than off, and that the ESP mounts either way, since a broken
+            // fstab line for it fails only the boot that needs it.
+            id: 'boot-firmware',
+            description: 'booted under the requested firmware, ESP mounted',
+            script: ctx => {
+                const firmware =
+                    ctx.firmware === 'ovmf'
+                        ? `[ -d /sys/firmware/efi ] || { echo 'booted without UEFI: /sys/firmware/efi is missing'; exit 1; }
+# The variable's 4 attribute bytes, then 1 = Secure Boot enforcing.
+sb=$(od -An -tu1 -j4 -N1 /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c 2>/dev/null | tr -d ' ')
+[ "$sb" = 1 ] || { echo "Secure Boot is not enforcing (SecureBoot=\${sb:-unreadable})"; exit 1; }
+echo 'UEFI, Secure Boot enforcing'`
+                        : `[ ! -d /sys/firmware/efi ] || { echo 'booted under UEFI, but the run asked for SeaBIOS'; exit 1; }
+echo 'BIOS'`
+                return `${firmware}
+fs=$(findmnt -n -o FSTYPE /boot/efi 2>/dev/null || true)
+[ "$fs" = vfat ] || { echo "the ESP is not mounted at /boot/efi (found: \${fs:-nothing})"; grep -w /boot/efi /etc/fstab; exit 1; }`
+            },
             severity: 'fail',
             phase: 'first-boot',
         },

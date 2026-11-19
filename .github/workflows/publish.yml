@@ -1,6 +1,6 @@
-# Called by build.yml and check-upstream.yml after a build, and dispatchable on
-# its own to republish without building — after objects were removed from R2,
-# say, so the registry stops pointing at them.
+# Called by build.yml, check-upstream.yml and rebuild-changed.yml after a build,
+# and dispatchable on its own to republish without building — after objects
+# were removed from R2, say, so the registry stops pointing at them.
 name: "Publish registry"
 
 on:

@@ -6,6 +6,21 @@ import { fetchWithRetry } from '@/util.ts'
 const CHECKSUMS_FILE = fileURLToPath(
     new URL('../upstream-checksums.json', import.meta.url)
 )
+const REGISTRY_FILE = fileURLToPath(
+    new URL('../registry.json', import.meta.url)
+)
+
+/**
+ * How old a published template may get before `cf check` asks for a rebuild
+ * with nothing changed upstream.
+ *
+ * An ISO changes a few times a year; the packages on it change every week. A
+ * template rebuilt only when its ISO moved shipped months-old packages and
+ * left every clone to download them on first boot, while the distros publish
+ * fresh cloud images at least monthly. Windows gains the month's cumulative
+ * update the same way.
+ */
+export const MAX_TEMPLATE_AGE_DAYS = 30
 
 interface UpstreamState {
     lastModified?: string
@@ -32,6 +47,8 @@ export interface CheckResult {
     name: string
     changed: boolean
     error?: string
+    /** Why an unchanged ISO still needs a build: the template is too old, or was never published. */
+    stale?: string
 }
 
 /**
@@ -92,6 +109,72 @@ const fetchState = async (url: string): Promise<UpstreamState> => {
         contentLength: res.headers.get('content-length') ?? undefined,
         etag: res.headers.get('etag') ?? undefined,
     }
+}
+
+/** `built_at` per recipe name from the published registry. */
+export const publishedBuildTimes = (registry: unknown): Map<string, Date> => {
+    const times = new Map<string, Date>()
+    const groups = (registry as { groups?: unknown[] })?.groups ?? []
+    for (const group of groups) {
+        const templates = (group as { templates?: unknown[] })?.templates ?? []
+        for (const t of templates as {
+            name?: string
+            arch?: string
+            built_at?: string
+        }[]) {
+            if (!t.name || !t.built_at) continue
+            const recipe =
+                t.arch && t.name.endsWith(`-${t.arch}`)
+                    ? t.name.slice(0, -(t.arch.length + 1))
+                    : t.name
+            const at = new Date(t.built_at)
+            if (!Number.isNaN(at.getTime())) times.set(recipe, at)
+        }
+    }
+    return times
+}
+
+/**
+ * Mark recipes whose ISO did not change but whose published template is older
+ * than `maxAgeDays`, or that have never been published, as needing a build.
+ * Errors and synthetic entries are left alone.
+ */
+export const markStale = (
+    results: CheckResult[],
+    builtAt: Map<string, Date>,
+    now: Date,
+    maxAgeDays: number = MAX_TEMPLATE_AGE_DAYS
+): CheckResult[] => {
+    const synthetic = new Set(SYNTHETIC_RECIPES.map(recipe => recipe.name))
+    return results.map(r => {
+        if (r.changed || r.error || synthetic.has(r.name)) return r
+        const at = builtAt.get(r.name)
+        if (!at) return { ...r, changed: true, stale: 'never published' }
+        const days = Math.floor((now.getTime() - at.getTime()) / 86_400_000)
+        return days > maxAgeDays
+            ? { ...r, changed: true, stale: `built ${days} days ago` }
+            : r
+    })
+}
+
+/**
+ * Build times from the committed registry, or `undefined` when there is no
+ * registry to go by. An unreadable or empty registry must not read as "every
+ * template is unpublished": that would rebuild all of them, Windows included,
+ * on the next scheduled run.
+ */
+export const loadPublishedBuildTimes = async (): Promise<
+    Map<string, Date> | undefined
+> => {
+    let raw: string
+    try {
+        raw = await readFile(REGISTRY_FILE, 'utf8')
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+        throw err
+    }
+    const times = publishedBuildTimes(JSON.parse(raw))
+    return times.size > 0 ? times : undefined
 }
 
 export const hasChanged = (

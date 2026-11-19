@@ -24,6 +24,9 @@ export type CheckPhase = 'first-boot' | 'post-reboot' | 'post-logon'
 
 export type GuestShell = 'sh' | 'powershell'
 
+/** Proxmox's `bios` values. */
+export type Firmware = 'seabios' | 'ovmf'
+
 /**
  * Sentinel values verify injects through cloud-init, so checks can assert the
  * guest actually consumed them rather than merely booted.
@@ -43,6 +46,17 @@ export interface CheckContext {
      * the root volume" is an observable event, not an assumption.
      */
     minRootBytes: number
+    /**
+     * Linux only: the static IPv6 address and nameserver verify gives the
+     * clone beside DHCP, the way the panel configures a VM's network.
+     */
+    staticNetwork?: { ip6: string; nameserver: string }
+    /**
+     * The firmware the clone was started under: the profile's own, or OVMF
+     * when `cf verify --firmware ovmf` moves a SeaBIOS template to UEFI with
+     * Secure Boot.
+     */
+    firmware: Firmware
     /**
      * The build's Windows admin/WinRM password when verify could recover it
      * from the node's vars file. When set, the plaintext-leak check greps for

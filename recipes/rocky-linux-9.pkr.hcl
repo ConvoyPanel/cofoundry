@@ -3,10 +3,12 @@
 # build_vmid: 5001
 # min_cores: 1
 # min_memory: 2048
-# iso_url: https://download.rockylinux.org/pub/rocky/9/isos/x86_64/Rocky-9.8-x86_64-minimal.iso
-# iso_target_path: ${var.iso_cache_dir}/packer-Rocky-9.8-x86_64-minimal.iso
+# iso_url: https://download.rockylinux.org/pub/rocky/9/isos/x86_64/Rocky-9.9-x86_64-minimal.iso
+# iso_target_path: ${var.iso_cache_dir}/packer-Rocky-9.9-x86_64-minimal.iso
 # iso_checksum_url: https://download.rockylinux.org/pub/rocky/9/isos/x86_64/CHECKSUM
 # iso_filename_re: Rocky-9\.\d+-x86_64-minimal\.iso
+# iso_signing_key: rocky-linux-9
+# iso_checksum_sig: CHECKSUM.asc
 packer {
   required_plugins {
     proxmox = {
@@ -138,8 +140,8 @@ source "proxmox-iso" "rocky-linux-9" {
 
   boot_iso {
     type         = "ide"
-    iso_file     = "${var.proxmox_iso_storage_pool}:iso/packer-Rocky-9.8-x86_64-minimal.iso"
-    iso_checksum = "sha256:d338032cd1cdd41c67139f2f71b4c832c8e4a21943106519db9c7137df7a63d4"
+    iso_file     = "${var.proxmox_iso_storage_pool}:iso/packer-Rocky-9.9-x86_64-minimal.iso"
+    iso_checksum = "sha256:56772c6c07464ea8e55b64cb5ec2448d16e1b4673b8041678dacfd540131401c"
     unmount      = true
   }
 
@@ -171,62 +173,37 @@ build {
       "sudo timeout 180 cloud-init status --wait || true",
       "echo '==> Updating packages'",
       "sudo dnf -y update",
-      "echo '==> Removing unused packages'",
       "sudo dnf -y autoremove",
-      "echo '==> Cleaning package cache'",
-      "sudo dnf -y clean all",
     ]
   }
 
-  # RHEL ships qemu-guest-agent with guest-exec denied, which fails the build
-  # smoke test's reboot-and-verify. Enable it here, after 'dnf update', so a
-  # guest-agent package refresh cannot revert the change.
-  provisioner "file" {
-    source      = "${path.root}/_shared/post/enable-guest-exec.sh"
-    destination = "/tmp/enable-guest-exec.sh"
-  }
-
-  provisioner "shell" {
-    inline = ["sudo bash /tmp/enable-guest-exec.sh"]
-  }
-
-  provisioner "file" {
-    source      = "${path.root}/_shared/cloud-init-cleanup.sh"
-    destination = "/tmp/cloud-init-cleanup.sh"
-  }
-
-  provisioner "shell" {
-    inline = ["sudo bash /tmp/cloud-init-cleanup.sh"]
-  }
-
-  provisioner "file" {
-    source      = "${path.root}/_shared/cloud-init/99-pve.cfg"
-    destination = "/tmp/99-pve.cfg"
-  }
-
-  provisioner "shell" {
-    inline = [
-      "sudo install -m 0644 /tmp/99-pve.cfg /etc/cloud/cloud.cfg.d/99-pve.cfg",
-      "sudo sync",
-    ]
-  }
-
-  provisioner "shell" {
-    inline = [
-      "echo '==> Verifying cloud-init is enabled for the final image'",
-      "sudo systemctl is-enabled cloud-init-local cloud-init cloud-config cloud-final",
-      "test ! -e /etc/cloud/cloud-init.disabled",
-      "! grep -qw 'cloud-init=disabled' /proc/cmdline || { echo 'cloud-init=disabled is set on the kernel cmdline' >&2; exit 1; }",
-      "cloud-init --version",
-      "test -s /etc/cloud/cloud.cfg",
-      "grep -qx 'datasource_list: \\[ConfigDrive, NoCloud\\]' /etc/cloud/cloud.cfg.d/99-pve.cfg",
-    ]
-  }
-
+  # Boot the upgraded kernel. finalize.sh removes every other kernel, which
+  # apt and dnf refuse to do to the running one, and the build proves the new
+  # kernel boots before anything is exported from it.
   provisioner "shell" {
     expect_disconnect = true
-    skip_clean        = true
-    inline            = ["sudo bash -c 'rm -f /etc/sudoers.d/packer /etc/sudoers.d/wheel; userdel --remove --force packer' || true"]
+    inline            = ["sudo systemctl reboot"]
+  }
+
+  provisioner "shell" {
+    pause_before        = "20s"
+    start_retry_timeout = "10m"
+    inline              = ["mkdir -p /tmp/cofoundry"]
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/_shared/linux/"
+    destination = "/tmp/cofoundry/"
+  }
+
+  # Cleanup, the cloud-init config, the leftover checks and the build user's
+  # removal all happen in finalize.sh. It leaves the disk read-only and the VM
+  # powering itself off, so nothing a shutdown writes reaches the image. No
+  # expect_disconnect: a connection lost partway must fail the build. See the
+  # script's header.
+  provisioner "shell" {
+    skip_clean = true
+    inline     = ["sudo bash /tmp/cofoundry/finalize.sh"]
   }
 
   post-processor "shell-local" {

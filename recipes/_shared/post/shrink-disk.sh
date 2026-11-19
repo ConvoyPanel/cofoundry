@@ -19,14 +19,21 @@ shrink_disk() {
   echo "==> shrink: ensuring VM $vmid is stopped before resizing"
   _pve "qm stop '$vmid' --skiplock 1 >/dev/null 2>&1 || true"
   # qemu can hold the image open briefly after stop; wait for 'stopped' so
-  # qemu-img isn't fighting a live writer.
-  local i
+  # qemu-img isn't fighting a live writer. Resizing under a running VM is not
+  # something to attempt and hope: refuse if it never stops.
+  local i stopped=0
   for i in $(seq 1 30); do
     if _pve "qm status '$vmid' 2>/dev/null | grep -q 'status: stopped'"; then
+      stopped=1
       break
     fi
     sleep 2
   done
+  if [ "$stopped" != 1 ]; then
+    echo "shrink: VM $vmid is still not stopped after 60s -- refusing to resize its disk"
+    _pve "qm status '$vmid' 2>&1 || true"
+    return 1
+  fi
 
   echo "==> shrink: resolving scsi0 disk for VM $vmid"
   local volid path
@@ -43,6 +50,23 @@ shrink_disk() {
   if ! _pve "qemu-img info --output=json '$path' 2>/dev/null | grep -q '\"format\": \"qcow2\"'"; then
     echo "shrink: $path is not qcow2 — refusing to shrink"; return 1
   fi
+
+  # The guest shrank its last partition (Finalize.ps1), and throws if it
+  # cannot. Check the result from here as well: a resize below the end of a
+  # partition truncates the filesystem, and the image would still boot far
+  # enough to look fine. The head of the disk holds the partition table.
+  echo "==> shrink: checking every partition ends inside $target"
+  local head
+  head=$(_pve "mktemp")
+  if ! _pve "qemu-img dd -f qcow2 -O raw bs=1M count=1 if='$path' of='$head' >/dev/null"; then
+    _pve "rm -f '$head'"
+    echo "shrink: could not read the partition table of $path"; return 1
+  fi
+  if ! _pve "python3 - '$head' '$target'" <"$SCRIPT_DIR/partition-end.py"; then
+    _pve "rm -f '$head'"
+    echo "shrink: a partition on $path ends beyond $target -- refusing to shrink"; return 1
+  fi
+  _pve "rm -f '$head'"
 
   # Packer converts the VM to a template before this post-processor runs, and
   # Proxmox sets the immutable bit (chattr +i) on template disks — so qemu-img

@@ -6,6 +6,8 @@ import {
     checkRecipes,
     classifyCheckResults,
     hasChanged,
+    markStale,
+    publishedBuildTimes,
 } from '../src/upstream.ts'
 
 describe('hasChanged', () => {
@@ -195,5 +197,69 @@ describe('classifyCheckResults', () => {
 
         expect(report.buildable).toEqual([])
         expect(report.errors).toHaveLength(1)
+    })
+})
+
+describe('template age', () => {
+    const registry = {
+        groups: [
+            {
+                templates: [
+                    {
+                        name: 'debian-13-amd64',
+                        arch: 'amd64',
+                        built_at: '2026-10-01T00:00:00Z',
+                    },
+                    {
+                        name: 'ubuntu-24.04-amd64',
+                        arch: 'amd64',
+                        built_at: '2026-11-14T00:00:00Z',
+                    },
+                ],
+            },
+        ],
+    }
+    const now = new Date('2026-11-16T00:00:00Z')
+    const builtAt = publishedBuildTimes(registry)
+
+    test('maps registry templates back to recipe names', () => {
+        expect([...builtAt.keys()].sort()).toEqual([
+            'debian-13',
+            'ubuntu-24.04',
+        ])
+    })
+
+    test('a template past the age limit needs a build with no upstream change', () => {
+        const [debian, ubuntu] = markStale(
+            [
+                { name: 'debian-13', changed: false },
+                { name: 'ubuntu-24.04', changed: false },
+            ],
+            builtAt,
+            now
+        )
+        expect(debian).toEqual({
+            name: 'debian-13',
+            changed: true,
+            stale: 'built 46 days ago',
+        })
+        expect(ubuntu).toEqual({ name: 'ubuntu-24.04', changed: false })
+    })
+
+    test('a recipe never published needs a build', () => {
+        expect(
+            markStale([{ name: 'rocky-linux-9', changed: false }], builtAt, now)
+        ).toEqual([
+            { name: 'rocky-linux-9', changed: true, stale: 'never published' },
+        ])
+    })
+
+    test('errors and synthetic downloads are never turned into builds', () => {
+        const errored = { name: 'debian-13', changed: false, error: 'HTTP 404' }
+        const synthetic = { name: SYNTHETIC_RECIPES[0]!.name, changed: false }
+        expect(markStale([errored, synthetic], builtAt, now)).toEqual([
+            errored,
+            synthetic,
+        ])
     })
 })

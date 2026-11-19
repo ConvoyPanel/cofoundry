@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import {
     autologonScript,
     cloudInitSetCommand,
+    verifyStaticNetwork,
     parseDiskSize,
     sentinelHostname,
     sentinelPassword,
@@ -113,6 +114,22 @@ describe('cloudInitSetCommand', () => {
         const cmd = cloudInitSetCommand(9500, 'cfv-ab12', 'Administrator', 'pw')
         expect(cmd).not.toContain('--sshkeys')
         expect(cmd).toContain('--ipconfig0 ip=dhcp')
+        expect(cmd).not.toContain('--nameserver')
+    })
+
+    test('gives a Linux clone a static address and nameserver beside DHCP', () => {
+        // cloud-init attaches nameservers only to statically addressed
+        // interfaces, so DHCP alone never tests the panel's DNS.
+        const cmd = cloudInitSetCommand(
+            9500,
+            'cfv-ab12',
+            'cfverify',
+            'pw',
+            '/tmp/verify.pub',
+            { ip6: 'fd5e:cf0:7e57::2', nameserver: '9.9.9.9' }
+        )
+        expect(cmd).toContain("--ipconfig0='ip=dhcp,ip6=fd5e:cf0:7e57::2/64'")
+        expect(cmd).toContain("--nameserver='9.9.9.9'")
     })
 })
 
@@ -224,5 +241,16 @@ describe('rebootGuest boot-id baseline', () => {
         expect(guest).toMatch(/BOOT_ID_ATTEMPTS\s*=\s*[2-9]/)
         const fn = guest.slice(guest.indexOf('export const rebootGuest'))
         expect(fn).toMatch(/attempt <= BOOT_ID_ATTEMPTS/)
+    })
+})
+
+describe('verifyStaticNetwork', () => {
+    test('gives every clone its own address', () => {
+        // Two verify VMs holding one address fail IPv6 duplicate-address
+        // detection and boot degraded waiting for the network.
+        expect(verifyStaticNetwork(9500).ip6).not.toBe(
+            verifyStaticNetwork(9501).ip6
+        )
+        expect(verifyStaticNetwork(9500).ip6).toBe('fd5e:cf0:7e57::251c')
     })
 })

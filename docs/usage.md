@@ -83,6 +83,7 @@ budgets are still preferable when other workloads share the node.
 cf verify ubuntu-24.04
 cf verify windows-server-2025 --level quick   # import + boot + agent ping only
 cf verify debian-12 --ci                      # suppress framebuffer captures
+cf verify rocky-linux-9 --firmware ovmf       # boot the clone under UEFI + Secure Boot
 ```
 
 `cf verify` rebuilds a VM from the **published sidecar** onto a scratch VMID —
@@ -92,7 +93,11 @@ it the way a user's clone is exercised, rather than merely booting it:
 1. **Cloud-init is actually configured.** A sentinel hostname, user, generated
    password, and generated SSH key are injected, and the disk is grown beyond its
    shipped size. Booting the template untouched leaves the cloud-init drive empty,
-   so nothing cloud-init is supposed to apply gets exercised at all.
+   so nothing cloud-init is supposed to apply gets exercised at all. A Linux
+   clone also gets a static IPv6 address beside DHCP and a nameserver
+   (`9.9.9.9`) the build bridge never hands out, because cloud-init attaches
+   a panel's nameservers only to a statically addressed interface; a DHCP-only
+   clone never exercises the path Convoy's static addresses take.
 2. **In-guest checks run over `qm guest exec`**, in phases: first boot, again
    after a clean reboot, and on Windows after an autologon has painted a desktop.
    The agent answering is the _entry condition_, not the result — it starts early
@@ -118,6 +123,13 @@ lines there and needs no change to the runner. Each check declares a severity:
 `--ci` exists because framebuffer captures are unredactable images and must never
 land in a public repo.
 
+`--firmware ovmf` boots a SeaBIOS template's clone under OVMF instead, with a
+freshly allocated variable store that has Proxmox's Microsoft keys enrolled:
+Secure Boot enforces and there is no boot entry, which is what a consumer who
+switches a clone to UEFI gets. Every Linux image must pass this as well as the
+default run; see [BIOS and UEFI boot](recipes.md#bios-and-uefi-boot). An OVMF
+template cannot be verified under SeaBIOS.
+
 ## Check for upstream ISO changes
 
 Fetches `Last-Modified`/`ETag` from each recipe's upstream ISO URL and compares
@@ -130,9 +142,28 @@ cf check debian-12 # one recipe
 cf check --json    # changed recipe names as JSON, for CI
 ```
 
+A recipe whose ISO did not change still needs a build when its published
+template (`built_at` in `registry.json`) is more than 30 days old, or has never
+been published. ISOs change a few times a year and packages every week, and the
+distros refresh their own cloud images at least monthly; so the weekly check
+rebuilds each template about once a month even with no new ISO.
+
 `--json` lists only recipes CI can build. Pinned third-party downloads
 (`virtio-win`) are checked too, but they have no `.pkr.hcl`, so drift in one is
 reported on stderr for a maintainer to act on rather than handed to a build.
+
+## Update ISO pins
+
+```sh
+cf update             # every recipe with a checksum URL
+cf update debian-13   # one recipe
+```
+
+Finds the newest ISO matching each recipe's `# iso_filename_re` in the vendor's
+checksum file, verifies the file's signature against the recipe's
+`# iso_signing_key`, and rewrites the recipe's ISO URL, cached file name and
+pinned SHA256. Builds check the downloaded ISO against that pin. See
+[ISO pins](recipes.md#iso-pins).
 
 ## Publish a manifest
 
@@ -329,9 +360,10 @@ from a published registry onto any Proxmox node, see [Coport](coport.md).
 
 ## GitHub Actions
 
-Three workflows are things you start. The rest are `workflow_call`-only callees,
-named `[internal] …` so the Actions sidebar — which lists every workflow file and
-cannot hide a callee — does not imply buttons that do not exist.
+Three workflows are things you start, and one starts itself on merges. The rest
+are `workflow_call`-only callees, named `[internal] …` so the Actions sidebar —
+which lists every workflow file and cannot hide a callee — does not imply buttons
+that do not exist.
 Their runs nest under whichever workflow called them, which is also why they show
 no run history of their own.
 
@@ -344,6 +376,13 @@ no run history of their own.
   checksum and is retried next run.
 - **`build.yml`** ("Build template") — manual one-recipe entry point. A thin
   orchestrator over `build-one.yml`, `publish.yml`, and `prune-node.yml`.
+- **`rebuild-changed.yml`** ("Rebuild changed recipes") — runs on every push
+  to `main` that touches `recipes/` or `scripts/inject-placeholders.sh`, and
+  builds, verifies and publishes the recipes the push changed (`cf affected
+  <base> <head>`: a recipe's own files rebuild it, `_shared/linux/` every Linux
+  recipe, `_shared/windows/` every Windows one, `_shared/post/` and the
+  placeholder script all of them). A merged recipe fix therefore reaches the
+  CDN without waiting for a new ISO or a forced dispatch.
 - **`publish.yml`** ("Publish registry") — globally serialized registry writer
   and R2 finalizer. Both workflows above call it after building; dispatch it
   directly to republish without a build, such as after deleting a retired

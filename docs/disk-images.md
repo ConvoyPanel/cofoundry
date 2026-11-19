@@ -75,7 +75,10 @@ that wants Proxmox to own the fetch (a shared import store serving a cluster).
 | `<name>-<arch>.json`                 | all       | sidecar (schema 2)                                 |
 
 Linux recipes are `bios: seabios` and emit no varstore, so the sidecar describes
-disks as a list rather than fixed fields.
+disks as a list rather than fixed fields. Their disks boot under OVMF as well,
+with Secure Boot, from a freshly allocated variable store: a consumer who wants
+UEFI sets `--bios ovmf` and adds `--efidisk0 <storage>:1,efitype=4m,pre-enrolled-keys=1`
+(see [BIOS and UEFI boot](recipes.md#bios-and-uefi-boot)).
 
 **The varstore ships verbatim** because it holds three things a freshly allocated
 one does not have: the boot entry Windows Setup wrote (`Boot0000` →

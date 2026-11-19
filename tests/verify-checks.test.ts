@@ -1,12 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CheckContext, GuestCheck } from '@/verify/checks/types.ts'
 import { checksForPhase, renderScript } from '@/verify/checks/types.ts'
 import { linuxSuite, sshKeyBody } from '@/verify/checks/linux.ts'
 import { windowsSuite } from '@/verify/checks/windows.ts'
+import { bashPath } from './bash-path.ts'
 import {
     isWindowsRecipe,
     mergeChecks,
@@ -22,6 +23,7 @@ const ctx: CheckContext = {
         'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyBody test@host',
     minRootBytes: 34_359_738_368,
     buildPassword: "bu'ild-pw",
+    firmware: 'seabios',
 }
 
 const recipe = (name: string): RecipeInfo => ({
@@ -177,6 +179,90 @@ describe('linux checks', () => {
         expect(script).toContain('getent passwd packer')
         expect(script).toContain('/home/packer')
         expect(script).toContain('/etc/sudoers.d/')
+    })
+
+    test('no-build-user fails on a NOPASSWD grant that never names packer', () => {
+        // The kickstarts grant `%wheel ALL=(ALL) NOPASSWD:ALL` in their own
+        // file. A check that searched for "packer" passed with it still there.
+        const root = mkdtempSync(join(tmpdir(), 'cf-sudoers-'))
+        try {
+            mkdirSync(join(root, 'etc/sudoers.d'), { recursive: true })
+            writeFileSync(
+                join(root, 'etc/sudoers'),
+                'root ALL=(ALL) ALL\n# %wheel ALL=(ALL) NOPASSWD: ALL\n'
+            )
+            // cloud-init writes this for the users it creates on the clone.
+            writeFileSync(
+                join(root, 'etc/sudoers.d/90-cloud-init-users'),
+                'root ALL=(ALL) NOPASSWD:ALL\n'
+            )
+            // Every path the check reads points into the temp root, the user
+            // lookup included: CI runner images can have a real `packer` user.
+            const fake = bashPath(root)
+            const script = renderScript(
+                linuxSuite.checks.find(c => c.id === 'no-build-user')!,
+                ctx
+            )
+                .replaceAll('/etc/sudoers', `${fake}/etc/sudoers`)
+                .replaceAll('/home/packer', `${fake}/home/packer`)
+                .replace(
+                    'getent passwd packer',
+                    `grep -qs '^packer:' ${fake}/etc/passwd`
+                )
+            const run = () =>
+                spawnSync('sh', ['-c', script], { encoding: 'utf8' })
+
+            expect(run().status).toBe(0)
+
+            writeFileSync(
+                join(root, 'etc/sudoers.d/wheel'),
+                '%wheel ALL=(ALL) NOPASSWD:ALL\n'
+            )
+            const leaked = run()
+            expect(leaked.status).toBe(1)
+            expect(leaked.stdout).toContain('sudoers.d/wheel')
+        } finally {
+            rmSync(root, { recursive: true, force: true })
+        }
+    })
+
+    test('static-network-applied fails when the panel nameserver is past the third', () => {
+        // el8/el9 images shipped the build's three resolvers; cloud-init
+        // appended the panel's as the fourth, which glibc never reads.
+        const dir = mkdtempSync(join(tmpdir(), 'cf-resolv-'))
+        try {
+            const script = renderScript(
+                linuxSuite.checks.find(c => c.id === 'static-network-applied')!,
+                {
+                    ...ctx,
+                    staticNetwork: {
+                        ip6: 'fd5e:cf0:7e57::2',
+                        nameserver: '9.9.9.9',
+                    },
+                }
+            )
+                .replaceAll(
+                    '/etc/resolv.conf',
+                    bashPath(join(dir, 'resolv.conf'))
+                )
+                // The address half needs a real guest; only DNS is under test.
+                .replace(/^ip -6 .*$/m, 'true || {')
+            const run = (resolv: string) => {
+                writeFileSync(join(dir, 'resolv.conf'), resolv)
+                return spawnSync('sh', ['-c', script], { encoding: 'utf8' })
+            }
+            expect(
+                run(
+                    'nameserver 10.10.10.1\nnameserver 2606:4700:4700::1111\n' +
+                        'nameserver 2001:4860:4860::8888\nnameserver 9.9.9.9\n'
+                ).status
+            ).toBe(1)
+            expect(
+                run('nameserver 9.9.9.9\nnameserver 10.10.10.1\n').status
+            ).toBe(0)
+        } finally {
+            rmSync(dir, { recursive: true, force: true })
+        }
     })
 
     test('first-boot-only checks are not repeated post-reboot', () => {
@@ -340,4 +426,35 @@ exit $fail`
         },
         30000
     )
+})
+
+describe('boot firmware check', () => {
+    const check = linuxSuite.checks.find(c => c.id === 'boot-firmware')!
+
+    test('asks OVMF clones for UEFI with Secure Boot enforcing', () => {
+        const script = renderScript(check, { ...ctx, firmware: 'ovmf' })
+        expect(script).toContain('[ -d /sys/firmware/efi ]')
+        expect(script).toContain(
+            'SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c'
+        )
+        expect(script).toContain('[ "$sb" = 1 ]')
+        expect(script).toContain('/boot/efi')
+    })
+
+    test('asks SeaBIOS clones for BIOS, and still for the ESP', () => {
+        const script = renderScript(check, ctx)
+        expect(script).toContain('[ ! -d /sys/firmware/efi ]')
+        expect(script).not.toContain('SecureBoot')
+        expect(script).toContain('/boot/efi')
+    })
+
+    test('both renderings are valid sh', () => {
+        for (const firmware of ['seabios', 'ovmf'] as const) {
+            const run = spawnSync('sh', ['-n'], {
+                input: renderScript(check, { ...ctx, firmware }),
+                encoding: 'utf8',
+            })
+            expect(run.status, `${firmware}: ${run.stderr}`).toBe(0)
+        }
+    })
 })

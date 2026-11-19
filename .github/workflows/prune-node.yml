@@ -1,5 +1,5 @@
-# `workflow_call` only — see the note in build-one.yml. Called by build.yml and
-# check-upstream.yml.
+# `workflow_call` only — see the note in build-one.yml. Called by build.yml,
+# check-upstream.yml and rebuild-changed.yml.
 name: "[internal] Prune build node"
 
 on:

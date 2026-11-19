@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -206,13 +207,19 @@ describe('recipe consistency', () => {
 
     test('RHEL-family recipes enable the guest-exec RPC after updating packages', () => {
         // RHEL ships qemu-guest-agent with guest-exec denied, which fails the
-        // build smoke test's reboot-and-verify (src/verify/guest.ts). Every
-        // almalinux/rocky recipe must run the shared enabler, and it must run
-        // after `dnf update`, which can otherwise rewrite the config back to
-        // the shipped defaults. Debian/Ubuntu permit guest-exec by default and
-        // are deliberately excluded.
-        const script = join(recipesDir, '_shared/post/enable-guest-exec.sh')
-        expect(existsSync(script)).toBe(true)
+        // build smoke test's reboot-and-verify (src/verify/guest.ts). finalize.sh
+        // runs the shared enabler on the RHEL family, and every almalinux/rocky
+        // recipe must run finalize.sh after `dnf update`, which can otherwise
+        // rewrite the config back to the shipped defaults. Debian/Ubuntu permit
+        // guest-exec by default.
+        const finalize = readFileSync(
+            join(recipesDir, '_shared/linux/finalize.sh'),
+            'utf8'
+        )
+        expect(finalize).toContain('bash "$here/enable-guest-exec.sh"')
+        expect(
+            existsSync(join(recipesDir, '_shared/linux/enable-guest-exec.sh'))
+        ).toBe(true)
 
         const violations: string[] = []
         const rhelFamilies = ['almalinux', 'rocky-linux']
@@ -221,19 +228,87 @@ describe('recipe consistency', () => {
         )
         expect(members.length).toBeGreaterThan(0)
         for (const recipe of members) {
-            const enableAt = recipe.raw.indexOf(
-                '_shared/post/enable-guest-exec.sh'
-            )
-            if (enableAt === -1) {
+            const finalizeAt = recipe.raw.indexOf('/tmp/cofoundry/finalize.sh')
+            const updateAt = recipe.raw.indexOf('dnf -y update')
+            if (finalizeAt === -1 || updateAt === -1 || updateAt > finalizeAt)
                 violations.push(
-                    `${recipe.name}: does not run enable-guest-exec.sh`
+                    `${recipe.name}: finalize.sh must run after 'dnf -y update'`
+                )
+        }
+        expect(violations).toEqual([])
+    })
+
+    test('every Linux recipe reboots after updating, then ends with finalize.sh', () => {
+        // finalize.sh removes every kernel but the running one, so the build
+        // must be running the upgraded kernel; and it deletes the build user
+        // and powers the VM off, so it is the last provisioner and Packer must
+        // not try to clean up after it. See the header of
+        // recipes/_shared/linux/finalize.sh.
+        const violations: string[] = []
+        const linux = recipes.filter(r => !r.name.startsWith('windows-'))
+        expect(linux.length).toBeGreaterThan(0)
+        for (const recipe of linux) {
+            const provisioners = recipe.raw
+                .split(/\n  (?=provisioner ")/)
+                .slice(1)
+            const last = provisioners.at(-1) ?? ''
+            if (!last.includes('sudo bash /tmp/cofoundry/finalize.sh'))
+                violations.push(
+                    `${recipe.name}: last provisioner is not finalize.sh`
+                )
+            // A lost connection must fail the build, not pass as the
+            // power-off: finalize.sh exits 0 before powering off.
+            if (/expect_disconnect\s*=\s*true/.test(last))
+                violations.push(
+                    `${recipe.name}: finalize.sh must not set expect_disconnect`
+                )
+            if (!/skip_clean\s*=\s*true/.test(last))
+                violations.push(`${recipe.name}: finalize.sh needs skip_clean`)
+            const rebootAt = recipe.raw.indexOf('"sudo systemctl reboot"')
+            const upgradeAt = Math.max(
+                recipe.raw.indexOf('dist-upgrade'),
+                recipe.raw.indexOf('dnf -y update')
+            )
+            if (rebootAt === -1 || upgradeAt === -1 || rebootAt < upgradeAt)
+                violations.push(
+                    `${recipe.name}: no reboot after the package upgrade`
+                )
+            if (!recipe.raw.includes('"${path.root}/_shared/linux/"'))
+                violations.push(
+                    `${recipe.name}: does not upload _shared/linux/`
+                )
+        }
+        expect(violations).toEqual([])
+    })
+
+    test('every kickstart parses under its RHEL release', () => {
+        // el8's parser rejects `%packages --exclude-weakdeps` (it knows only
+        // --excludeWeakdeps), and anaconda then sits at the parse error until
+        // Packer's 35-minute SSH timeout. ksvalidator catches that offline.
+        // CI installs it; a machine without it skips.
+        const ksvalidator = spawnSync('sh', ['-c', 'command -v ksvalidator'], {
+            encoding: 'utf8',
+        }).stdout.trim()
+        if (!ksvalidator) return
+        const violations: string[] = []
+        for (const recipe of recipes) {
+            const path = join(recipesDir, recipe.name, 'http', 'ks.cfg')
+            if (!existsSync(path)) continue
+            const release = readFileSync(path, 'utf8').match(
+                /^#version=(RHEL\d+)/m
+            )?.[1]
+            if (!release) {
+                violations.push(
+                    `${recipe.name}: ks.cfg has no #version=RHELn line`
                 )
                 continue
             }
-            const updateAt = recipe.raw.indexOf('dnf -y update')
-            if (updateAt === -1 || updateAt > enableAt)
+            const run = spawnSync(ksvalidator, ['-v', release, path], {
+                encoding: 'utf8',
+            })
+            if (run.status !== 0)
                 violations.push(
-                    `${recipe.name}: enable-guest-exec.sh must run after 'dnf -y update'`
+                    `${recipe.name} (${release}): ${(run.stdout + run.stderr).trim()}`
                 )
         }
         expect(violations).toEqual([])
@@ -272,5 +347,153 @@ describe('recipe consistency', () => {
                     )
         }
         expect(violations).toEqual([])
+    })
+})
+
+// Every Linux image boots under SeaBIOS and under OVMF with Secure Boot, the
+// way the official cloud images do: GPT, a BIOS boot partition, a FAT32 EFI
+// system partition, the root last (growpart extends only the last
+// partition), and both GRUBs. The build VM boots under SeaBIOS whatever the
+// UEFI half looks like, so these are checked offline as well as by
+// finalize.sh and `cf verify --firmware ovmf`.
+describe('hybrid BIOS and UEFI boot', () => {
+    const ESP_TYPE = 'C12A7328-F81F-11D2-BA4B-00A0C93EC93B'
+    const payload = (recipe: Recipe, file: string): string => {
+        const path = join(recipesDir, recipe.name, 'http', file)
+        return existsSync(path) ? readFileSync(path, 'utf8') : ''
+    }
+    const family = (group: string): Recipe[] =>
+        recipes.filter(recipe => groupOf(recipe) === group)
+
+    test('Debian preseeds add an ESP and install grub-cloud-amd64', () => {
+        const members = family('debian')
+        expect(members.length).toBeGreaterThan(0)
+        for (const recipe of members) {
+            const preseed = payload(recipe, 'preseed.cfg')
+            const expert = preseed.match(
+                /partman-auto\/expert_recipe string([\s\S]*?)\n[^ ]/
+            )?.[1]
+            expect(expert, recipe.name).toBeDefined()
+            const bios = expert!.indexOf('method{ biosgrub }')
+            const esp = expert!.indexOf('mountpoint{ /boot/efi }')
+            const root = expert!.indexOf('mountpoint{ / }')
+            expect(bios, `${recipe.name}: BIOS boot partition`).toBeGreaterThan(
+                -1
+            )
+            expect(esp, `${recipe.name}: ESP after BIOS boot`).toBeGreaterThan(
+                bios
+            )
+            expect(root, `${recipe.name}: root last`).toBeGreaterThan(esp)
+            expect(expert).toContain('filesystem{ fat32 }')
+            const late =
+                preseed.match(
+                    /preseed\/late_command string([\s\S]*?)\nd-i /
+                )?.[1] ?? ''
+            expect(late).toContain(`sfdisk --part-type /dev/sda 2 ${ESP_TYPE}`)
+            expect(late).toContain('touch /etc/grub.d/enable_cloud')
+            // grub-pc's purge deletes /etc/default/grub, which grub-cloud-amd64
+            // ships as a conffile; the other order stops at a conffile prompt.
+            const purge = late.indexOf('purge grub-pc')
+            expect(purge).toBeGreaterThan(-1)
+            expect(late.indexOf('install grub-cloud-amd64')).toBeGreaterThan(
+                purge
+            )
+            expect(late.indexOf('enable_cloud')).toBeLessThan(
+                late.indexOf('install grub-cloud-amd64')
+            )
+            // trixie's target still lists the netinst CD as an apt source but
+            // no longer has it mounted, and apt waits at "Media change" until
+            // Packer's SSH timeout. The entries go before the install.
+            const cdrom = late.indexOf("sed -i '/^deb cdrom:/s/^/#/'")
+            expect(cdrom).toBeGreaterThan(-1)
+            expect(cdrom).toBeLessThan(late.indexOf('install grub-cloud-amd64'))
+            // in-target's stdin is cdebconf's reply channel: redirecting it
+            // desynchronised debconf and finish-install stopped at its menu.
+            expect(late).not.toMatch(/in-target[^;]*</)
+        }
+    })
+
+    test('Ubuntu autoinstall lays out BIOS boot, ESP and root, and installs signed GRUB', () => {
+        const members = family('ubuntu')
+        expect(members.length).toBeGreaterThan(0)
+        for (const recipe of members) {
+            const { autoinstall } = Bun.YAML.parse(
+                payload(recipe, 'user-data')
+            ) as {
+                autoinstall: {
+                    'packages': string[]
+                    'storage': {
+                        layout?: unknown
+                        config: Record<string, unknown>[]
+                    }
+                    'late-commands': string[]
+                }
+            }
+            const { storage } = autoinstall
+            expect(
+                storage.layout,
+                `${recipe.name}: layouts cannot add an ESP`
+            ).toBeUndefined()
+            const partitions = storage.config.filter(
+                a => a.type === 'partition'
+            )
+            const byFlag = (flag: string) =>
+                partitions.find(p => p.flag === flag)
+            expect(byFlag('bios_grub'), recipe.name).toBeDefined()
+            const esp = byFlag('boot')
+            expect(esp, recipe.name).toBeDefined()
+            const formatOf = (id: unknown) =>
+                storage.config.find(a => a.type === 'format' && a.volume === id)
+            const mountOf = (format: Record<string, unknown> | undefined) =>
+                storage.config.find(
+                    a => a.type === 'mount' && a.device === format?.id
+                )
+            expect(formatOf(esp!.id)?.fstype).toBe('fat32')
+            expect(mountOf(formatOf(esp!.id))?.path).toBe('/boot/efi')
+            const last = partitions.reduce((a, b) =>
+                Number(b.number) > Number(a.number) ? b : a
+            )
+            expect(last.size, `${recipe.name}: root fills the disk`).toBe(-1)
+            expect(mountOf(formatOf(last.id))?.path).toBe('/')
+            expect(
+                storage.config.find(a => a.type === 'disk')?.grub_device
+            ).toBe(true)
+            for (const pkg of ['grub-efi-amd64-signed', 'shim-signed'])
+                expect(autoinstall.packages, recipe.name).toContain(pkg)
+            const late = autoinstall['late-commands'].join('\n')
+            expect(late).toContain(
+                'grub-install --target=x86_64-efi --efi-directory=/boot/efi --uefi-secure-boot --no-nvram'
+            )
+            expect(late).toContain(
+                'grub-efi/cloud_style_installation boolean true'
+            )
+            expect(late).toContain(
+                'grub-pc/cloud_style_installation boolean true'
+            )
+        }
+    })
+
+    test('kickstarts add an ESP, the UEFI packages and its partition type', () => {
+        const members = recipes.filter(recipe =>
+            existsSync(join(recipesDir, recipe.name, 'http', 'ks.cfg'))
+        )
+        expect(members.length).toBeGreaterThan(0)
+        for (const recipe of members) {
+            const ks = payload(recipe, 'ks.cfg')
+            const parts = ks.match(/^part .*$/gm) ?? []
+            expect(
+                parts.map(p => p.split(/\s+/)[1]),
+                recipe.name
+            ).toEqual(['biosboot', '/boot/efi', '/'])
+            expect(parts[1]).toContain('--fstype="vfat"')
+            expect(parts[1]).toContain('--mkfsoptions="-F 32"')
+            expect(parts[2]).toContain('--grow')
+            const packages =
+                ks.match(/^%packages[^\n]*\n([\s\S]*?)^%end/m)?.[1] ?? ''
+            for (const pkg of ['grub2-efi-x64', 'shim-x64'])
+                expect(packages.split('\n'), recipe.name).toContain(pkg)
+            expect(ks).toContain(ESP_TYPE)
+            expect(ks).toContain('gen_grub_cfgstub /boot/grub2')
+        }
     })
 })

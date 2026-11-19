@@ -31,6 +31,7 @@
     "execa": "^9.6.1",
     "figures": "^6.1.0",
     "log-update": "^8.0.0",
+    "openpgp": "^6.3.2",
     "p-queue": "^9.3.0",
     "p-retry": "^8.0.0",
     "picocolors": "^1.1.1",

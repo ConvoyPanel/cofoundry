@@ -35,7 +35,9 @@ Copy the nearest recipe in the same OS family, then update every piece of releas
 identity **together**:
 
 - header metadata: `display`, `group`, `build_vmid`, `min_cores`, `min_memory`,
-  `iso_url`, `iso_target_path`, checksum URL, and filename pattern where present;
+  `iso_url`, `iso_target_path`, checksum URL, filename pattern, and the
+  checksum's signing key and signature where present (see
+  [ISO pins](#iso-pins));
 - the `build_vmid` default and recipe locals;
 - source name, ISO filename, checksum, and unattended-install paths;
 - image/edition name and release-specific drivers;
@@ -73,9 +75,177 @@ temporary build/final shrink design and change the final size only after checkin
 the installed minimum with `qemu-img info --output=json` on the exported image,
 comparing `actual-size` against `virtual-size`.
 
+## ISO pins
+
+A Linux recipe's `iso_checksum = "sha256:…"` is the hash the build checks the
+downloaded ISO against. `cf update` is the only thing that writes it, and only
+from a checksum file signed by the vendor's key:
+
+```
+# iso_checksum_url: https://download.rockylinux.org/pub/rocky/9/isos/x86_64/CHECKSUM
+# iso_filename_re: Rocky-9\.\d+-x86_64-minimal\.iso
+# iso_signing_key: rocky-linux-9
+# iso_checksum_sig: CHECKSUM.asc
+```
+
+`iso_signing_key` names a key under `keys/` (its README lists each fingerprint
+and where it was checked). `iso_checksum_sig` is the detached signature's file
+name next to the checksum file, or `clearsigned` for AlmaLinux's `CHECKSUM`.
+`cf update` refuses a recipe with a checksum URL but no signing key. It builds
+the ISO URL from the checksum URL it asked for, never from where a redirect
+landed.
+
+Vendors move a point release out of the release directory the day the next one
+ships. The prefetch therefore tries the pinned URL and then the vendor's archive
+copy of the same file (`cdimage/archive`, `old-releases.ubuntu.com`,
+`vault.almalinux.org`, `dl.rockylinux.org/vault`), so a superseded pin keeps
+building until someone runs `cf update`. `cf check` still reports the pinned URL
+as an error, which is the prompt to do so.
+
+## Finalizing a Linux image
+
+Every Linux recipe ends the same way: upgrade packages, reboot into the new
+kernel, upload `recipes/_shared/linux/` to `/tmp/cofoundry`, and run
+`finalize.sh` as the last provisioner. Recipes do no cleanup of their own.
+`finalize.sh` does what the distros' own cloud-image builds do, and fails the
+build if any step does not hold:
+
+- removes every kernel but the running one, and on Debian and Ubuntu the
+  bare-metal packages the installers pull in (firmware, microcode, thermald,
+  kdump-tools and the like), each only when apt would remove it alone;
+- removes what the installers leave: kickstart files, `/var/log/installer`,
+  Subiquity's netplan and cloud-init files, d-i's apt and fstab settings, the
+  NetworkManager profiles and leases;
+- installs `99-pve.cfg` and checks cloud-init is enabled and not told to skip
+  networking;
+- checks the effective sshd settings with `sshd -T`, not the files that hold
+  them;
+- strips identity: machine-id, SSH host keys, the random seed, systemd's
+  credential secret, chrony state, the iSCSI initiator name, snapd's device
+  registration, login databases;
+- sets root's password to `*`, removes the build user and its sudo grants, and
+  deletes the shadow-utils backups that still list it;
+- checks the disk boots under BIOS and under UEFI (see
+  [BIOS and UEFI boot](#bios-and-uefi-boot));
+- fails if the build VM's address or gateway appears anywhere under `/etc`,
+  `/var/lib` or `/root`;
+- stops journald and deletes the journal (truncating a file journald holds
+  open ships a corrupt journal, and deleting one it holds keeps its blocks),
+  clears logs, `/tmp` and `/var/tmp`, checks dpkg or rpm has nothing half
+  done, and trims free space.
+
+It then syncs, remounts every filesystem read-only through SysRq and powers off
+from the kernel. A normal shutdown writes after the cleanup has run: systemd
+saves a new random seed marked creditable, wtmp records the shutdown, rsyslog,
+auditd and chrony write their state. The SysRq power-off leaves nothing for them
+to write to. The script remounts read-only, exits 0, and leaves the power-off
+to a detached process three seconds later, so Packer gets a real exit status;
+the recipes deliberately do not set `expect_disconnect`, which would let a
+connection lost halfway through pass as success. Proxmox's shutdown of an
+already-stopped VM succeeds, so Packer's own stop races it harmlessly.
+
 **Run a full build after recipe changes.** HCL syntax alone cannot validate an
 ISO's image names, boot sequence, driver directories, or unattended installer
 schema.
+
+## BIOS and UEFI boot
+
+Every Linux image boots under SeaBIOS and under OVMF with Secure Boot, as the
+official Debian, Ubuntu, AlmaLinux and Rocky cloud images do. The sidecar asks
+for SeaBIOS and ships no variable store; a consumer moves a clone to UEFI with
+`qm set <vmid> --bios ovmf --efidisk0 <storage>:1,efitype=4m,pre-enrolled-keys=1`
+and it boots.
+
+The disk is GPT with three partitions, in this order:
+
+| Partition        | Size              | Type                | Holds                                |
+| ---------------- | ----------------- | ------------------- | ------------------------------------ |
+| BIOS boot        | 1 MiB             | `21686148-…` (EF02) | GRUB's i386-pc core image            |
+| EFI system (ESP) | 106–200 MiB FAT32 | `C12A7328-…` (EF00) | `/boot/efi`: shim, signed GRUB, stub |
+| root             | the rest          | Linux filesystem    | `/`, `/boot` included                |
+
+The root comes last because growpart only extends the last partition. Each
+family's ESP size is its official image's: 128 MB on Debian (what partman makes
+of `128`), 106 MiB on Ubuntu, 200 MiB on AlmaLinux and Rocky.
+
+A clone's new variable store has no boot entry, so OVMF runs the removable
+path, `EFI/BOOT/BOOTX64.EFI`. That is the Microsoft-signed shim, which loads
+the distribution's signed GRUB either from beside itself or, through its
+fallback loader, from the vendor directory it registers. That GRUB reads the
+stub `grub.cfg` in the vendor directory, which finds the root filesystem by
+UUID and hands over to `/boot/grub/grub.cfg` (`/boot/grub2/grub.cfg` on EL),
+the one config both firmwares boot from. Kernel updates therefore reach both.
+
+The installers all run under SeaBIOS, so each family installs GRUB for BIOS the
+usual way and adds the UEFI half itself. The build VM, the sidecar profile and
+the export stay what they were, and the UEFI half is checked rather than
+exercised during the build:
+
+- **Debian** — the partman recipe adds a FAT32 `/boot/efi`. A BIOS-booted
+  installer does not load partman-efi, so `late_command` gives the partition
+  the ESP type with `sfdisk --part-type` and rewrites its fstab line to what
+  partman-efi writes (`umask=0077 0 1`; partman's FAT default is never
+  checked at boot). It then purges `grub-pc` and installs `grub-cloud-amd64`,
+  the official images' bootloader package: it installs GRUB for i386-pc and
+  for x86_64-efi behind shim, into the removable path as well, and reinstalls
+  both whenever GRUB or shim is upgraded. It does nothing without
+  `/etc/grub.d/enable_cloud`. The purge goes first because it deletes
+  `/etc/default/grub`, which `grub-cloud-amd64` ships as a conffile; the other
+  order stops at a conffile prompt. Before the install, `late_command`
+  comments out the netinst CD's `deb cdrom:` entries, which finish-install's
+  `10apt-cdrom-setup` would only disable afterwards. The CD is no longer mounted
+  in the target by then, and on trixie apt otherwise waits at its media-change
+  prompt for shim and the signed GRUB until Packer's SSH timeout. The packages
+  come from the mirror instead.
+- **Ubuntu** — an action-based `storage: config:` replaces `layout: direct`,
+  which cannot add an ESP. Curtin installs `grub-pc` to the disk marked
+  `grub_device`. The autoinstall also installs `grub-efi-amd64-signed` and
+  `shim-signed`, and a late-command installs the signed UEFI GRUB with
+  `grub-install --uefi-secure-boot --no-nvram`, as Ubuntu's cloud-image build
+  does. The late-commands also set the cloud images'
+  `grub-pc/cloud_style_installation` and `grub-efi/cloud_style_installation`
+  answers, so upgrades reinstall both GRUBs to the disk and ESP holding `/boot`
+  rather than to the build disk recorded in debconf. 22.04's GRUB packages do
+  not read these answers. There, cloud-init's `grub_dpkg` sets
+  `grub-pc/install_devices` to the clone's disk on first boot, and the first
+  upgrade of `grub-efi-amd64-signed` records the ESP mounted at `/boot/efi` in
+  `grub-efi/install_devices`.
+- **AlmaLinux and Rocky** — the official GenericCloud images are installed
+  under UEFI and add BIOS GRUB in `%post`. Here it is the reverse. blivet
+  supports the `efi` format only on a UEFI machine, so `/boot/efi` is `vfat`
+  (`-F 32`, mounted `umask=0077,shortname=winnt` like an anaconda ESP), and
+  `%packages` adds `grub2-efi-x64` and `shim-x64`, which put the loaders in
+  the ESP straight from the RPMs. A second `%post` gives the partition the ESP
+  type, writes the stub `grub.cfg` (el9 and later with their own
+  `gen_grub_cfgstub`; el8 has none, so the same four lines are written by
+  hand) and keeps the GRUB environment in `/boot/grub2`. el8's `grub2-efi-x64`
+  makes `/boot/grub2/grubenv` a symlink into the ESP, which BIOS GRUB cannot
+  follow, and on el8 that file carries the kernel command line (`kernelopts`).
+  AlmaLinux's own el8 image does the same in its `unified_boot` role.
+
+`finalize.sh` fails the build unless the result can boot both ways: GPT, a BIOS
+boot partition holding a core image, GRUB in the MBR, the ESP mounted from
+fstab with the ESP type, the root last, shim at the removable path with GRUB or
+the fallback loader reachable from it, a vendor `grub.cfg` naming the `/boot`
+filesystem's UUID, and the family's bootloader packages. A half missing here
+would otherwise go unnoticed, since the build VM boots under SeaBIOS either
+way.
+
+`cf verify --firmware ovmf` boots the clone under OVMF with a freshly allocated
+variable store, Proxmox's Microsoft keys enrolled, so Secure Boot enforces and
+no boot entry exists, as on a consumer's clone. The `boot-firmware` check
+asserts the clone came up under the requested firmware, with Secure Boot
+enforcing under OVMF, and that the ESP is mounted either way. All twelve Linux
+recipes build and pass `cf verify` under both firmwares.
+
+Upgrades keep both halves. On a clone booted under SeaBIOS, reinstalling the
+bootloader packages reinstalls GRUB for both targets: `grub-cloud-amd64`'s
+trigger on Debian, `grub-pc` and `grub-efi-amd64-signed` on Ubuntu, and the
+RPMs on AlmaLinux and Rocky, where el8's `grubenv` stays a regular file. On
+Ubuntu, `grub-install` for x86_64-efi warns that it cannot set EFI variables
+and succeeds. The clone then boots under SeaBIOS and, moved to OVMF with a new
+variable store, under UEFI with Secure Boot. This was checked by hand on Debian
+12, Ubuntu 22.04 and 24.04, and AlmaLinux 8.
 
 ## Ubuntu autoinstall
 
@@ -115,6 +285,22 @@ intermittently drops characters. Observed corrupting the initramfs `ip=` netmask
 — networking never came up, the user-data was never fetched, and the build failed
 with a 30-minute SSH timeout. Diagnosed from a framebuffer screenshot captured by
 the diagnostics recorder (see [diagnostics.md](diagnostics.md)).
+
+**Subiquity turns cloud-init off after the installed system's first boot.** It
+writes `/etc/cloud/cloud-init.disabled` and leaves `/etc/cloud/clean.d/99-installer`
+for `cloud-init clean` to remove that and its other installer configs, one of
+which stops cloud-init's `grub_dpkg` from pointing grub-pc at each clone's boot
+disk. `finalize.sh` runs that script before its cloud-init checks, which fail the
+build if `cloud-init.disabled` survives.
+
+The autoinstall sets `kernel: package: linux-virtual`, the kernel the official
+cloud images run: the generic kernel without `linux-modules-extra` and the
+~700 MB of firmware `linux-generic` pulls in. 26.04's installer layer ships
+`linux-generic` regardless, so `finalize.sh` purges the generic metapackages and
+the `linux-firmware*` packages wherever `linux-virtual` is installed; the kernel
+recommends the firmware, so autoremove alone keeps it. `apt: geoip: false` keeps the
+image on `archive.ubuntu.com` instead of a country mirror picked from wherever
+the build node is.
 
 Both failures above surface as the same 30-minute SSH timeout. Tell them apart
 from the serial console: an aborted install shows `An error occurred. Press enter
@@ -170,21 +356,33 @@ without `git clean`. The hostname line uses `__PACKER_RECIPE_NAME__`, replaced b
 the same script, so the preseed files stay identical across Debian releases
 (enforced by `tests/recipe-consistency.test.ts`). That line has no effect: the
 installer fetches the preseed over the network, so it reads the file only after
-`netcfg` has already configured the network and picked a hostname. The image's
-hostname is the installer default, `debian`; clones take theirs from cloud-init.
+`netcfg` has already configured the network and picked a hostname, the
+installer default `debian`. `finalize.sh` resets it to `localhost` in every
+image; clones take theirs from cloud-init.
 
 The network answers are typed on `boot_command` (`netcfg/` keys) for the same
-reason, and the installer writes the static build address into
-`/etc/network/interfaces` (an `iface ens18 inet static` stanza with the build
-gateway) and into `/etc/hosts`. The first provisioner resets both: `interfaces`
-to loopback plus `source /etc/network/interfaces.d/*`, where cloud-init writes
-the clone's NIC config, and `hosts` to `127.0.1.1` for the hostname. It fails the
-build if the build address survives. On a Proxmox clone the leftovers would be
-inert, because cloud-init renames the NIC to `eth0` and Proxmox's generated
-user-data sets `manage_etc_hosts: true`. Anywhere the NIC keeps the name `ens18`,
-the clone would take the build address and a second default gateway.
-`cf verify`'s `no-installer-network-config` check reads the shipped file, since a
-clone's addresses cannot show the problem.
+reason, so the installer configures the build NIC with ifupdown and a static
+address.
+
+**The image does not keep ifupdown.** The official Debian cloud images use
+netplan, systemd-networkd and systemd-resolved, and the images here do too. With
+ifupdown, cloud-init's eni renderer writes a clone's nameservers as
+`dns-nameservers` lines, which only `resolvconf` acts on, so a clone with a static
+address kept whatever `/etc/resolv.conf` the installer wrote: the build's DNS
+server. The update provisioner installs `netplan.io` and `systemd-resolved` as its
+last step (resolved takes over `/etc/resolv.conf`, and nothing after it may need
+DNS), and `finalize.sh` purges ifupdown, deletes `/etc/network/interfaces`, and
+enables networkd and resolved. cloud-init then can only render netplan.
+Debian's resolved answers LLMNR on `0.0.0.0:5355` by default, handing the
+hostname to anyone who can reach the VM; a `resolved.conf.d` drop-in turns LLMNR
+and mDNS off, as Ubuntu ships them, and `cf verify` fails a clone listening there.
+
+The install runs with `base-installer/install-recommends false`, which leaves
+`00InstallRecommends` behind to turn Recommends off for every later `apt install`;
+`finalize.sh` deletes it. That is also why the preseed names `apparmor`, which the
+kernel only recommends. `pkgsel/update-policy` installs unattended-upgrades, as
+on the official images. The disk layout and bootloaders are described in
+[BIOS and UEFI boot](#bios-and-uefi-boot).
 
 An answer that only one release needs goes on that recipe's `boot_command`
 instead, where the installer reads it as a preseed value, but only for a key
@@ -200,19 +398,52 @@ from the recipe's `# mirror:` header and defaulting to `deb.debian.org`. A
 release Debian has archived sets `# mirror: archive.debian.org`, which keeps
 serving it after `deb.debian.org` drops it.
 
+**Never redirect `in-target`'s stdin in `late_command`.** `in-target` is a
+debconf confmodule, and its stdin is cdebconf's reply channel. An
+`in-target … </dev/null` leaves the protocol out of step, so a later
+finish-install script reads a stale "go back" and the installer stops at its
+main menu, "succeeded but requested to be left unconfigured" in the syslog,
+which surfaces as Packer's SSH timeout.
+
 ## AlmaLinux and Rocky Linux kickstart
 
 Copy the nearest `ks.cfg` and update repository and release details. These builds
 also use the allocated NAT address and ephemeral SSH credentials.
 
+**A kickstart the installer rejects looks like a 35-minute SSH timeout.**
+anaconda stops at the parse error on its console and waits. el8's parser, for
+one, accepts only `%packages --excludeWeakdeps --instLangs=` and rejects the
+`--exclude-weakdeps --inst-langs=` spelling that el9 and el10 take.
+`tests/recipe-consistency.test.ts` runs pykickstart's `ksvalidator` against each
+file's `#version=RHELn` when it is installed (CI installs it), so run
+`pipx install pykickstart` before changing a kickstart.
+
+The kickstarts follow the official GenericCloud ones: SELinux enforcing, no
+firewalld, `--exclude-weakdeps`, no firmware packages (el8 keeps
+`linux-firmware`, which its kernel requires), `dracut-config-generic`
+instead of a host-only initramfs, no rescue kernel, and a disk that boots under
+BIOS and UEFI (see [BIOS and UEFI boot](#bios-and-uefi-boot)). Root's password
+is `*`. On el8 `sshd_config` has no `Include`,
+so the kickstart writes no drop-in there; the stock file already permits root
+and password login, and `finalize.sh` checks the effective values.
+
 RHEL ships `qemu-guest-agent` with the `guest-exec` RPC denied — Debian and
 Ubuntu permit it — which fails the smoke test's reboot-and-verify step with
-`Command guest-exec has been disabled`. Every recipe runs
-`_shared/post/enable-guest-exec.sh` to permit it. The deny mechanism differs by
+`Command guest-exec has been disabled`. `finalize.sh` runs
+`_shared/linux/enable-guest-exec.sh` to permit it. The deny mechanism differs by
 release (el8 uses a `BLACKLIST_RPC` block list, el9+ a
 `FILTER_RPC_ARGS="--allow-rpcs=..."` allow list) and the script handles both. It
 must run **after** `dnf update`, because a guest-agent package refresh can rewrite
 `/etc/sysconfig/qemu-ga` back to the shipped defaults.
+
+**Enforcing SELinux confines guest-exec, so the agent's domain is permissive.**
+Commands the agent starts run in `virt_qemu_ga_t`, where policy denies even
+`systemctl is-system-running` and `journalctl` is "command not found". That
+breaks Proxmox's guest-exec and the smoke test. `finalize.sh` loads
+`cofoundry-qemu-ga.cil`, which makes that one domain permissive; the rest of the
+system enforces. Verified on an AlmaLinux 9 clone: guest-exec, `qm guest passwd`
+and a reboot work, and the only denials are the agent domain's. The hypervisor
+that can call those RPCs already owns the disk, so this gives nothing away.
 
 ## Windows Server
 

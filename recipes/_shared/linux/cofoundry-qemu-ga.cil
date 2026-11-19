@@ -1,0 +1,5 @@
+; Run the QEMU guest agent's domain permissive while the rest of the system
+; enforces. Commands that Proxmox's guest-exec and set-password RPCs (and the
+; cf verify smoke test) start inherit virt_qemu_ga_t, where policy denies even
+; `systemctl is-system-running`. See finalize.sh.
+(typepermissive virt_qemu_ga_t)

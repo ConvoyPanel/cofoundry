@@ -15,6 +15,7 @@
         "execa": "^9.6.1",
         "figures": "^6.1.0",
         "log-update": "^8.0.0",
+        "openpgp": "^6.3.2",
         "p-queue": "^9.3.0",
         "p-retry": "^8.0.0",
         "picocolors": "^1.1.1",
@@ -209,6 +210,8 @@
     "npm-run-path": ["npm-run-path@6.0.0", "", { "dependencies": { "path-key": "^4.0.0", "unicorn-magic": "^0.3.0" } }, "sha512-9qny7Z9DsQU8Ou39ERsPU4OZQlSTP47ShQzuKZ6PRXpYLtIFgl/DEBYEXKlvcEa+9tHVcK8CF81Y2V72qaZhWA=="],
 
     "onetime": ["onetime@7.0.0", "", { "dependencies": { "mimic-function": "^5.0.0" } }, "sha512-VXJjc87FScF88uafS3JllDgvAm+c/Slfz06lorj2uAY34rlUu0Nt+v8wreiImcrgAjjIHp1rXpTDlLOGw29WwQ=="],
+
+    "openpgp": ["openpgp@6.3.2", "", { "peerDependencies": { "@openpgp/web-stream-tools": "~0.3.0" }, "optionalPeers": ["@openpgp/web-stream-tools"] }, "sha512-wcZTzHz41LV8Y48zH/JlD1JT8YdNmpWOuMAjQ/podvvCwsjBEU37K3znJh4UQcj3hksE5z9TzvhbUbwzsGvlLQ=="],
 
     "p-queue": ["p-queue@9.3.0", "", { "dependencies": { "eventemitter3": "^5.0.4", "p-timeout": "^7.0.0" } }, "sha512-7NED7xhQ74Ngp4JP/2e0VZHp7vSWfJfqeiR92jPgxsz6m0Se4P03YoTKa9dDXyZ3r6P616gUXttrB6nnHYKang=="],
 
