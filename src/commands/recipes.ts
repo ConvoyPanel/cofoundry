@@ -7,6 +7,8 @@ import { resolveIsoUpdate, applyIsoUpdate } from '@/update.ts'
 import {
     checkRecipes,
     classifyCheckResults,
+    loadPublishedBuildTimes,
+    markStale,
     SYNTHETIC_RECIPES,
     saveChecksums,
 } from '@/upstream.ts'
@@ -104,7 +106,16 @@ const checkCommand = async (
         return
     }
 
-    const { results, store } = await checkRecipes(candidates)
+    const checked = await checkRecipes(candidates)
+    const { store } = checked
+    const builtAt = await loadPublishedBuildTimes()
+    if (!builtAt)
+        log.warn(
+            'registry.json lists no templates; skipping the template age check'
+        )
+    const results = builtAt
+        ? markStale(checked.results, builtAt, new Date())
+        : checked.results
     if (!opts.json) {
         log.section(
             `Upstream check ${pc.dim(`(${results.length} recipe${results.length === 1 ? '' : 's'})`)}`
@@ -114,6 +125,8 @@ const checkCommand = async (
             const label = pc.cyan(result.name.padEnd(width))
             if (result.error)
                 log.warn(`${label} ${pc.dim('·')} ${result.error}`)
+            else if (result.stale)
+                log.ok(`${label} ${pc.dim('·')} rebuild: ${result.stale}`)
             else if (result.changed)
                 log.ok(`${label} ${pc.dim('·')} upstream changed`)
             else log.info(`${label} ${pc.dim('·')} up to date`)
@@ -149,7 +162,7 @@ const checkCommand = async (
         log.blank()
         if (buildable.length > 0)
             log.ok(
-                `${buildable.length} recipe(s) have a new upstream ISO: ${buildable.join(', ')}`
+                `${buildable.length} recipe(s) need a build: ${buildable.join(', ')}`
             )
         // Only when nothing drifted AND everything could actually be checked.
         // Saying "up to date" over a recipe whose URL 404'd is the claim this

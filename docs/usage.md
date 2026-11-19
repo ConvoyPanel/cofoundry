@@ -128,6 +128,12 @@ cf check debian-12 # one recipe
 cf check --json    # changed recipe names as JSON, for CI
 ```
 
+A recipe whose ISO did not change still needs a build when its published
+template (`built_at` in `registry.json`) is more than 30 days old, or has never
+been published. ISOs change a few times a year and packages every week, and the
+distros refresh their own cloud images at least monthly; so the weekly check
+rebuilds each template about once a month even with no new ISO.
+
 `--json` lists only recipes CI can build. Pinned third-party downloads
 (`virtio-win`) are checked too, but they have no `.pkr.hcl`, so drift in one is
 reported on stderr for a maintainer to act on rather than handed to a build.
