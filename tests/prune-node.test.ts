@@ -116,9 +116,15 @@ describe('orphanDiskFind', () => {
                 'Volid Format Type Size VMID',
                 ...volumes.map(v => `${v.volid} raw images 1 ${v.vmid}`),
             ].join('\\n')
+            // Forward slashes: the nodes path is spliced into an unquoted glob,
+            // where bash would read a Windows path's backslashes as escapes.
+            const bashPath = (p: string) => p.replaceAll('\\', '/')
             const cmd = orphanDiskFind('shared-rbd', recipes)
-                .replaceAll('/etc/pve/nodes', join(root, 'nodes'))
-                .replaceAll(`'${OWNED_VMID_DIR}'`, `'${join(root, 'owned')}'`)
+                .replaceAll('/etc/pve/nodes', bashPath(join(root, 'nodes')))
+                .replaceAll(
+                    `'${OWNED_VMID_DIR}'`,
+                    `'${bashPath(join(root, 'owned'))}'`
+                )
             const result = spawnSync(
                 'bash',
                 ['-c', `pvesm() { printf '${listing}\\n'; }\n${cmd}`],
