@@ -105,7 +105,9 @@ it the way a user's clone is exercised, rather than merely booting it:
    it is the only check that can see a kernel panic, a GRUB hang, or a desktop
    that never painted. Outside CI the frame is written to
    `./diagnostics/verify-<recipe>-<arch>-<timestamp>/` as a gzipped PPM — PVE's
-   qemu is commonly built without libpng.
+   qemu is commonly built without libpng. A frame that cannot be captured (after
+   one retry) is reported at the suite's console-check severity — a failure on
+   Windows — rather than dropped, so a run that never looked cannot pass.
 
 Checks are declarative data in `src/verify/checks/`, split into a shared Linux
 suite and a Windows suite, with per-recipe overrides keyed by recipe name in

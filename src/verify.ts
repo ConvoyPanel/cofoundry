@@ -34,6 +34,7 @@ import {
     formatFailures,
     formatWarnings,
     frameResult,
+    frameUnavailableResult,
     summarize,
 } from '@/verify/report.ts'
 
@@ -495,8 +496,14 @@ const runVerifyLocked = async (
         // session-0 boundary the guest agent is stuck behind.
         const label = lastPhase
         task.setPhase('capturing console framebuffer')
-        const frame = await captureFrame(env.SSH_TARGET, vmid, remoteTmp, label)
-        if (frame) {
+        // One retry: a screendump can lose a race with the monitor socket, and
+        // a missing frame is now reported instead of skipped.
+        const frame =
+            (await captureFrame(env.SSH_TARGET, vmid, remoteTmp, label)) ??
+            (await captureFrame(env.SSH_TARGET, vmid, remoteTmp, label))
+        if (!frame) {
+            results.push(frameUnavailableResult(label, suite.screenSeverity))
+        } else {
             results.push(
                 frameResult(
                     label,
