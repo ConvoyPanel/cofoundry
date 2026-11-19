@@ -7,7 +7,7 @@ import { addSensitiveValues, shellQuote } from '@/util.ts'
 import { captureRemote } from '@/build/remote.ts'
 import { remotePaths } from '@/build/paths.ts'
 import type { Env } from '@/env.ts'
-import type { CheckContext } from '@/verify/checks/types.ts'
+import type { CheckContext, Firmware } from '@/verify/checks/types.ts'
 
 /**
  * Extra space added to the restored disk before first boot.
@@ -204,7 +204,8 @@ export const prepareCloudInit = async (
     recipeName: string,
     vmid: number,
     remoteTmp: string,
-    isWindows: boolean
+    isWindows: boolean,
+    firmware: Firmware
 ): Promise<CloudInitSetup> => {
     const hostname = sentinelHostname()
     const password = sentinelPassword()
@@ -256,6 +257,7 @@ export const prepareCloudInit = async (
             sshPublicKey: publicKey,
             minRootBytes: shippedBytes,
             staticNetwork,
+            firmware,
             buildPassword: isWindows
                 ? await findBuildPassword(env, recipeName)
                 : undefined,

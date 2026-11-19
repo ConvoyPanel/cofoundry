@@ -32,9 +32,15 @@ autoinstall:
     # Locked: packer authenticates by key only and is deleted before the
     # template is exported. Mirrors the preseed's `passwd/user-password-crypted !`.
     password: "!"
+  # grub-efi-amd64-signed and shim-signed make the image boot under UEFI with
+  # Secure Boot as well as BIOS, beside the grub-pc the BIOS-booted installer
+  # puts in. The official cloud images carry all three. The live server ISO's
+  # pool has both, since it installs them on UEFI machines.
   packages:
     - qemu-guest-agent
     - openssh-server
+    - grub-efi-amd64-signed
+    - shim-signed
   # The kernel the official cloud images run: the generic kernel without
   # linux-modules-extra and the ~700 MB of bare-metal firmware linux-generic
   # pulls in. finalize.sh removes whatever the installer pool added besides.
@@ -44,13 +50,76 @@ autoinstall:
   # picks from wherever the build node happens to be.
   apt:
     geoip: false
+  # The official cloud image's layout, which boots under BIOS and UEFI: GPT, a
+  # BIOS boot partition for grub-pc's core image, a FAT32 EFI system
+  # partition, and the ext4 root last, so growpart can extend it to fill
+  # whatever disk a clone gets. No swap partition, for the same reason.
+  # `grub_device` on the disk is where curtin installs grub-pc, since the
+  # installer runs under BIOS; the EFI loader goes in by late-command below.
   storage:
-    layout:
-      name: direct
     swap:
       size: 0
+    config:
+      - type: disk
+        id: disk0
+        match:
+          size: largest
+        ptable: gpt
+        wipe: superblock-recursive
+        preserve: false
+        grub_device: true
+      - type: partition
+        id: bios-boot
+        device: disk0
+        number: 1
+        size: 1M
+        flag: bios_grub
+        preserve: false
+      - type: partition
+        id: esp
+        device: disk0
+        number: 2
+        size: 106M
+        flag: boot
+        preserve: false
+      - type: partition
+        id: root
+        device: disk0
+        number: 3
+        size: -1
+        preserve: false
+      - type: format
+        id: esp-fs
+        volume: esp
+        fstype: fat32
+        preserve: false
+      - type: format
+        id: root-fs
+        volume: root
+        fstype: ext4
+        preserve: false
+      - type: mount
+        id: root-mount
+        device: root-fs
+        path: /
+      - type: mount
+        id: esp-mount
+        device: esp-fs
+        path: /boot/efi
+        options: umask=0077
   late-commands:
     - curtin in-target -- bash -c "echo 'GRUB_CMDLINE_LINUX=\"console=tty0 console=ttyS0,115200\"' > /etc/default/grub.d/50-cofoundry.cfg"
+    # GRUB for UEFI, as the official cloud images install it: the signed
+    # loader behind shim, no boot entry (each clone's variable store is new,
+    # so the firmware finds shim at the removable path, EFI/BOOT/BOOTX64.EFI).
+    # The cloud_style_installation answers make grub-pc and
+    # grub-efi-amd64-signed reinstall to the disk and ESP holding /boot on
+    # every upgrade, instead of to the build VM's disk recorded in debconf;
+    # 22.04's GRUB does not have them, and there the first boot's cloud-init
+    # (grub_dpkg) points both at the clone's own disk.
+    - curtin in-target -- bash -c "printf '%s\n' 'grub-pc grub-pc/cloud_style_installation boolean true' 'grub-pc grub-efi/cloud_style_installation boolean true' | debconf-set-selections"
+    # Single-quoted so the $(...) runs in the target, against its grub-install.
+    - curtin in-target -- bash -c 'grub-install --target=x86_64-efi --efi-directory=/boot/efi --uefi-secure-boot --no-nvram $(grub-install --help | grep -q -- --force-extra-removable && echo --force-extra-removable)'
     - curtin in-target -- update-grub
     # Serialize the two units that mutate /boot/grub/grubenv.
     #

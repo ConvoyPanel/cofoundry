@@ -23,6 +23,7 @@ const ctx: CheckContext = {
         'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyBody test@host',
     minRootBytes: 34_359_738_368,
     buildPassword: "bu'ild-pw",
+    firmware: 'seabios',
 }
 
 const recipe = (name: string): RecipeInfo => ({
@@ -425,4 +426,35 @@ exit $fail`
         },
         30000
     )
+})
+
+describe('boot firmware check', () => {
+    const check = linuxSuite.checks.find(c => c.id === 'boot-firmware')!
+
+    test('asks OVMF clones for UEFI with Secure Boot enforcing', () => {
+        const script = renderScript(check, { ...ctx, firmware: 'ovmf' })
+        expect(script).toContain('[ -d /sys/firmware/efi ]')
+        expect(script).toContain(
+            'SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c'
+        )
+        expect(script).toContain('[ "$sb" = 1 ]')
+        expect(script).toContain('/boot/efi')
+    })
+
+    test('asks SeaBIOS clones for BIOS, and still for the ESP', () => {
+        const script = renderScript(check, ctx)
+        expect(script).toContain('[ ! -d /sys/firmware/efi ]')
+        expect(script).not.toContain('SecureBoot')
+        expect(script).toContain('/boot/efi')
+    })
+
+    test('both renderings are valid sh', () => {
+        for (const firmware of ['seabios', 'ovmf'] as const) {
+            const run = spawnSync('sh', ['-n'], {
+                input: renderScript(check, { ...ctx, firmware }),
+                encoding: 'utf8',
+            })
+            expect(run.status, `${firmware}: ${run.stderr}`).toBe(0)
+        }
+    })
 })

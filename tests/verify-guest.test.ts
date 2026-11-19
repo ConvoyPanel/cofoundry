@@ -209,6 +209,7 @@ describe('transport-error retry', () => {
         ciPassword: 'p',
         sshPublicKey: 'ssh-ed25519 AAAA c',
         minRootBytes: 1,
+        firmware: 'seabios' as const,
     }
 
     test('a check that never reaches the agent is retried, not failed outright', async () => {

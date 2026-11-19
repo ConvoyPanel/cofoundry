@@ -77,15 +77,34 @@ export const registerMaintenanceCommands = (program: Command): void => {
             'full'
         )
         .option('--ci', 'CI mode: never write framebuffer captures to disk')
-        .action(async (name: string, opts: { level: string; ci?: boolean }) => {
-            if (opts.level !== 'quick' && opts.level !== 'full') {
-                throw new Error(
-                    `--level must be "quick" or "full", got "${opts.level}"`
-                )
+        .option(
+            '--firmware <firmware>',
+            "seabios or ovmf: boot the clone under this firmware instead of the profile's; ovmf adds a fresh variable store with Secure Boot on"
+        )
+        .action(
+            async (
+                name: string,
+                opts: { level: string; ci?: boolean; firmware?: string }
+            ) => {
+                if (opts.level !== 'quick' && opts.level !== 'full') {
+                    throw new Error(
+                        `--level must be "quick" or "full", got "${opts.level}"`
+                    )
+                }
+                if (
+                    opts.firmware !== undefined &&
+                    opts.firmware !== 'seabios' &&
+                    opts.firmware !== 'ovmf'
+                ) {
+                    throw new Error(
+                        `--firmware must be "seabios" or "ovmf", got "${opts.firmware}"`
+                    )
+                }
+                await runVerify(loadEnv(), await loadRecipe(name), {
+                    level: opts.level,
+                    ciMode: Boolean(opts.ci),
+                    firmware: opts.firmware,
+                })
             }
-            await runVerify(loadEnv(), await loadRecipe(name), {
-                level: opts.level,
-                ciMode: Boolean(opts.ci),
-            })
-        })
+        )
 }
