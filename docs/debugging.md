@@ -230,6 +230,11 @@ time out. Use `cf verify` to prove a thing works, not to find out why it does no
 - **Check for another agent or session** before blaming infrastructure:
   `ps -eo args | grep claude`.
 - **`scp` to the node fails**; pipe instead: `ssh root@node 'cat > /path' < file`.
+- **Detach an offline inspection when you finish it**: `umount`, then
+  `qemu-nbd --disconnect /dev/nbdN`. A mount left behind keeps the device
+  attached after its `qemu-nbd` server exits, and every read of it then fails.
+  `assert-generalized.sh` skips attached devices and names the mount, but it
+  tries only `/dev/nbd0`–`4`.
 - **Do not run `cf clean` casually** — it removes uploaded ISOs, including large
   ones you will wait to re-download.
 - The node→local artifact download runs at ~1 MB/s over the tailnet, against

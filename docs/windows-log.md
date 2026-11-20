@@ -10,6 +10,39 @@ build cycle is worth exactly as much as the fix that followed it.
 
 ---
 
+## 2026-11-20 — a stale `/dev/nbd0` failed every Windows job of a CI run
+
+Rebuild-changed run 44623195255 (main at `17cbcfb`) produced no Windows
+template. windows-server-2019 failed all three attempts the same way: sysprep
+finished, then `assert-generalized: could not read a partition table` from
+`base-200002-disk-1.qcow2`. windows-server-2022 failed attempt 1 identically
+after 4h20m, and GitHub's 6-hour job limit cancelled attempt 2.
+windows-server-2025 spent the full 6 hours at `[queue] waiting for another
+windows-server-2025 run` behind a manual build holding that recipe's lease, and
+never started.
+
+The node's `dmesg` at each failure (00:29, 01:55 and 03:25 UTC for 2019, 03:12
+for 2022) shows reads of `nbd0` failing at sector 0 and at sector 209715192, the
+last sector of the 100 GiB build disk, then `Send disconnect failed -32`.
+`nbd0p2` had carried an ext4 mount since 2026-11-16 17:26, left by an offline
+inspection of a Linux image. It was unmounted on 2026-11-20 at 05:33.
+
+`5addefe` makes `assert-generalized.sh` skip a device whose sysfs `size` is
+non-zero or that has a `pid` file. Reproduced on the spare `/dev/nbd12`, outside
+the script's `nbd0`–`4` range, with a 64 MiB ext4 qcow2:
+
+| State before the next connect            | sysfs `size` / `pid` | New `--read-only --connect` | Sector 0 read | New check              |
+| ---------------------------------------- | -------------------- | --------------------------- | ------------- | ---------------------- |
+| Mounted, then `qemu-nbd --disconnect`    | kept / kept          | accepted                    | fails         | skips, names the mount |
+| Mounted, then the server `kill -9`'d     | kept / kept          | refused                     | fails         | skips, names the mount |
+| Not mounted, then the server `kill -9`'d | 0 / gone             | accepted                    | —             | treats it as free      |
+
+The first row is the production signature: the stale device accepts the new
+connection and then fails every read. The third row is a device that really is
+free. The reproduction mounted the whole device: the kernel had not created a
+`/dev/nbd12p1` node in time for a partition mount, so the partition case was not
+run.
+
 ## 2026-11-13 — 2025 keeps Windows Terminal and Feedback Hub
 
 The Appx cleanup had been removing both from every 2025 template. Each was
