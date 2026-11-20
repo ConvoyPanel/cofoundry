@@ -47,13 +47,24 @@ command -v qemu-nbd >/dev/null 2>&1 || {
   echo "assert-generalized: qemu-nbd not found (install qemu-utils)"; exit 1; }
 modprobe nbd max_part=8 2>/dev/null || true
 
-# Connecting is itself the free-device test: a busy nbd device refuses.
+# A free device has no size and no server pid in sysfs. Whether qemu-nbd will
+# connect is not that test: a device whose server died while one of its
+# partitions was still mounted accepts a new connection, then fails every read
+# with an I/O error, and this check would fail a finished build on a disk it
+# never read. A device in use by a live server refuses the connect, which still
+# settles a race with a concurrent build.
 NBD=""
 for d in /dev/nbd0 /dev/nbd1 /dev/nbd2 /dev/nbd3 /dev/nbd4; do
   [ -e "$d" ] || continue
+  n=${d#/dev/}
+  if [ "$(cat "/sys/block/$n/size" 2>/dev/null)" != 0 ] || [ -e "/sys/block/$n/pid" ]; then
+    where=$(awk -v d="$d" 'index($1, d) == 1 {print $2}' /proc/mounts | tr '\n' ' ')
+    echo "assert-generalized: skipping $d: already attached${where:+, mounted at $where}"
+    continue
+  fi
   if qemu-nbd --read-only --connect="$d" "$DISK" >/dev/null 2>&1; then NBD="$d"; break; fi
 done
-[ -n "$NBD" ] || { echo "assert-generalized: could not attach $DISK to an nbd device"; exit 1; }
+[ -n "$NBD" ] || { echo "assert-generalized: could not attach $DISK to a free nbd device among /dev/nbd0-4"; exit 1; }
 
 MNT=$(mktemp -d)
 LOOP=""
@@ -77,8 +88,18 @@ sleep 2
 command -v sgdisk >/dev/null 2>&1 || {
   echo "assert-generalized: sgdisk not found (install gdisk)"; exit 1; }
 
-STARTS=$(sgdisk -p "$NBD" 2>/dev/null | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {print $2}')
-[ -n "$STARTS" ] || { echo "assert-generalized: could not read a partition table from $DISK"; exit 1; }
+if ! dd if="$NBD" of=/dev/null bs=512 count=1 status=none 2>/dev/null; then
+  echo "assert-generalized: $NBD attached $DISK but its first sector cannot be read; kernel says:"
+  dmesg 2>/dev/null | grep -w "${NBD#/dev/}" | tail -3
+  exit 1
+fi
+TABLE=$(sgdisk -p "$NBD" 2>&1)
+STARTS=$(printf '%s\n' "$TABLE" | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {print $2}')
+[ -n "$STARTS" ] || {
+  echo "assert-generalized: could not read a partition table from $DISK via $NBD; sgdisk says:"
+  printf '%s\n' "$TABLE" | tail -5
+  exit 1
+}
 
 # The Windows volume is whichever partition actually carries \Windows\System32 —
 # probed rather than indexed, since the EFI/MSR layout differs by release.
