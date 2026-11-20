@@ -8,7 +8,12 @@ import {
     remoteExitCode,
 } from '@/build/remote.ts'
 import { PACKER_TMP_ROOT } from '@/build/packer.ts'
-import { shellQuote } from '@/util.ts'
+import { formatMinutes, shellQuote } from '@/util.ts'
+import {
+    budgetLeftMs,
+    leaseWaitExhausted,
+    type TimeBudget,
+} from '@/build/budget.ts'
 
 export const RUN_LEASE_DIR = '/var/lib/cofoundry/run-leases'
 export const RUN_LEASE_LOCK = '/var/lib/cofoundry/run-leases.lock'
@@ -200,6 +205,108 @@ done
 `
 }
 
+/**
+ * Shell that totals what every live lease holds into `memory_used` and
+ * `cpu_used`, and sets `same_recipe=1` when one is for `recipeName`.
+ *
+ * It also names that lease in `holder` as `<id> <kind> <vmid> <held seconds>`,
+ * so a run kept waiting can say who it waits for: on 2026-11-19 a
+ * windows-server-2025 job waited 6h behind a manual build and its log said
+ * only "waiting for another windows-server-2025 run". The lease id carries the
+ * holder's CI run id when it has one. Held time comes from the file's birth
+ * time, which the run sets when it takes the lease and again a few seconds
+ * later when it records its VMID; heartbeats only touch the mtime. It is -1
+ * where the filesystem does not record birth times.
+ */
+export const leaseUsageScript = (
+    recipeName: string,
+    leaseDir: string = RUN_LEASE_DIR
+): string => `memory_used=0
+cpu_used=0
+same_recipe=0
+holder='- - 0 -1'
+checked_at=$(date +%s)
+for lease in ${shellQuote(leaseDir)}/*; do
+    [ -f "$lease" ] || continue
+    IFS=$'\\t' read -r active_kind active_recipe active_vmid active_memory active_cores _tmp < "$lease" || continue
+    memory_used=$((memory_used + active_memory))
+    cpu_used=$((cpu_used + active_cores))
+    if [ "$active_recipe" = ${shellQuote(recipeName)} ]; then
+        same_recipe=1
+        born=$(stat -c %W "$lease" 2>/dev/null || echo 0)
+        case "$born" in ''|*[!0-9]*) born=0 ;; esac
+        held=-1
+        if [ "$born" -gt 0 ]; then held=$((checked_at - born)); fi
+        holder="\${lease##*/} \${active_kind:--} $active_vmid $held"
+    fi
+done`
+
+/**
+ * Who holds a recipe's lease, for a run that has to wait: the lease id, the
+ * CI run it belongs to when its id says so, its VMID, and how long it has
+ * held the lease when the node knows.
+ */
+export const describeLeaseHolder = (
+    holder: { id: string; kind: string; vmid: number; heldSecs: number },
+    recipeName: string
+): string => {
+    const suffix = `-${holder.kind}-${sanitizeIdPart(recipeName)}`
+    const runId =
+        holder.id.length > suffix.length && holder.id.endsWith(suffix)
+            ? holder.id.slice(0, -suffix.length)
+            : undefined
+    const details = [
+        runId ? `CF_RUN_ID ${runId}` : 'no CF_RUN_ID, so not started by CI',
+        holder.vmid > 0 ? `VMID ${holder.vmid}` : 'no VMID yet',
+        holder.heldSecs >= 0
+            ? `held ${formatMinutes(holder.heldSecs * 1000)}`
+            : undefined,
+    ].filter(Boolean)
+    return `${holder.kind} lease ${holder.id}: ${details.join(', ')}`
+}
+
+export type Admission =
+    | { status: 'ACQUIRED' }
+    | { status: 'REJECT'; message: string }
+    | { status: 'WAIT'; waitingFor: string }
+
+/** Read the one-line answer of `buildLeaseAdmissionScript`. */
+export const parseAdmission = (
+    output: string,
+    recipe: Pick<RecipeInfo, 'name' | 'buildMemoryMb' | 'buildCores'>
+): Admission => {
+    const [status, ...values] = output.trim().split(/\s+/)
+    if (status === 'ACQUIRED') return { status }
+    if (status === 'REJECT') {
+        return {
+            status,
+            message: `${recipe.name} requires ${recipe.buildMemoryMb ?? 0} MiB/${recipe.buildCores ?? 0} CPU, exceeding the node build budget ${values[0]} MiB/${values[1]} CPU`,
+        }
+    }
+    if (status !== 'WAIT')
+        throw new Error(`invalid build-lease response: ${output}`)
+    if (values[4] !== '1') {
+        return {
+            status,
+            waitingFor: `node capacity (${values[0]}/${values[1]} MiB, ${values[2]}/${values[3]} CPU in use)`,
+        }
+    }
+    const [id, kind, vmid, held] = values.slice(5)
+    const holder =
+        id && kind && id !== '-'
+            ? ` (${describeLeaseHolder(
+                  {
+                      id,
+                      kind,
+                      vmid: Number.parseInt(vmid ?? '0', 10) || 0,
+                      heldSecs: Number.parseInt(held ?? '-1', 10),
+                  },
+                  recipe.name
+              )})`
+            : ''
+    return { status, waitingFor: `another ${recipe.name} run${holder}` }
+}
+
 export const buildLeaseAdmissionScript = (
     env: Pick<Env, 'CF_BUILD_MEMORY_BUDGET_MB' | 'CF_BUILD_CPU_BUDGET'>,
     request: LeaseRequest
@@ -221,20 +328,11 @@ memory_budget=${configuredMemory ?? '$memory_capacity'}
 cpu_budget=${configuredCpu ?? '$cpu_capacity'}
 [ "$memory_budget" -le "$memory_capacity" ] || memory_budget=$memory_capacity
 [ "$cpu_budget" -le "$cpu_capacity" ] || cpu_budget=$cpu_capacity
-memory_used=0
-cpu_used=0
-same_recipe=0
-for lease in ${shellQuote(RUN_LEASE_DIR)}/*; do
-    [ -f "$lease" ] || continue
-    IFS=$'\\t' read -r _kind active_recipe _vmid active_memory active_cores _tmp < "$lease" || continue
-    memory_used=$((memory_used + active_memory))
-    cpu_used=$((cpu_used + active_cores))
-    [ "$active_recipe" = ${shellQuote(request.recipe.name)} ] && same_recipe=1
-done
+${leaseUsageScript(request.recipe.name)}
 if [ ${memory} -gt "$memory_budget" ] || [ ${cores} -gt "$cpu_budget" ]; then
     echo "REJECT $memory_budget $cpu_budget"
 elif [ "$same_recipe" -eq 1 ] || [ $((memory_used + ${memory})) -gt "$memory_budget" ] || [ $((cpu_used + ${cores})) -gt "$cpu_budget" ]; then
-    echo "WAIT $memory_used $memory_budget $cpu_used $cpu_budget $same_recipe"
+    echo "WAIT $memory_used $memory_budget $cpu_used $cpu_budget $same_recipe $holder"
 else
     tmp=${shellQuote(`${file}.tmp`)}.$$
     trap 'rm -f "$tmp"' EXIT
@@ -328,6 +426,11 @@ export const acquireRunLease = async (
         preserveVm?: boolean
         packerTmpDir?: string
         onWait?: (message: string) => void
+        /**
+         * Stop waiting once the time left cannot cover `needMs`, the least
+         * one attempt of the work this lease is for takes.
+         */
+        budget?: { budget: TimeBudget; needMs: number }
     } = {}
 ): Promise<RunLease> => {
     if (
@@ -351,27 +454,30 @@ export const acquireRunLease = async (
     }
     const file = leasePath(request.id)
 
+    const waitStartedAt = Date.now()
     while (true) {
-        const output = (
+        const admission = parseAdmission(
             await captureRemote(
                 env.SSH_TARGET,
                 `bash -s <<'__CF_LEASE__'\n${buildLeaseAdmissionScript(env, request)}\n__CF_LEASE__`
-            )
-        ).trim()
-        const [status, ...values] = output.split(/\s+/)
-        if (status === 'ACQUIRED') break
-        if (status === 'REJECT') {
-            throw new Error(
-                `${recipe.name} requires ${recipe.buildMemoryMb ?? 0} MiB/${recipe.buildCores ?? 0} CPU, exceeding the node build budget ${values[0]} MiB/${values[1]} CPU`
-            )
-        }
-        if (status !== 'WAIT')
-            throw new Error(`invalid build-lease response: ${output}`)
-        options.onWait?.(
-            values[4] === '1'
-                ? `waiting for another ${recipe.name} run`
-                : `waiting for node capacity (${values[0]}/${values[1]} MiB, ${values[2]}/${values[3]} CPU in use)`
+            ),
+            recipe
         )
+        if (admission.status === 'ACQUIRED') break
+        if (admission.status === 'REJECT') throw new Error(admission.message)
+        let budgetNote = ''
+        if (options.budget) {
+            const { budget, needMs } = options.budget
+            const exhausted = leaseWaitExhausted(
+                budget,
+                needMs,
+                Date.now() - waitStartedAt,
+                admission.waitingFor
+            )
+            if (exhausted) throw exhausted
+            budgetNote = `; ${formatMinutes(budgetLeftMs(budget))} of the build time budget left, giving up below ${formatMinutes(needMs)}`
+        }
+        options.onWait?.(`waiting for ${admission.waitingFor}${budgetNote}`)
         await wait(RETRY_MS)
     }
 

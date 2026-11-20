@@ -7,11 +7,14 @@ import type { Env } from '@/env.ts'
 import type { RecipeInfo } from '@/config.ts'
 import {
     buildLeaseAdmissionScript,
+    describeLeaseHolder,
     evaluateHeartbeat,
     HEARTBEAT_GONE_EXIT,
     HEARTBEAT_LOST_AFTER_FAILURES,
     killLeasedRunProcessesCommand,
+    leaseUsageScript,
     OWNED_VMID_DIR,
+    parseAdmission,
     RUN_LEASE_DIR,
     runLeaseHeartbeatCommand,
     reapLeasesByPrefixScript,
@@ -21,6 +24,7 @@ import {
     updateLeaseVmidScript,
 } from '@/build/lease.ts'
 import { PACKER_TMP_ROOT } from '@/build/packer.ts'
+import { leaseWaitExhausted, type TimeBudget } from '@/build/budget.ts'
 
 const recipe = {
     name: 'debian-12',
@@ -55,6 +59,9 @@ describe('node-wide run leases', () => {
         expect(script).toContain('memory_budget=8192')
         expect(script).toContain('cpu_budget=4')
         expect(script).toContain(`${PACKER_TMP_ROOT}/run-id`)
+        // A run that has to wait is told who holds its recipe's lease.
+        expect(script).toContain(leaseUsageScript('debian-12'))
+        expect(script).toMatch(/echo "WAIT .* \$same_recipe \$holder"/)
     })
 
     test('stale cleanup is scoped to resources named by a lease', () => {
@@ -94,17 +101,17 @@ describe('node-wide run leases', () => {
     })
 })
 
-describe('run-lease heartbeat lost detection', () => {
-    const withTempDir = (fn: (dir: string) => void): void => {
-        const dir = mkdtempSync(join(tmpdir(), 'cf-lease-'))
-        try {
-            // Forward slashes so Git Bash accepts the path on Windows too.
-            fn(dir.replaceAll('\\', '/'))
-        } finally {
-            rmSync(dir, { recursive: true, force: true })
-        }
+const withTempDir = (fn: (dir: string) => void): void => {
+    const dir = mkdtempSync(join(tmpdir(), 'cf-lease-'))
+    try {
+        // Forward slashes so Git Bash accepts the path on Windows too.
+        fn(dir.replaceAll('\\', '/'))
+    } finally {
+        rmSync(dir, { recursive: true, force: true })
     }
+}
 
+describe('run-lease heartbeat lost detection', () => {
     test('heartbeat touches an existing lease file and exits 0', () => {
         withTempDir(dir => {
             const file = `${dir}/lease`
@@ -276,5 +283,209 @@ describe('runLeaseId', () => {
         expect(id).not.toMatch(/[/*\s]/)
         // Must survive the prefix validator it will later be matched by.
         expect(() => reapLeasesByPrefixScript(id)).not.toThrow()
+    })
+})
+
+describe('who holds a recipe lease', () => {
+    const record = (recipeName: string, vmid: string, memory: number) =>
+        [
+            'build',
+            recipeName,
+            vmid,
+            memory,
+            memory / 2048,
+            `/dump/cofoundry-tmp/build-${recipeName}-x`,
+            0,
+            'local',
+            `${PACKER_TMP_ROOT}/x`,
+        ].join('\t') + '\n'
+
+    // Run as the admission script runs it, so an unset variable or a failed
+    // test inside it would abort here exactly as it would on the node.
+    const usage = (dir: string, recipeName: string) => {
+        const result = spawnSync(
+            'bash',
+            [
+                '-c',
+                `set -euo pipefail\n${leaseUsageScript(recipeName, dir)}\n` +
+                    'echo "$memory_used|$cpu_used|$same_recipe|$holder"',
+            ],
+            { encoding: 'utf8' }
+        )
+        expect(result.status, result.stderr).toBe(0)
+        // bash 3.2 (macOS) carries on past an arithmetic error under -e, so
+        // only stderr shows that one happened.
+        expect(result.stderr).toBe('')
+        const [memory, cpu, same, holder] = result.stdout.trim().split('|')
+        return { memory, cpu, same, holder: holder!.split(' ') }
+    }
+
+    test('totals every lease and names the one holding the recipe', () => {
+        withTempDir(dir => {
+            const id = '44623195255-1-build-windows-server-2025'
+            writeFileSync(
+                `${dir}/${id}`,
+                record('windows-server-2025', '200201', 8192)
+            )
+            writeFileSync(
+                `${dir}/0b6c9e1e-2f43-4c1d-9a51-1d2f5d8c7e10`,
+                record('debian-12', '400100', 2048)
+            )
+            const { memory, cpu, same, holder } = usage(
+                dir,
+                'windows-server-2025'
+            )
+            expect([memory, cpu, same]).toEqual(['10240', '5', '1'])
+            const [holderId, kind, vmid, held] = holder
+            expect([holderId, kind, vmid]).toEqual([id, 'build', '200201'])
+            // Seconds since the file was born, or -1 where the filesystem or
+            // a non-GNU stat (macOS) does not report a birth time.
+            expect(Number(held)).toBeGreaterThanOrEqual(-1)
+            expect(Number(held)).toBeLessThan(60)
+        })
+    })
+
+    test('names no holder when no lease is for the recipe', () => {
+        withTempDir(dir => {
+            writeFileSync(
+                `${dir}/some-run-build-debian-12`,
+                record('debian-12', '400100', 2048)
+            )
+            const { same, holder } = usage(dir, 'windows-server-2025')
+            expect(same).toBe('0')
+            expect(holder).toEqual(['-', '-', '0', '-1'])
+        })
+    })
+
+    test('a lease that has not recorded its VMID yet holds VMID 0', () => {
+        // The admission writes 0 until the run allocates its slot.
+        withTempDir(dir => {
+            writeFileSync(
+                `${dir}/run-build-debian-12`,
+                record('debian-12', '0', 2048)
+            )
+            const { same, holder } = usage(dir, 'debian-12')
+            expect(same).toBe('1')
+            expect(holder.slice(0, 3)).toEqual([
+                'run-build-debian-12',
+                'build',
+                '0',
+            ])
+        })
+    })
+})
+
+describe('parseAdmission', () => {
+    const recipe = {
+        name: 'windows-server-2025',
+        buildMemoryMb: 8192,
+        buildCores: 4,
+    } as RecipeInfo
+
+    test('names a CI run holding the recipe lease by its run id', () => {
+        expect(
+            parseAdmission(
+                'WAIT 8192 16384 4 8 1 44623195255-1-build-windows-server-2025 build 200201 20880\n',
+                recipe
+            )
+        ).toEqual({
+            status: 'WAIT',
+            waitingFor:
+                'another windows-server-2025 run (build lease 44623195255-1-build-windows-server-2025: ' +
+                'CF_RUN_ID 44623195255-1, VMID 200201, held 5h48m)',
+        })
+    })
+
+    test('says when the holder was not started by CI', () => {
+        // Lease ids fall back to a random UUID without CF_RUN_ID, which every
+        // CI build job sets.
+        const admission = parseAdmission(
+            'WAIT 8192 16384 4 8 1 0b6c9e1e-2f43-4c1d-9a51-1d2f5d8c7e10 verify 0 -1',
+            recipe
+        )
+        expect(admission).toEqual({
+            status: 'WAIT',
+            waitingFor:
+                'another windows-server-2025 run (verify lease 0b6c9e1e-2f43-4c1d-9a51-1d2f5d8c7e10: ' +
+                'no CF_RUN_ID, so not started by CI, no VMID yet)',
+        })
+    })
+
+    test('keeps the capacity wait as it was', () => {
+        expect(
+            parseAdmission('WAIT 12288 16384 6 8 0 - - 0 -1', recipe)
+        ).toEqual({
+            status: 'WAIT',
+            waitingFor: 'node capacity (12288/16384 MiB, 6/8 CPU in use)',
+        })
+    })
+
+    test('reads admission and rejection, and refuses anything else', () => {
+        expect(parseAdmission('ACQUIRED 16384 8', recipe)).toEqual({
+            status: 'ACQUIRED',
+        })
+        expect(parseAdmission('REJECT 4096 2', recipe)).toEqual({
+            status: 'REJECT',
+            message:
+                'windows-server-2025 requires 8192 MiB/4 CPU, exceeding the node build budget 4096 MiB/2 CPU',
+        })
+        expect(() => parseAdmission('bash: flock: not found', recipe)).toThrow(
+            'invalid build-lease response'
+        )
+    })
+
+    test('reads a run id out of a sanitized lease id', () => {
+        expect(
+            describeLeaseHolder(
+                {
+                    id: runLeaseId('12345-2', 'build', 'ubuntu 24.04'),
+                    kind: 'build',
+                    vmid: 100300,
+                    heldSecs: 59,
+                },
+                'ubuntu 24.04'
+            )
+        ).toBe(
+            'build lease 12345-2-build-ubuntu-24.04: CF_RUN_ID 12345-2, VMID 100300, held 1m'
+        )
+    })
+})
+
+describe('a lease wait under a time budget', () => {
+    const MIN = 60_000
+
+    test('gives up once the time left cannot cover an attempt, naming the holder', () => {
+        // windows-server-2025 on 2026-11-19 waited out the job's whole 6h
+        // behind a build started outside CI, and its log never said why the
+        // job died.
+        let now = 0
+        const budget: TimeBudget = {
+            limitMs: 300 * MIN,
+            startedAtMs: 0,
+            now: () => now,
+        }
+        const admission = parseAdmission(
+            'WAIT 8192 16384 4 8 1 0b6c9e1e-2f43-4c1d-9a51-1d2f5d8c7e10 build 200201 25500',
+            { name: 'windows-server-2025' } as RecipeInfo
+        )
+        if (admission.status !== 'WAIT') throw new Error('expected WAIT')
+        const floorMs = 170 * MIN
+
+        now = 130 * MIN
+        expect(
+            leaseWaitExhausted(budget, floorMs, now, admission.waitingFor)
+        ).toBeUndefined()
+
+        now = 131 * MIN
+        expect(
+            leaseWaitExhausted(budget, floorMs, now, admission.waitingFor)
+                ?.message
+        ).toBe(
+            'gave up after waiting 2h11m for another windows-server-2025 run ' +
+                '(build lease 0b6c9e1e-2f43-4c1d-9a51-1d2f5d8c7e10: no CF_RUN_ID, so not started by CI, VMID 200201, held 7h05m): ' +
+                '2h11m of the 5h00m build time budget (CF_BUILD_TIME_BUDGET_MINUTES) used, 2h49m left, ' +
+                'and a build attempt needs at least 2h50m. ' +
+                "Starting one now would end in the CI job's time limit cancelling it."
+        )
     })
 })

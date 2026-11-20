@@ -1,5 +1,17 @@
 export const shellQuote = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`
 
+/**
+ * A wall-clock span to the minute, as `4h20m` or `39m`. For spans measured in
+ * hours, where seconds are noise; negative spans read as `0m`.
+ */
+export const formatMinutes = (ms: number): string => {
+    const minutes = Math.max(0, Math.round(ms / 60_000))
+    const hours = Math.floor(minutes / 60)
+    return hours > 0
+        ? `${hours}h${String(minutes % 60).padStart(2, '0')}m`
+        : `${minutes}m`
+}
+
 const delay = (ms: number): Promise<void> =>
     new Promise(resolve => setTimeout(resolve, ms))
 

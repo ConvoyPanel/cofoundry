@@ -15,6 +15,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # GitHub's ceiling for a hosted job, stated so the build budget below can
+    # be kept in step with it. A job that reaches it is cancelled with only
+    # "The operation was canceled." in its log.
+    timeout-minutes: 360
     # Duplicate recipes share stable output names. Serialize only that identity;
     # different recipes are admitted in parallel by the node-wide lease manager.
     concurrency:
@@ -44,6 +48,14 @@ jobs:
       # RAM and all host CPUs while still accounting across independent jobs.
       CF_BUILD_MEMORY_BUDGET_MB: ${{ vars.CF_BUILD_MEMORY_BUDGET_MB }}
       CF_BUILD_CPU_BUDGET: ${{ vars.CF_BUILD_CPU_BUDGET }}
+      # Wall-clock minutes `cf build` may spend before it stops with an
+      # explanation instead of starting an attempt, or waiting longer for a
+      # lease, that the time left cannot cover (src/build/budget.ts). The hour
+      # between this and timeout-minutes holds what runs outside the budget:
+      # ~4m of setup before the build, a Windows verify (up to ~20m), the
+      # upload (~1m), and ~35m for an attempt that runs past its estimate.
+      # tests/build-budget.test.ts keeps the two in step.
+      CF_BUILD_TIME_BUDGET_MINUTES: 300
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

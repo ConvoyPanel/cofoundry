@@ -91,6 +91,10 @@ const EnvSchema = z.object({
         .preprocess(v => v === '1' || v === 'true' || v === true, z.boolean())
         .default(false),
     CF_BUILD_ATTEMPTS: z.coerce.number().int().min(1).optional(),
+    // Wall-clock minutes one `cf build` may spend before it refuses to start
+    // an attempt, or keep waiting for a lease, that the time left cannot
+    // cover. CI sets it below the job's time limit; see src/build/budget.ts.
+    CF_BUILD_TIME_BUDGET_MINUTES: z.coerce.number().int().min(1).optional(),
 
     // Optional CDN integration. Generated from [upload] in cofoundry.toml.
     CF_UPLOAD_CMD: z.string().optional(),

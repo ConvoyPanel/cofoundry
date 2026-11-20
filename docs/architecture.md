@@ -52,6 +52,19 @@ Each build or verification command also holds a shared node-maintenance flock
 for its full lifetime. Destructive `clean` holds the exclusive side, preserving
 parallel builds while preventing teardown from racing any active pipeline stage.
 
+`CF_BUILD_TIME_BUDGET_MINUTES` gives a build a wall-clock budget, counted from
+the start of the `cf build` process; `build-one.yml` sets it an hour under the
+job's 6h limit, which GitHub otherwise enforces by cancelling the job without a
+word. Before each attempt, and on each poll while it waits for a lease, the
+build compares the time left with what one attempt needs: the recipe's attempt
+floor (`ATTEMPT_FLOOR_MINUTES` in `src/build/budget.ts`, a little under the
+fastest attempt CI has recorded) or, if longer, the longest attempt the build
+has already spent. When the time left falls short, the build fails and names the
+budget, the time used, the estimate and its basis, and for a lease wait the
+lease that holds the recipe and the CI run it belongs to. A running attempt is
+never stopped; if it outlasts the budget, a `[budget]` line in the log says so
+before the job limit can cancel it. Without the variable, builds are unbounded.
+
 ### Failure diagnostics
 
 Packer deletes the build VM as soon as a build errors, so a node-side recorder
