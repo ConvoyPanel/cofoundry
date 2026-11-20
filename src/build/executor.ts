@@ -31,6 +31,13 @@ import { allocateBuildSlot, type BuildSlot } from '@/build/netslot.ts'
 import { buildVmWatchdog } from '@/build/watchdog.ts'
 import { bridgeForRecipe, inspectRecipeLayout } from '@/build/recipe.ts'
 import { buildAttemptCount, runWithRetries } from '@/build/retry.ts'
+import {
+    attemptFloorMs,
+    attemptGate,
+    describeBudget,
+    onBudgetSpent,
+    timeBudgetFromEnv,
+} from '@/build/budget.ts'
 import { buildSlotVmid, destroyVmCommand } from '@/build/vm.ts'
 import {
     buildDiagnosticsRecorder,
@@ -183,6 +190,11 @@ export const buildPhase = async (
     const remotePackerTmpDir = packerTmpDir(runId)
     assertPackerTmpDirSocketSafe(remotePackerTmpDir)
     const remoteBuildWorkDir = `${remoteBuildTmpDir}/repo`
+    // Unset outside CI. Where set, both the lease wait and every attempt stop
+    // with an explanation once the time left cannot cover one more attempt,
+    // instead of running into the CI job's limit and being cancelled silently.
+    const budget = timeBudgetFromEnv(env)
+    const floorMs = attemptFloorMs(recipe.name, layout.isWindows)
     const lease = await acquireRunLease(
         env,
         'build',
@@ -192,6 +204,7 @@ export const buildPhase = async (
             preserveVm: Boolean(options.keepVm),
             packerTmpDir: remotePackerTmpDir,
             onWait: message => onLine?.(`[queue] ${message}`),
+            budget: budget && { budget, needMs: floorMs },
         }
     )
     let slot: BuildSlot | null = null
@@ -199,6 +212,7 @@ export const buildPhase = async (
     let secretCleanupCmd = `rm -rf ${shellQuote(remoteBuildTmpDir)} ${shellQuote(remotePackerTmpDir)}`
     let startedAt = 0
     let effectiveBuildVmid: number | undefined
+    let stopBudgetNotice: (() => void) | undefined
 
     const runLeased = async (cancelSignal: AbortSignal): Promise<void> => {
         if (layout.needsBuildNetwork) {
@@ -419,6 +433,18 @@ export const buildPhase = async (
             }
             return !notStarted
         }
+        // The gate keeps a new attempt from starting without time to finish,
+        // but cannot stop one already running from overrunning. Say so in the
+        // log when that happens, since a cancelled job will not.
+        stopBudgetNotice = budget
+            ? onBudgetSpent(budget, () => {
+                  const message =
+                      `[budget] ${describeBudget(budget)} with attempt ${lastAttempt}/${maxAttempts} still running. ` +
+                      `cf does not stop a running attempt, but the CI job's time limit may cancel it, or the steps after it, before they finish.`
+                  if (onLine) onLine(message)
+                  else log.warn(message)
+              })
+            : undefined
         try {
             await runWithRetries(
                 maxAttempts,
@@ -476,8 +502,11 @@ export const buildPhase = async (
                         cancelSignal
                     )
                 },
-                onLine,
-                cancelSignal
+                {
+                    onRetry: onLine,
+                    cancelSignal,
+                    gate: budget && attemptGate(budget, floorMs),
+                }
             )
         } catch (err) {
             // Collect BEFORE the outer finally wipes the vars file (the source of
@@ -500,6 +529,7 @@ export const buildPhase = async (
             }
             throw err
         } finally {
+            stopBudgetNotice?.()
             unregisterVmCleanup?.()
         }
     }
@@ -530,6 +560,9 @@ export const buildPhase = async (
                 ),
         })
     } finally {
+        // Also cleared here: work abandoned after a lost lease never reaches
+        // its own finally, and a pending timer would keep the process alive.
+        stopBudgetNotice?.()
         // The injector modifies only this build's writable snapshot copy. The
         // private temp tree also contains vars files, private keys, and
         // generated answer-file ISOs, so remove the whole tree together.

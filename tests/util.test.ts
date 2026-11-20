@@ -1,9 +1,24 @@
 import { describe, expect, test } from 'bun:test'
-import { addSensitiveValues, redactSensitive, shellQuote } from '../src/util.ts'
+import {
+    addSensitiveValues,
+    formatMinutes,
+    redactSensitive,
+    shellQuote,
+} from '../src/util.ts'
 
 describe('shellQuote', () => {
     test('quotes single quotes for shell strings', () => {
         expect(shellQuote("can't")).toBe("'can'\\''t'")
+    })
+})
+
+describe('formatMinutes', () => {
+    test('reads to the minute, in hours once there are any', () => {
+        expect(formatMinutes(0)).toBe('0m')
+        expect(formatMinutes(39 * 60_000 + 29_000)).toBe('39m')
+        expect(formatMinutes(260 * 60_000)).toBe('4h20m')
+        expect(formatMinutes(300 * 60_000)).toBe('5h00m')
+        expect(formatMinutes(-5 * 60_000)).toBe('0m')
     })
 })
 

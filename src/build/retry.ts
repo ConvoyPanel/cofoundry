@@ -1,3 +1,5 @@
+import type { AttemptGate } from '@/build/budget.ts'
+
 export const buildAttemptCount = (
     isWindows: boolean,
     keepVm: boolean,
@@ -46,13 +48,34 @@ export type AttemptContext = {
     afterTransportFailure: boolean
 }
 
+export type RetryOptions = {
+    /** Progress lines: retries, transport waits, budget decisions. */
+    onRetry?: (message: string) => void
+    /** Aborts the run; its reason is rethrown instead of the attempt's error. */
+    cancelSignal?: AbortSignal
+    sleep?: (ms: number) => Promise<void>
+    /**
+     * Consulted before each new attempt, never before re-running one after a
+     * transport failure: that work is already running on the node. A refusal
+     * ends the run with the gate's reason and the last attempt's failure.
+     */
+    gate?: AttemptGate
+}
+
+const firstLine = (error: unknown): string =>
+    error instanceof Error
+        ? (error.message.split('\n')[0] ?? '')
+        : String(error)
+
 export const runWithRetries = async (
     attempts: number,
     run: (attempt: number, context: AttemptContext) => Promise<void>,
-    onRetry?: (message: string) => void,
-    cancelSignal?: AbortSignal,
-    sleep: (ms: number) => Promise<void> = ms =>
-        new Promise(resolve => setTimeout(resolve, ms))
+    {
+        onRetry,
+        cancelSignal,
+        sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+        gate,
+    }: RetryOptions = {}
 ): Promise<void> => {
     if (!Number.isInteger(attempts) || attempts < 1)
         throw new Error('attempts must be a positive integer')
@@ -63,6 +86,19 @@ export const runWithRetries = async (
         // An abort (the run lease was lost) throws the signal's reason — the
         // explanatory lease-lost error — so no further attempts start.
         cancelSignal?.throwIfAborted()
+        if (gate && !afterTransportFailure) {
+            const verdict = gate.check(attempt, attempts)
+            if (!verdict.ok) {
+                // Thrown outside the try below, so it is never retried.
+                throw new Error(
+                    attempt > 1
+                        ? `${verdict.reason} Attempt ${attempt - 1}/${attempts} failed: ${firstLine(lastError)}`
+                        : verdict.reason,
+                    { cause: lastError }
+                )
+            }
+            onRetry?.(verdict.status)
+        }
         try {
             if (attempt > 1 && !afterTransportFailure)
                 onRetry?.(`[retry] build attempt ${attempt}/${attempts}`)
@@ -74,10 +110,7 @@ export const runWithRetries = async (
             // instead and never retry an aborted run.
             cancelSignal?.throwIfAborted()
             lastError = error
-            const message =
-                error instanceof Error
-                    ? error.message.split('\n')[0]
-                    : String(error)
+            const message = firstLine(error)
 
             // A dropped tunnel says nothing about the build, so it must not
             // spend an attempt. Back off to let the link return, then re-run
@@ -99,6 +132,7 @@ export const runWithRetries = async (
                 continue
             }
             afterTransportFailure = false
+            gate?.failed()
 
             if (attempt < attempts) {
                 onRetry?.(
