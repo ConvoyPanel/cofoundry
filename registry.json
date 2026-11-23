@@ -2,7 +2,7 @@
   "schema_version": "2",
   "name": "Cofoundry Images",
   "description": "Proxmox VM disk images built with Cofoundry",
-  "generated_at": "2026-11-20T20:31:29.682Z",
+  "generated_at": "2026-11-23T17:25:29.444Z",
   "groups": [
     {
       "id": "almalinux",
@@ -14,12 +14,12 @@
           "disks": [
             {
               "role": "system",
-              "sha256": "f82e431ed055ca5c62a2ece96b1b151db38f89a504467865ee6a0d934ae9190a",
+              "sha256": "5fd1b5c28b0dbc584259c7031f52f6c7bbc638b55481e9bf5d026f6a50894615",
               "slot": "scsi0",
               "format": "qcow2",
-              "file": "almalinux-10-amd64-f82e431ed055ca5c62a2ece96b1b151db38f89a504467865ee6a0d934ae9190a.qcow2",
-              "url": "https://cofoundry.cdn.convoypanel.com/images/almalinux/almalinux-10-amd64/f82e431ed055ca5c62a2ece96b1b151db38f89a504467865ee6a0d934ae9190a.qcow2",
-              "size": 403111936,
+              "file": "almalinux-10-amd64-5fd1b5c28b0dbc584259c7031f52f6c7bbc638b55481e9bf5d026f6a50894615.qcow2",
+              "url": "https://cofoundry.cdn.convoypanel.com/images/almalinux/almalinux-10-amd64/5fd1b5c28b0dbc584259c7031f52f6c7bbc638b55481e9bf5d026f6a50894615.qcow2",
+              "size": 402915328,
               "virtual_size": "5G",
               "options": {
                 "discard": "on",
@@ -30,7 +30,7 @@
           "display": "AlmaLinux 10",
           "arch": "amd64",
           "suggested_vmid": 6002,
-          "built_at": "2026-11-20T15:39:31Z",
+          "built_at": "2026-11-23T16:51:54Z",
           "hardware": {
             "agent": 1,
             "bios": "seabios",
@@ -333,12 +333,12 @@
           "disks": [
             {
               "role": "system",
-              "sha256": "cb769cbab175b89faf6172e600293cd79a6c486469a3a783ad0b3357e58f37a2",
+              "sha256": "e12b7e689ed3b9db272edadbe618461a270a501e655eaec22b11eda1eada0dac",
               "slot": "scsi0",
               "format": "qcow2",
-              "file": "rocky-linux-9-amd64-cb769cbab175b89faf6172e600293cd79a6c486469a3a783ad0b3357e58f37a2.qcow2",
-              "url": "https://cofoundry.cdn.convoypanel.com/images/rocky-linux/rocky-linux-9-amd64/cb769cbab175b89faf6172e600293cd79a6c486469a3a783ad0b3357e58f37a2.qcow2",
-              "size": 436600832,
+              "file": "rocky-linux-9-amd64-e12b7e689ed3b9db272edadbe618461a270a501e655eaec22b11eda1eada0dac.qcow2",
+              "url": "https://cofoundry.cdn.convoypanel.com/images/rocky-linux/rocky-linux-9-amd64/e12b7e689ed3b9db272edadbe618461a270a501e655eaec22b11eda1eada0dac.qcow2",
+              "size": 436862976,
               "virtual_size": "5G",
               "options": {
                 "discard": "on",
@@ -349,7 +349,7 @@
           "display": "Rocky Linux 9",
           "arch": "amd64",
           "suggested_vmid": 5001,
-          "built_at": "2026-11-20T16:14:46Z",
+          "built_at": "2026-11-23T16:52:27Z",
           "hardware": {
             "agent": 1,
             "bios": "seabios",
@@ -416,12 +416,12 @@
           "disks": [
             {
               "role": "system",
-              "sha256": "612e88db097b64ab28b2bc5f142421bfe0a9614203e37d89db3d7b649e483eb2",
+              "sha256": "12dcf5d6763b652072318308d4287e0d0c334dc1b58bf90d6d5f743c2f7978bb",
               "slot": "scsi0",
               "format": "qcow2",
-              "file": "ubuntu-24.04-amd64-612e88db097b64ab28b2bc5f142421bfe0a9614203e37d89db3d7b649e483eb2.qcow2",
-              "url": "https://cofoundry.cdn.convoypanel.com/images/ubuntu/ubuntu-24.04-amd64/612e88db097b64ab28b2bc5f142421bfe0a9614203e37d89db3d7b649e483eb2.qcow2",
-              "size": 601108992,
+              "file": "ubuntu-24.04-amd64-12dcf5d6763b652072318308d4287e0d0c334dc1b58bf90d6d5f743c2f7978bb.qcow2",
+              "url": "https://cofoundry.cdn.convoypanel.com/images/ubuntu/ubuntu-24.04-amd64/12dcf5d6763b652072318308d4287e0d0c334dc1b58bf90d6d5f743c2f7978bb.qcow2",
+              "size": 606750208,
               "virtual_size": "5G",
               "options": {
                 "discard": "on",
@@ -432,7 +432,7 @@
           "display": "Ubuntu 24.04 LTS (Noble Numbat)",
           "arch": "amd64",
           "suggested_vmid": 1003,
-          "built_at": "2026-11-20T16:18:51Z",
+          "built_at": "2026-11-23T16:54:09Z",
           "hardware": {
             "agent": 1,
             "bios": "seabios",
@@ -454,12 +454,12 @@
           "disks": [
             {
               "role": "system",
-              "sha256": "9ffc8ec5ac4f786adc0509b690df4d1436d95615ba7c6a5ecccb34e5acedc22c",
+              "sha256": "a8748d39ba8f3ef6b9db3e097876ff7c28a1e9696bcfaf5fe54bbc96351be6a2",
               "slot": "scsi0",
               "format": "qcow2",
-              "file": "ubuntu-26.04-amd64-9ffc8ec5ac4f786adc0509b690df4d1436d95615ba7c6a5ecccb34e5acedc22c.qcow2",
-              "url": "https://cofoundry.cdn.convoypanel.com/images/ubuntu/ubuntu-26.04-amd64/9ffc8ec5ac4f786adc0509b690df4d1436d95615ba7c6a5ecccb34e5acedc22c.qcow2",
-              "size": 959169024,
+              "file": "ubuntu-26.04-amd64-a8748d39ba8f3ef6b9db3e097876ff7c28a1e9696bcfaf5fe54bbc96351be6a2.qcow2",
+              "url": "https://cofoundry.cdn.convoypanel.com/images/ubuntu/ubuntu-26.04-amd64/a8748d39ba8f3ef6b9db3e097876ff7c28a1e9696bcfaf5fe54bbc96351be6a2.qcow2",
+              "size": 957175808,
               "virtual_size": "5G",
               "options": {
                 "discard": "on",
@@ -470,7 +470,7 @@
           "display": "Ubuntu 26.04 LTS (Resolute Raccoon)",
           "arch": "amd64",
           "suggested_vmid": 1005,
-          "built_at": "2026-11-20T16:46:18Z",
+          "built_at": "2026-11-23T17:17:13Z",
           "hardware": {
             "agent": 1,
             "bios": "seabios",
